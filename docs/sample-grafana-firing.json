@@ -1,0 +1,27 @@
+{
+  "receiver": "augur-webhook",
+  "status": "firing",
+  "orgId": 1,
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "High CPU Usage",
+        "severity": "critical",
+        "instance": "prod-db-01"
+      },
+      "annotations": {
+        "summary": "CPU 使用率超過 90%"
+      },
+      "startsAt": "2026-06-17T10:19:46.179Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "fingerprint": "c6eadffa33fcdf37",
+      "generatorURL": "https://grafana.example.com/alerting/abc/edit",
+      "panelURL": "",
+      "dashboardURL": "",
+      "values": { "B": 95.2, "C": 1 }
+    }
+  ],
+  "commonLabels": { "severity": "critical" },
+  "title": "[FIRING:1] High CPU Usage"
+}

@@ -1,0 +1,25 @@
+{
+  "name": "airi-ops-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Augur — AIRI 運維事件語音橋接層。接住 Grafana 告警 webhook，正規化後推給桌面 AIRI 用角色語音念出來。",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx scripts/airi-smoke.ts",
+    "mock": "tsx scripts/mock-grafana.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@proj-airi/server-sdk": "0.10.2",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
