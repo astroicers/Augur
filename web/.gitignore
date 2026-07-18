@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# 大型/專有 avatar 資產：用 scripts/fetch-assets.sh 下載（避免把 11MB VRM +
+# 專有 Cubism Core 進 git；Cubism Core 亦不可再散布）。
+public/avatar.vrm
+public/live2dcubismcore.min.js
+public/models/
