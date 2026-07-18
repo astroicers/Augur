@@ -1,29 +1,37 @@
 /**
- * 進入點（SPEC §7）：載 config → 連 AIRI（airi.ts）→ 啟動 HTTP server（server.ts）。
+ * 進入點：載 config → 建廣播 sink（Edge TTS + 前端 WS，ADR-001）→ 啟動 HTTP server。
+ * （AIRI 已由瀏覽器 avatar 取代，ADR-008 Superseded；airi.ts 保留為 dormant。）
  */
 import { serve } from '@hono/node-server'
 import { loadDotEnv, loadConfig } from './config.js'
-import { createAiriSink } from './airi.js'
+import { createBroadcastSink } from './sink/broadcastSink.js'
+import { createEdgeTTS } from './tts/edgeTts.js'
 import { createServer } from './server.js'
+import { createDedup } from './core/dedup.js'
 
 loadDotEnv()
 const config = loadConfig()
 
-// autoConnect：背景連 AIRI。未連上時 webhook 仍會回 200，播報會被略過並記 log。
-const sink = createAiriSink(config)
-const app = createServer(config, sink)
+// 廣播 sink：起前端 WS server + Edge TTS。webhook 永遠快速回 200，TTS 失敗只記 log。
+const tts = createEdgeTTS(config.ttsVoice)
+const sink = createBroadcastSink({ host: config.host, wsPort: config.wsPort, tts })
+// 去重/防洪 + resolved 綁狀態（Phase 2）。
+const dedup = createDedup(config.dedupWindowSec)
+const app = createServer(config, sink, dedup)
 
 const server = serve(
   { fetch: app.fetch, hostname: config.host, port: config.port },
   (info) => {
     console.log(`[bridge] 接收層啟動於 http://${config.host}:${info.port}`)
     console.log(`[bridge] Grafana webhook：POST http://${config.host}:${info.port}/grafana/webhook`)
+    console.log(`[bridge] 前端 avatar WS：ws://${config.host}:${config.wsPort}`)
   },
 )
 
 function shutdown(signal: string): void {
   console.log(`\n[bridge] 收到 ${signal}，關閉中…`)
   sink.close()
+  dedup.close()
   server.close(() => process.exit(0))
 }
 process.on('SIGINT', () => shutdown('SIGINT'))

@@ -29,3 +29,27 @@ export interface ParsedAlert {
   /** 可選：回連來源的 URL */
   panelURL?: string
 }
+
+/** 表情狀態 — 對映 Live2D template spec §6（severity/status → 表情）。 */
+export type Emotion = 'calm' | 'warning' | 'critical' | 'resolved'
+
+/**
+ * 播報計畫 — 導播輸出給前端 avatar 的單則指令（取代舊的純 text sink）。
+ * text 給 TTS 念；emotion 驅動表情；其餘欄位供前端 feed / 除錯。
+ */
+export interface BroadcastPlan {
+  /** 要念出的事實句（formatAlert 產） */
+  text: string
+  /** 原始嚴重度（critical/error/warning/info/unknown） */
+  severity: string
+  /** 表情（severityToEmotion 產） */
+  emotion: Emotion
+  /** 告警名稱 */
+  name: string
+  /** 告警狀態 */
+  status: 'firing' | 'resolved'
+  /** 受影響對象（可選） */
+  instance?: string
+  /** 實際數值（可選） */
+  value?: number
+}

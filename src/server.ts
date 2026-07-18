@@ -8,9 +8,11 @@ import { Hono, type Context, type Next } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { timingSafeEqual } from 'node:crypto'
 import type { AppConfig } from './config.js'
-import type { AiriSink } from './airi.js'
+import type { Sink } from './sink/broadcastSink.js'
 import { parseGrafanaWebhook, type GrafanaWebhookBody } from './sources/grafana.js'
-import { formatAlert } from './core/format.js'
+import { buildBroadcastPlan } from './core/format.js'
+import { meetsMin } from './core/severity.js'
+import type { Dedup } from './core/dedup.js'
 
 /**
  * 比對 Authorization header 與 WEBHOOK_SECRET。
@@ -26,10 +28,10 @@ function secretMatches(authHeader: string | undefined, secret: string): boolean 
   return timingSafeEqual(a, b)
 }
 
-export function createServer(config: AppConfig, sink: AiriSink): Hono {
+export function createServer(config: AppConfig, sink: Sink, dedup: Dedup): Hono {
   const app = new Hono()
 
-  app.get('/healthz', (c) => c.json({ ok: true, airiReady: sink.isReady() }))
+  app.get('/healthz', (c) => c.json({ ok: true, ready: sink.isReady() }))
 
   // 先驗 secret（只看 header）→ 未授權在讀 body 前就 401；通過後才以 bodyLimit 限制 body 大小（防記憶體耗盡）。
   const auth = async (c: Context, next: Next) => {
@@ -54,14 +56,24 @@ export function createServer(config: AppConfig, sink: AiriSink): Hono {
         return c.json({ error: 'invalid json' }, 400)
       }
 
-      // 快速回 200；播報非同步進行（send 為非阻塞），失敗只記 log。
-      queueMicrotask(() => {
+      // 快速回 200；播報非同步進行，失敗只記 log。多則告警依序 await（避免疊音）。
+      queueMicrotask(async () => {
         try {
           const alerts = parseGrafanaWebhook(body)
           for (const alert of alerts) {
-            const text = formatAlert(alert, config.alertLang)
-            console.log(`[bridge] ${alert.status} ${alert.name} → 播報：${text}`)
-            sink.speakAlert(text)
+            // 1) severity 過濾（resolved 不受門檻擋，是否播由去重決定）
+            if (alert.status === 'firing' && !meetsMin(alert.severity, config.minSeverity)) {
+              console.log(`[bridge] 過濾 severity=${alert.severity} < ${config.minSeverity}：${alert.name}`)
+              continue
+            }
+            // 2) 去重防洪 + resolved 綁狀態
+            if (!dedup.shouldSpeak(alert)) {
+              console.log(`[bridge] 去重略過：${alert.status} ${alert.name}`)
+              continue
+            }
+            const plan = buildBroadcastPlan(alert, config.alertLang)
+            console.log(`[bridge] ${alert.status} ${alert.name} → 播報：${plan.text}`)
+            await sink.broadcast(plan)
           }
         } catch (err) {
           console.error('[bridge] 處理 webhook 失敗：', err)

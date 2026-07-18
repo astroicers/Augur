@@ -4,10 +4,27 @@
  * 保持笨：只組「事實句」，不接 LLM、不修飾語氣。自然口吻交給 AIRI 的角色 brain
  * （文字會經由 input:text → 本地 LLM → TTS 念出，見 airi.ts）。
  */
-import type { AlertLang, ParsedAlert } from './types.js'
+import type { AlertLang, BroadcastPlan, ParsedAlert } from './types.js'
+import { severityToEmotion } from './emotion.js'
 
 export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
   return lang === 'en' ? formatEn(a) : formatZh(a)
+}
+
+/**
+ * ParsedAlert → BroadcastPlan（導播輸出）。text 重用 formatAlert，emotion 由 §6 映射。
+ * instance/value 只在有值時帶上（配合 strict / noUncheckedIndexedAccess）。
+ */
+export function buildBroadcastPlan(a: ParsedAlert, lang: AlertLang = 'zh'): BroadcastPlan {
+  return {
+    text: formatAlert(a, lang),
+    severity: a.severity,
+    emotion: severityToEmotion(a.severity, a.status),
+    name: a.name,
+    status: a.status,
+    ...(a.instance !== undefined ? { instance: a.instance } : {}),
+    ...(a.value !== undefined ? { value: a.value } : {}),
+  }
 }
 
 function formatZh(a: ParsedAlert): string {

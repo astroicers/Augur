@@ -4,6 +4,7 @@
  */
 
 import type { AlertLang } from './core/types.js'
+import { isKnownSeverity } from './core/severity.js'
 
 export interface AppConfig {
   /** HTTP server 監聽主機 */
@@ -22,6 +23,14 @@ export interface AppConfig {
   maxBodyBytes: number
   /** 播報語言（'zh' 繁中 / 'en' 英文） */
   alertLang: AlertLang
+  /** 只播報 >= 此嚴重度的告警；空字串 = 不過濾。Phase 2。 */
+  minSeverity: string
+  /** 同 fingerprint 的 firing 在此秒數內只播一次（防洪）。Phase 2。 */
+  dedupWindowSec: number
+  /** 前端 avatar 的 WebSocket 廣播埠（ADR-001）。 */
+  wsPort: number
+  /** Edge TTS 語音（依 alertLang 給預設）。 */
+  ttsVoice: string
 }
 
 /** Node 20.12+/22 原生讀 .env，免額外套件。沒有 .env 就靠實際環境變數。 */
@@ -64,14 +73,39 @@ export function loadConfig(): AppConfig {
     throw new Error(`[config] ALERT_LANG 只能是 zh 或 en：${langRaw}`)
   }
 
+  // MIN_SEVERITY：空 = 不過濾；有值就必須是已知嚴重度（critical/error/warning/info/unknown）。
+  const minSeverity = optional('MIN_SEVERITY', '').toLowerCase()
+  if (minSeverity !== '' && !isKnownSeverity(minSeverity)) {
+    throw new Error(`[config] MIN_SEVERITY 不是已知嚴重度：${minSeverity}（可用 critical/error/warning/info）`)
+  }
+
+  const dedupRaw = optional('DEDUP_WINDOW_SEC', '300') // 預設 5 分鐘
+  const dedupWindowSec = Number.parseInt(dedupRaw, 10)
+  if (!Number.isInteger(dedupWindowSec) || dedupWindowSec < 0) {
+    throw new Error(`[config] DEDUP_WINDOW_SEC 不是有效秒數（>=0 整數）：${dedupRaw}`)
+  }
+
+  const wsPortRaw = optional('WS_PORT', '3002') // 前端 avatar 廣播埠
+  const wsPort = Number.parseInt(wsPortRaw, 10)
+  if (!Number.isInteger(wsPort) || wsPort <= 0 || wsPort > 65535) {
+    throw new Error(`[config] WS_PORT 不是有效埠號：${wsPortRaw}`)
+  }
+
+  const ttsVoice = optional('TTS_VOICE', langRaw === 'zh' ? 'zh-TW-HsiaoChenNeural' : 'en-US-AriaNeural')
+
   return {
     host: optional('HOST', '127.0.0.1'),
     port,
     webhookSecret: required('WEBHOOK_SECRET'),
-    airiWsUrl: required('AIRI_WS_URL'),
-    airiAuthToken: required('AIRI_AUTH_TOKEN'),
+    // AIRI 已由瀏覽器 avatar 取代（ADR-008 Superseded）→ 這兩個轉為選填（保留給 dormant airi.ts）。
+    airiWsUrl: optional('AIRI_WS_URL', ''),
+    airiAuthToken: optional('AIRI_AUTH_TOKEN', ''),
     airiName: optional('AIRI_NAME', 'airi-ops-bridge'),
     maxBodyBytes,
     alertLang: langRaw,
+    minSeverity,
+    dedupWindowSec,
+    wsPort,
+    ttsVoice,
   }
 }
