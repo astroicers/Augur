@@ -6,7 +6,7 @@ const PANEL_URL = (import.meta.env.VITE_GRAFANA_PANEL_URL as string | undefined)
 export function GrafanaPanel() {
   if (!PANEL_URL) return null;
   return (
-    <aside className="absolute bottom-4 left-4 z-10 h-[240px] w-[420px] overflow-hidden rounded border border-slate-700 shadow-lg">
+    <aside className="absolute bottom-4 left-4 z-10 hidden h-[240px] w-[min(420px,42vw)] overflow-hidden rounded border border-slate-700 shadow-lg sm:block">
       <iframe title="Grafana" src={PANEL_URL} className="h-full w-full border-0 bg-slate-900" />
     </aside>
   );

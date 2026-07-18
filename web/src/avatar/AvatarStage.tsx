@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import type { AvatarController, Emotion } from "./AvatarController";
 import { VrmController } from "./VrmController";
 import { Live2DController } from "./Live2DController";
@@ -6,7 +6,7 @@ import { Live2DController } from "./Live2DController";
 export interface AvatarStageHandle {
   /** Must be called from a user gesture to unlock/resume the AudioContext. */
   unlockAudio: () => void;
-  /** Apply a broadcast: switch expression + (if unlocked) speak the audio with lip-sync. */
+  /** Enqueue a broadcast: switch expression + (if unlocked) speak the audio with lip-sync. */
   playBroadcast: (emotion: Emotion, audioB64: string) => void;
 }
 
@@ -19,9 +19,9 @@ function pickMode(): "vrm" | "live2d" {
 /**
  * Owns the canvas + the chosen AvatarController + the audio graph. Audio is played
  * via Web Audio (decodeAudioData → AudioBufferSourceNode → analyser → destination),
- * NOT an <audio> element — a broadcast arrives ~1-2s after the click gesture, and a
- * media element's play() that far from the gesture is blocked by autoplay policy.
- * A buffer source plays freely on an already-running (gesture-unlocked) context.
+ * NOT an <audio> element (autoplay policy blocks a media element's play() that far
+ * from the user gesture). Broadcasts are QUEUED and played one at a time — a second
+ * alert waits for the first to finish instead of cutting it off / overlapping audio.
  * The RMS loop reads the analyser → controller.setMouth every frame (lip-sync).
  */
 export const AvatarStage = forwardRef<AvatarStageHandle>(function AvatarStage(_props, ref) {
@@ -31,6 +31,8 @@ export const AvatarStage = forwardRef<AvatarStageHandle>(function AvatarStage(_p
   const analyserRef = useRef<AnalyserNode | null>(null);
   const dataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const queueRef = useRef<Array<{ emotion: Emotion; b64: string }>>([]);
+  const playingRef = useRef(false);
 
   const mode = pickMode();
 
@@ -73,6 +75,45 @@ export const AvatarStage = forwardRef<AvatarStageHandle>(function AvatarStage(_p
     };
   }, [mode]);
 
+  // Play the next queued broadcast, one at a time (no overlap / cut-off).
+  const pump = useCallback(() => {
+    if (playingRef.current) return;
+    const next = queueRef.current.shift();
+    if (!next) return;
+    playingRef.current = true;
+    controllerRef.current?.setEmotion(next.emotion);
+
+    const done = () => {
+      playingRef.current = false;
+      pump();
+    };
+
+    const ctx = ctxRef.current;
+    const an = analyserRef.current;
+    if (!next.b64 || !ctx || !an) {
+      // 音訊未解鎖：只換表情，短暫停頓後續播下一則。
+      W.__spoke = true;
+      setTimeout(done, 1200);
+      return;
+    }
+    const bytes = Uint8Array.from(atob(next.b64), (c) => c.charCodeAt(0));
+    void ctx
+      .resume()
+      .then(() => ctx.decodeAudioData(bytes.buffer))
+      .then((audioBuf) => {
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(an);
+        src.onended = done;
+        sourceRef.current = src;
+        src.start();
+      })
+      .catch((e) => {
+        console.error("[AvatarStage] audio play error:", e);
+        done();
+      });
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -91,30 +132,11 @@ export const AvatarStage = forwardRef<AvatarStageHandle>(function AvatarStage(_p
         void ctx.resume();
       },
       playBroadcast: (emotion: Emotion, audioB64: string) => {
-        controllerRef.current?.setEmotion(emotion);
-        const ctx = ctxRef.current;
-        const an = analyserRef.current;
-        if (!audioB64 || !ctx || !an) return;
-        const bytes = Uint8Array.from(atob(audioB64), (c) => c.charCodeAt(0));
-        void ctx
-          .resume()
-          .then(() => ctx.decodeAudioData(bytes.buffer))
-          .then((audioBuf) => {
-            try {
-              sourceRef.current?.stop();
-            } catch {
-              /* 尚未播放，忽略 */
-            }
-            const src = ctx.createBufferSource();
-            src.buffer = audioBuf;
-            src.connect(an);
-            sourceRef.current = src;
-            src.start();
-          })
-          .catch((e) => console.error("[AvatarStage] audio play error:", e));
+        queueRef.current.push({ emotion, b64: audioB64 });
+        pump();
       },
     }),
-    [],
+    [pump],
   );
 
   return <canvas ref={canvasRef} className="fixed inset-0 z-0" />;

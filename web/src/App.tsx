@@ -34,7 +34,7 @@ export default function App() {
     <div className="relative h-full w-full overflow-hidden">
       <AvatarStage ref={stageRef} />
 
-      <header className="absolute left-4 top-4 z-10 flex flex-col gap-2 drop-shadow">
+      <header className="absolute left-4 top-4 z-10 flex max-w-[92vw] flex-col gap-2 drop-shadow">
         <h1 className="text-lg font-bold text-slate-100">Augur · SOC 播報</h1>
         <SeverityIndicator />
 
@@ -49,7 +49,7 @@ export default function App() {
           {audioOn ? "🔊 語音已啟動" : "▶ 啟動播報語音"}
         </button>
 
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <span className="text-xs text-slate-500">測試播報：</span>
           {TESTS.map((t) => (
             <button
@@ -62,7 +62,7 @@ export default function App() {
           ))}
         </div>
 
-        <p className="max-w-[420px] text-xs text-slate-500">
+        <p className="hidden max-w-[420px] text-xs text-slate-500 sm:block">
           正式告警由 Grafana webhook 經導播推播（<code>pnpm mock</code> 亦可）。切換 avatar：
           <code>?avatar=vrm</code> / <code>?avatar=live2d</code>。
         </p>
