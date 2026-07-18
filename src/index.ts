@@ -14,7 +14,12 @@ const config = loadConfig()
 
 // 廣播 sink：起前端 WS server + Edge TTS。webhook 永遠快速回 200，TTS 失敗只記 log。
 const tts = createEdgeTTS(config.ttsVoice)
-const sink = createBroadcastSink({ host: config.host, wsPort: config.wsPort, tts })
+const sink = createBroadcastSink({
+  host: config.host,
+  wsPort: config.wsPort,
+  tts,
+  allowDevTrigger: config.allowDevTrigger,
+})
 // 去重/防洪 + resolved 綁狀態（Phase 2）。
 const dedup = createDedup(config.dedupWindowSec)
 const app = createServer(config, sink, dedup)

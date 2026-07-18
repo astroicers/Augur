@@ -13,7 +13,14 @@ pnpm dev                       # http://localhost:5173
 ```
 
 需要導播（backend）在跑：`cd .. && pnpm dev`（webhook `:3001` + 前端 WS `:3002`）。
-灌告警：`cd .. && pnpm mock`，或用頁面上的「測試播報」鈕（dev-trigger）。
+灌告警：`cd .. && pnpm mock`，或用頁面上的「測試播報」鈕（dev-trigger；導播端 `ALLOW_DEV_TRIGGER` 控制，生產應關）。
+
+## 環境變數（`.env` / Vite）
+
+| 變數 | 預設 | 用途 |
+|------|------|------|
+| `VITE_WS_URL` | `ws://localhost:3002` | 導播 WS 位址 |
+| `VITE_GRAFANA_PANEL_URL` | （空，不顯示） | 選配：嵌入的 Grafana 面板 URL（建議 panel 的 kiosk/`d-solo` 嵌入連結；Grafana 端須 `allow_embedding = true`） |
 
 ## 切換 avatar（ADR-002 choice C：可換）
 

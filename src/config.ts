@@ -31,6 +31,8 @@ export interface AppConfig {
   wsPort: number
   /** Edge TTS 語音（依 alertLang 給預設）。 */
   ttsVoice: string
+  /** dev/demo：允許前端經 WS 送 trigger 觸發示範播報。生產應設 false。 */
+  allowDevTrigger: boolean
 }
 
 /** Node 20.12+/22 原生讀 .env，免額外套件。沒有 .env 就靠實際環境變數。 */
@@ -93,6 +95,10 @@ export function loadConfig(): AppConfig {
 
   const ttsVoice = optional('TTS_VOICE', langRaw === 'zh' ? 'zh-TW-HsiaoChenNeural' : 'en-US-AriaNeural')
 
+  // dev/demo：前端「測試播報」鈕經 WS 觸發示範播報。本機 demo 預設開；
+  // 生產（WS 曝露於 localhost 之外）務必設 ALLOW_DEV_TRIGGER=false。
+  const allowDevTrigger = optional('ALLOW_DEV_TRIGGER', 'true').toLowerCase() !== 'false'
+
   return {
     host: optional('HOST', '127.0.0.1'),
     port,
@@ -107,5 +113,6 @@ export function loadConfig(): AppConfig {
     dedupWindowSec,
     wsPort,
     ttsVoice,
+    allowDevTrigger,
   }
 }

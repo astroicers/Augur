@@ -26,6 +26,7 @@ function makeConfig(over: Partial<AppConfig> = {}): AppConfig {
     dedupWindowSec: 300,
     wsPort: 3002,
     ttsVoice: 'zh-TW-HsiaoChenNeural',
+    allowDevTrigger: true,
     ...over,
   }
 }

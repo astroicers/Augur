@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { AvatarStage, type AvatarStageHandle } from "./avatar/AvatarStage";
 import { SeverityIndicator } from "./components/SeverityIndicator";
 import { BroadcastFeed } from "./components/BroadcastFeed";
+import { GrafanaPanel } from "./components/GrafanaPanel";
 import { useBroadcastSocket } from "./hooks/useBroadcastSocket";
 import type { Plan } from "./store/broadcastStore";
 
@@ -70,6 +71,8 @@ export default function App() {
       <aside className="absolute bottom-4 right-4 z-10">
         <BroadcastFeed />
       </aside>
+
+      <GrafanaPanel />
     </div>
   );
 }
