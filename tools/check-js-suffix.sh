@@ -6,7 +6,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 if [ ! -d src ]; then echo 'check-js-suffix: src/ missing'; exit 1; fi
-if grep -rnE "(from|import\()[[:space:]]*['\"]\.{1,2}/[^'\"]*\.js['\"]" src --include='*.ts' --include='*.tsx'; then
+# 四種寫法都要抓：from './x.js'、import './x.js'（side-effect）、
+# import('./x.js')（動態）、require('./x.js')。原版只抓 from 與 import(。
+if grep -rnE "(from|import|require)[[:space:]]*\(?[[:space:]]*['\"]\.{1,2}/[^'\"]*\.js['\"]" src --include='*.ts' --include='*.tsx'; then
   echo 'check-js-suffix: relative .js import suffix found (see above)'
   exit 1
 fi
