@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Windows 主機效能指標（windows_exporter 跑在 Windows，容器經 host.docker.internal 連回）。
+  - job_name: windows
+    static_configs:
+      - targets: ['host.docker.internal:9182']
+        labels:
+          # 顯式設定 instance → 告警會帶 instance=windows-host（而非醜醜的 host.docker.internal:9182）。
+          instance: windows-host
+
+  # Prometheus 自身（除錯用）。
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

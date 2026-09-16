@@ -1,0 +1,218 @@
+{
+  "canvas": [
+    760,
+    1300
+  ],
+  "layers": [
+    {
+      "id": "hair_back",
+      "z": 1,
+      "pos": [
+        265,
+        61
+      ],
+      "size": [
+        229,
+        378
+      ],
+      "file": "part_hair_back.png"
+    },
+    {
+      "id": "handwear",
+      "z": 2,
+      "pos": [
+        133,
+        272
+      ],
+      "size": [
+        493,
+        395
+      ],
+      "file": "part_handwear.png"
+    },
+    {
+      "id": "legwear",
+      "z": 3,
+      "pos": [
+        243,
+        728
+      ],
+      "size": [
+        273,
+        503
+      ],
+      "file": "part_legwear.png"
+    },
+    {
+      "id": "footwear",
+      "z": 4,
+      "pos": [
+        217,
+        1140
+      ],
+      "size": [
+        325,
+        130
+      ],
+      "file": "part_footwear.png"
+    },
+    {
+      "id": "bottomwear",
+      "z": 5,
+      "pos": [
+        256,
+        632
+      ],
+      "size": [
+        247,
+        135
+      ],
+      "file": "part_bottomwear.png"
+    },
+    {
+      "id": "topwear",
+      "z": 6,
+      "pos": [
+        292,
+        329
+      ],
+      "size": [
+        176,
+        282
+      ],
+      "file": "part_topwear.png"
+    },
+    {
+      "id": "neck",
+      "z": 7,
+      "pos": [
+        354,
+        298
+      ],
+      "size": [
+        52,
+        67
+      ],
+      "file": "part_neck.png"
+    },
+    {
+      "id": "ears",
+      "z": 8,
+      "pos": [
+        321,
+        229
+      ],
+      "size": [
+        117,
+        41
+      ],
+      "file": "part_ears.png"
+    },
+    {
+      "id": "face",
+      "z": 9,
+      "pos": [
+        326,
+        184
+      ],
+      "size": [
+        107,
+        131
+      ],
+      "file": "part_face.png"
+    },
+    {
+      "id": "eyewhite",
+      "z": 10,
+      "pos": [
+        341,
+        246
+      ],
+      "size": [
+        78,
+        23
+      ],
+      "file": "part_eyewhite.png"
+    },
+    {
+      "id": "irides",
+      "z": 11,
+      "pos": [
+        345,
+        248
+      ],
+      "size": [
+        70,
+        19
+      ],
+      "file": "part_irides.png"
+    },
+    {
+      "id": "eyelash",
+      "z": 12,
+      "pos": [
+        340,
+        241
+      ],
+      "size": [
+        80,
+        29
+      ],
+      "file": "part_eyelash.png"
+    },
+    {
+      "id": "eyebrow",
+      "z": 13,
+      "pos": [
+        345,
+        232
+      ],
+      "size": [
+        70,
+        12
+      ],
+      "file": "part_eyebrow.png"
+    },
+    {
+      "id": "nose",
+      "z": 14,
+      "pos": [
+        369,
+        259
+      ],
+      "size": [
+        22,
+        33
+      ],
+      "file": "part_nose.png"
+    },
+    {
+      "id": "mouth",
+      "z": 15,
+      "pos": [
+        360,
+        283
+      ],
+      "size": [
+        39,
+        20
+      ],
+      "file": "part_mouth.png"
+    },
+    {
+      "id": "hair_front",
+      "z": 16,
+      "pos": [
+        306,
+        101
+      ],
+      "size": [
+        147,
+        208
+      ],
+      "file": "part_hair_front.png"
+    }
+  ],
+  "missing_file": [],
+  "not_in_layout": []
+}

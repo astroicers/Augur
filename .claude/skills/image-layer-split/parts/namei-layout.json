@@ -1,0 +1,22 @@
+{
+  "canvas": [760, 1300],
+  "note": "namei（全身 taxonomy）匯出的 bbox 裁切部位 → 預設解剖佈局（px 中心點）。新角色比例不同就微調 cx/cy/canvas 後重跑 compose_cropped.py。z 越小越後（先畫）。",
+  "parts": {
+    "hair_back":  { "cx": 380, "cy": 250,  "z": 1 },
+    "handwear":   { "cx": 380, "cy": 470,  "z": 2 },
+    "legwear":    { "cx": 380, "cy": 980,  "z": 3 },
+    "footwear":   { "cx": 380, "cy": 1205, "z": 4 },
+    "bottomwear": { "cx": 380, "cy": 700,  "z": 5 },
+    "topwear":    { "cx": 380, "cy": 470,  "z": 6 },
+    "neck":       { "cx": 380, "cy": 332,  "z": 7 },
+    "ears":       { "cx": 380, "cy": 250,  "z": 8 },
+    "face":       { "cx": 380, "cy": 250,  "z": 9 },
+    "eyewhite":   { "cx": 380, "cy": 258,  "z": 10 },
+    "irides":     { "cx": 380, "cy": 258,  "z": 11 },
+    "eyelash":    { "cx": 380, "cy": 256,  "z": 12 },
+    "eyebrow":    { "cx": 380, "cy": 238,  "z": 13 },
+    "nose":       { "cx": 380, "cy": 276,  "z": 14 },
+    "mouth":      { "cx": 380, "cy": 293,  "z": 15 },
+    "hair_front": { "cx": 380, "cy": 205,  "z": 16 }
+  }
+}

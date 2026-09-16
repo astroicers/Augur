@@ -2,3 +2,20 @@ node_modules/
 dist/
 .env
 *.log
+.asp-session-briefing.json
+.asp-audit-baseline.json
+.asp-bypass-log.ndjson
+.asp-telemetry.jsonl
+.asp-fact-check.md
+.asp-review-calibration.jsonl
+.asp-orch-state.json
+.asp-compiled-profile.md
+.asp-test-result.json
+
+# Python 快取（.claude/skills/ 下的輔助腳本產生）
+__pycache__/
+*.pyc
+
+# namei 匯出壓縮檔 —— 內容已解壓在 live2d/_archive/nami/parts/（16 檔位元組數逐一相符），
+# 是完全重複的資料，不進版控。
+namei-exports.zip

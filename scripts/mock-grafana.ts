@@ -44,6 +44,22 @@ const scenarios: Scenario[] = [
     },
   },
   {
+    // Phase 2 防洪驗證：與情境 1 同 fingerprint。全量依序跑時，DEDUP_WINDOW_SEC 內應被去重略過，
+    // bridge 終端會印「[bridge] 去重略過：firing HighCPUUsage」而不再播報。
+    name: 'firing / critical — CPU 重送（防洪：應被去重略過）',
+    body: {
+      status: 'firing',
+      alerts: [{
+        status: 'firing',
+        labels: { alertname: 'HighCPUUsage', severity: 'critical', instance: 'prod-db-01' },
+        annotations: { summary: 'CPU usage has stayed above 90 percent' },
+        startsAt: iso(-3), endsAt: ZERO_TIME,
+        fingerprint: 'cpu-prod-db-01',
+        values: { A: 96.1, C: 1 },
+      }],
+    },
+  },
+  {
     name: 'firing / warning — 記憶體偏高',
     body: {
       status: 'firing',
@@ -107,6 +123,22 @@ const scenarios: Scenario[] = [
           values: { B: 4.3, C: 1 },
         },
       ],
+    },
+  },
+  {
+    // Phase 2 過濾驗證：info 級。設 MIN_SEVERITY=warning 時，bridge 應印
+    // 「[bridge] 過濾 severity=info < warning」而不播報；未設 MIN_SEVERITY 時照常播。
+    name: 'firing / info — 低噪音（MIN_SEVERITY=warning 時應被過濾）',
+    body: {
+      status: 'firing',
+      alerts: [{
+        status: 'firing',
+        labels: { alertname: 'BackupJobNotice', severity: 'info', instance: 'backup-01' },
+        annotations: { summary: 'Nightly backup completed' },
+        startsAt: iso(0), endsAt: ZERO_TIME,
+        fingerprint: 'noise-info-01',
+        values: { A: 1, C: 1 },
+      }],
     },
   },
 ]

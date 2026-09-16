@@ -1,0 +1,18 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: augur-bridge
+    receivers:
+      - uid: augur_bridge_webhook
+        type: webhook
+        settings:
+          # 容器 → WSL 原生 bridge（HOST=0.0.0.0, PORT=3001）走 host.docker.internal。
+          url: http://host.docker.internal:3001/grafana/webhook
+          httpMethod: POST
+          # 產生 Authorization: Bearer <secret>，對上 bridge server.ts 的 secretMatches。
+          # $WEBHOOK_SECRET 由 compose 注入 Grafana 容器環境（須與 bridge .env 一致）。
+          authorization_scheme: Bearer
+          authorization_credentials: $WEBHOOK_SECRET
+        # 讓 resolved 也送出 → bridge 收到 resolved → 角色念「已恢復」。
+        disableResolveMessage: false

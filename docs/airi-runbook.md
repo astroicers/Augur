@@ -71,11 +71,25 @@ pnpm mock     # 另開終端：5 筆擬真告警 → 角色逐筆唸出
 
 ## 6. Grafana 端（用真實告警）
 
+### 6a. 已有現成 Grafana（同機）
+
 設定 → Alerting → Contact points → 新增 **Webhook**：
 - URL：`http://localhost:3001/grafana/webhook`（Grafana 與 bridge 同機時）
 - **Authorization Header**：scheme `Bearer`、credentials = `.env` 的 `WEBHOOK_SECRET`
 - 按 **Test** → bridge 回 200、log 印出實際 body（**以它校正 `sources/grafana.ts`**）
 - 建一條 alert rule 綁這個 contact point。
+
+### 6b. 從零起一套監控 Windows 主機（效能 + 安全）
+
+沒有現成 Grafana 時，用本專案的 `monitoring/` stack：Docker 起
+**Grafana(3002) + Prometheus(9091) + Loki(3101)**（避開本機 fh-lgtm 的 3000/3100/9090），
+Windows 端裝 **windows_exporter**（效能）+ **Grafana Alloy**（Event Log→安全），
+告警經已 provision 好的 Webhook contact point 自動打進 bridge。
+
+- 完整步驟見 [`../monitoring/README.md`](../monitoring/README.md)。
+- **bridge 端要點**：`.env` 設 `HOST=0.0.0.0`（讓 Grafana 容器經 `host.docker.internal:3001` 連回）；
+  `monitoring/.env` 的 `WEBHOOK_SECRET` 必須與 bridge `.env` 一致。
+- Phase 2 已上：`MIN_SEVERITY`（只播 >= 此等級）、`DEDUP_WINDOW_SEC`（同 fingerprint 防洪），見 `.env.example`。
 
 ## 7. 疑難排解
 

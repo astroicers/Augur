@@ -52,6 +52,12 @@ export class VrmController implements AvatarController {
             obj.frustumCulled = false;
           });
           scene.add(vrm.scene);
+          // VRM 預設是 T-pose（手平舉）——把上臂旋下成自然垂手，較像播報員。
+          // 設一次即可：vrm.update() 每幀會把 normalized 骨旋轉套到 raw 骨。
+          const la = vrm.humanoid?.getNormalizedBoneNode("leftUpperArm");
+          const ra = vrm.humanoid?.getNormalizedBoneNode("rightUpperArm");
+          if (la) la.rotation.z = -1.2;
+          if (ra) ra.rotation.z = 1.2;
           this.vrm = vrm;
           resolve();
         },

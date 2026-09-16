@@ -1,0 +1,23 @@
+{
+  "name": "live2d-character",
+  "description": "Live2D 角色立繪標準拆層（對應 live2d-template-spec §4a）。desc 寫成通用 anime 描述，可重用於任何正面立繪角色。",
+  "notes": "z 越小越後（先畫）。type=complete 的件要求把被遮處 inpaint 補完。眼睛細件(white/iris/highlight/lid/lash)與共用 overlay 不在此 preset，建議拆層後在 Photoshop 手工細分/手繪。",
+  "parts": [
+    { "id": "hair_back",    "z": 10, "type": "extract",  "desc": "the long back hair behind the head and shoulders" },
+    { "id": "body",         "z": 20, "type": "complete", "occluder": "the cape/outer garment and any hair", "desc": "the torso and neck (the inner top/clothing the character wears)" },
+    { "id": "arm_l",        "z": 22, "type": "extract",  "desc": "the character's left arm and sleeve" },
+    { "id": "arm_r",        "z": 22, "type": "extract",  "desc": "the character's right arm and sleeve" },
+    { "id": "capelet",      "z": 30, "type": "extract",  "desc": "the outer garment / cape / capelet worn over the shoulders" },
+    { "id": "face_base",    "z": 40, "type": "complete", "occluder": "the hair and bangs", "desc": "the full face and head skin (forehead, cheeks, chin, nose, ears, neck)" },
+    { "id": "cheek",        "z": 43, "type": "extract",  "desc": "the blush marks on the cheeks (if any)" },
+    { "id": "eye_l",        "z": 45, "type": "extract",  "desc": "the character's left eye (iris, eye white, eyelid and lashes together)" },
+    { "id": "eye_r",        "z": 45, "type": "extract",  "desc": "the character's right eye (iris, eye white, eyelid and lashes together)" },
+    { "id": "brow_l",       "z": 46, "type": "extract",  "desc": "the character's left eyebrow" },
+    { "id": "brow_r",       "z": 46, "type": "extract",  "desc": "the character's right eyebrow" },
+    { "id": "mouth",        "z": 47, "type": "extract",  "desc": "the mouth" },
+    { "id": "hair_side_l",  "z": 60, "type": "extract",  "desc": "the left side lock of hair framing the face" },
+    { "id": "hair_side_r",  "z": 60, "type": "extract",  "desc": "the right side lock of hair framing the face" },
+    { "id": "hair_front",   "z": 61, "type": "extract",  "desc": "the front hair / bangs over the forehead" },
+    { "id": "acc_clip",     "z": 62, "type": "extract",  "desc": "the hair clip / hair accessory (if any)" }
+  ]
+}

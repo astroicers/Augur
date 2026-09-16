@@ -1,0 +1,2 @@
+# 含 WEBHOOK_SECRET / Grafana 密碼，不進版控。
+.env
