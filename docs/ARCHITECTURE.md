@@ -66,10 +66,13 @@ monitoring/  docker-compose：Grafana/Prometheus/Loki/Alloy + 告警規則 + web
 | ADR-001 | SOC 播報架構（瀏覽器 avatar + TS 導播 + React；替換 AIRI） | Accepted |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 可換介面 | Accepted |
 | ADR-003 | 前端 visual-web-stack（React/Vite/Tailwind/Zustand） | Accepted |
-| ADR-004 | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端）—— supersede ADR-001/002/003 | **Draft** |
+| ADR-004 | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端）—— supersede ADR-001/002/003 | **FIRM** |
 
-> ⚠️ **ADR-004 為 `Draft`，尚未生效。** 定案前上表前三份仍是現行決策，本檔描述的架構仍然有效。
-> ADR-004 一旦由人類授權升 Accepted，前三份轉 Superseded，本檔需整份重寫（資料流圖全數作廢）。
+> ⚠️ **ADR-004 為 `FIRM`（2026-09-16 經 `/asp:approve-adr` 由 `Draft` 升級）。**
+> FIRM 已解除「禁止實作生產代碼」的鎖，改造可以動工；但**5 個 POC gate（G-ADR004-1～5）尚未跑**，
+> 故上表前三份**暫時仍掛 Accepted**，本檔描述的架構在改造落地前仍然有效。
+> POC 全綠並回填機械證據後，ADR-004 再由人類授權升 Accepted，前三份屆時轉 Superseded、
+> 本檔需整份重寫（資料流圖全數作廢）。
 
 ## 技術棧
 

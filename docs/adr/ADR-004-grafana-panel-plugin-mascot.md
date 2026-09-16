@@ -1,14 +1,33 @@
-<!-- ADR-004 | Status: Draft -->
+<!-- ADR-004 | Status: FIRM -->
 # ADR-004：Augur 由獨立播報頁升級為 Grafana Panel Plugin —— 2D 精靈圖吉祥物 + 瀏覽器語音
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `Draft` |
+| **狀態** | `FIRM` |
 | **日期** | 2026-09-16 |
-| **決策者** | astroicers（**待人類授權**） |
+| **決策者** | astroicers |
 
 > **狀態說明**：`Draft`（**禁止實作生產代碼**）→ `FIRM`（POC 驗證）→ `Accepted`（人類審核放行）。**AI 不可自行升級狀態**（ASP 鐵則）。
 > 本 ADR **supersede ADR-001 / ADR-002 / ADR-003**（三份皆 Accepted, 2026-07-18）。
+
+> ⬆️ **由 `Draft` 升 `FIRM`（2026-09-16）**：astroicers 經 `/asp:approve-adr 4` 授權。
+> 看過的指令摘要項目：章節數 6、決策條目 7（**本 ADR 無附錄 A**，決策數取自 `###` 標題而非
+> skill 指定的唯一來源）、Verification Evidence 在（9 列外部事實查證 + 6 項查不到）、
+> **本次升級涉及的決策已回填機械證據 0 項**、無 `roadmap-ref`（四份 ADR 皆無，屬 repo 既有慣例）、
+> diff 範圍為單一 commit `0c9f382`；缺項清單四條：**5 個 POC gate（G-ADR004-1～5）全數未跑**、
+> Verification Evidence 是外部事實查證而**非本 ADR 七項決策的 POC 證據**、本 repo 無 `.asp/gate.sh`
+> 故 skill 第 6 步的 `adr-draft`/`adr-index` 機械驗證跑不了、ADR 索引不在 `docs/adr/README.md`
+> 而在 `docs/ARCHITECTURE.md`。
+> 回覆逐字：**「升 FIRM」**。
+>
+> **升 FIRM 而非 Accepted 的理由**：`adr-draft.sh` 對 `FIRM` 是 exit 0 的 advisory（允許 commit，
+> 需 Verification Evidence），故升 FIRM 已足以解除「Draft 禁止實作生產代碼」的鎖，
+> **不需要為了動工而直升 Accepted**；而本 ADR 的 5 個 POC gate 本來就只能在 plugin 寫出來之後才跑得動。
+> 「POC 未跑」這個事實因此誠實留在檔上，未被 Accepted 掩蓋。
+> **人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
+>
+> ⏭️ **升 Accepted 的條件**：G-ADR004-1～5 全綠並在 Verification Evidence 回填機械證據後，
+> 再次由人類經 `/asp:approve-adr` 授權。
 
 > ⚠️ **證據鏈告示**：ADR-001/002/003 的 Verification Evidence 大量引用 `broadcaster-spikes/`（spike A/B/C）與本 repo 的 `.asp-fact-check.md`。**兩者在本 repo 皆不存在**（`.asp-fact-check.md` 另被根 `.gitignore` 排除）。前三份 ADR 的 POC 證據**已無法複驗**。本 ADR 的外部查證改記於下方 Verification Evidence，並同步寫入 `.asp-fact-check.md`。
 
