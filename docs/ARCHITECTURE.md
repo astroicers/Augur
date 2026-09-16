@@ -66,6 +66,10 @@ monitoring/  docker-compose：Grafana/Prometheus/Loki/Alloy + 告警規則 + web
 | ADR-001 | SOC 播報架構（瀏覽器 avatar + TS 導播 + React；替換 AIRI） | Accepted |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 可換介面 | Accepted |
 | ADR-003 | 前端 visual-web-stack（React/Vite/Tailwind/Zustand） | Accepted |
+| ADR-004 | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端）—— supersede ADR-001/002/003 | **Draft** |
+
+> ⚠️ **ADR-004 為 `Draft`，尚未生效。** 定案前上表前三份仍是現行決策，本檔描述的架構仍然有效。
+> ADR-004 一旦由人類授權升 Accepted，前三份轉 Superseded，本檔需整份重寫（資料流圖全數作廢）。
 
 ## 技術棧
 
