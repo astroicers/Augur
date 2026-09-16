@@ -36,13 +36,21 @@ ADR-002 有兩個抽象被 ADR-004 **明文繼承**，不隨 supersede 作廢：
 ```bash
 npm install
 npm run dev          # webpack watch，產出 dist/
-npm run server       # build + 起 monitoring/ 的 Grafana（含 Prometheus/Loki）
+npm run server       # build + 起 monitoring/ 的 Grafana（Loki 預設不啟，見埠表）
 npm run test:unit    # jest
 npm run typecheck
 npm run lint
 ```
 
 開發環境開在 **http://127.0.0.1:3002**（不是 3000，見下）。
+
+> ⚠️ **第一次跑之前**：`cp monitoring/.env.example monitoring/.env`。
+> `monitoring/docker-compose.yml` 有 `env_file: ./.env`，缺這個檔 `docker compose` 會直接失敗。
+>
+> ⚠️ **P3 之前，這台 Grafana 的 Add panel 不會出現 Mascot。** `monitoring/docker-compose.yml`
+> 目前**沒有**掛 `dist/`、也沒開 unsigned 白名單，而 `src/plugin.json` 要求 `>=12.3.0`
+> 但 compose 是 11.4.0。三者都排在 P3。失敗是**靜默**的 —— Grafana 會正常起來、UI 進得去，
+> 就是選單裡沒有這個 plugin，不會有任何錯誤訊息。**G-ADR004-1 目前跑不過是預期的。**
 
 ### 埠約定（重要）
 
@@ -64,7 +72,8 @@ e2e 要指過去：`GRAFANA_URL=http://localhost:3002 npm run e2e`。
 1. G-ADR004-2／-3 要驗的是**真告警**，需要真 Prometheus 與真 alert rule；腳手架配的 TestData 資料源結構上驗不出來。
 2. `.config/docker-compose-base.yaml` 是 `user: root` 且掛 `..:/root/augur-mascot-panel` ——
    併進本 repo 後等於把含 `.env` 的整棵樹掛進一台匿名 Admin 的 Grafana。
-3. 兩套 Grafana 並存只會讓「plugin 到底裝在哪一台」變成常態性困惑。
+3. 兩套 Grafana 並存會讓「plugin 到底裝在哪一台」變成常態性困惑 ——
+   P3 把掛載加到 `monitoring/` 之後，答案必須只有一個。
 
 `.config/docker-compose-base.yaml` 與 `.config/Dockerfile` 因此是**刻意閒置**的託管檔，不要 extends。
 
@@ -81,7 +90,7 @@ e2e 要指過去：`GRAFANA_URL=http://localhost:3002 npm run e2e`。
 
 | 目錄 | 是什麼 |
 |---|---|
-| `src/core/` | 來源中立的核心邏輯（268 行）：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。**零瀏覽器/Node 相依**，從舊架構整包繼承。 |
+| `src/core/` | 來源中立的核心邏輯（273 行）：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。**零瀏覽器/Node 相依**，從舊架構整包繼承。 |
 | `monitoring/` | docker-compose 開發環境 + 8 條 Windows 主機 alert rule（3 條效能、5 條 Loki 事件） |
 | `assets/` | Augur 角色立繪與 l2d-factory 拆出的分層 PNG（sprite 素材來源） |
 | `live2d/_archive/` | 已廢棄的 Live2D 路線。**但 `live2d-template-spec-v1.md` §6 仍在用** —— 它定義了 calm/warning/critical/resolved 四個表情的視覺語意，是 sprite 反應圖的內容大綱。 |

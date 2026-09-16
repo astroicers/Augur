@@ -88,6 +88,36 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 同時 `monitoring/grafana/provisioning/alerting/{contactpoints,policies}.yml` 要不要清，
 **ADR-004 決策 7 寫的是「monitoring/ 全套保留」，與計畫 P3 的刪除指示互相矛盾** —— 需裁定。
 
+### ✅ 已處理（2026-09-16 review 後）
+
+| 項目 | 處置 |
+|---|---|
+| `live2d/_archive/nami/` 的 34 張「娜美風」角色美術（2.0MB，零出處，公開 Apache-2.0 repo） | **已從 branch 歷史移除**（分支當時尚未推送，只需改寫本地 commit；已 gc，舊物件不可達）。保留 `layout.json` / `manifest.json` 兩個純座標檔。原檔在本機備份。新增 `docs/asset-provenance.md` 與 `.gitignore` 防線 |
+| `tools/asp-test.sh` 會為「完全沒執行的測試」蓋章放行 | 已修：跑前 `rm -f .jest-result.json`、判定納入 `JEST_EXIT`。並把 typecheck / lint / check-js-suffix 一併納入閘門 |
+| README 的 `npm run server` 誤導 | 已補 `.env` 前置步驟與「P3 之前 Add panel 不會出現 Mascot」的但書 |
+| `docs/ARCHITECTURE.md` / `monitoring/README.md` 仍描述已刪架構 | 已加失效警告與日期更新；**整份重寫仍在 P6 / P3** |
+
+### 🟡 Review 指出但仍需你裁定
+
+| 項目 | 狀況 |
+|---|---|
+| `.claude/settings.json` 進了公開 repo | 內含 `Bash(*)` 全域放行與三條 `/home/ubuntu/.claude/asp/hooks/` 絕對路徑，是本機狀態。零憑證（不觸鐵則二），但 `git rm --cached` 一行即可清掉。與 nami 是同一個「什麼該公開」的問題 |
+| ADR-004 檔頭升級來歷寫「6 項查不到」，同檔〈查不到〉只列 5 項 | 第 6 項（rules 端點穩定性）只存在於未納管的 `.asp-fact-check.md`。**改 ADR 需你授權**，故未動 |
+| `.asp-fact-check.md` 被 gitignore | 24 列中約 10–15 列只活在版控外。這是全機 15+ repo 的 ASP 慣例，**不宜單一 repo 破例**，故未動。ADR-004 的 Verification Evidence 表（已版控、每列自帶一級來源）承擔了主要舉證責任 |
+| `monitoring/windows/*.ps1` 的供應鏈 | 兩支腳本要求管理員權限、抓 GitHub `releases/latest`（**版本不 pin**）、靜默安裝成 Windows 服務，**零 checksum、零簽章驗證**。公開 repo 上陌生人可能照著跑 |
+| `npm run e2e` 會登入一台無關的 Grafana | `baseURL` 預設 `localhost:3000`（本機被別的 stack 佔著），`tests/` 未落地故只跑 `@grafana/plugin-e2e` 內建的 auth.setup。需固定 `GRAFANA_URL` 或在 P4 補 `tests/` |
+
+### 🔵 覆蓋缺口（review 補查，非缺陷）
+
+- **依賴供應鏈**：`npm audit` 有 8 個漏洞（5 high），全在 `@grafana/*` 的 transitive。
+  但 webpack 將 `@grafana/*` 設為 externals、`dist/module.js` 僅 2,729 bytes，
+  **有漏洞的套件不會隨 plugin 出貨** —— 乾淨是靠架構不是靠運氣。
+- **缺失的整合測試**：計畫要求補一條等價於 `server.test.ts` 的「過濾 → 去重 → 播報」整合測試，
+  P2 未補。**但現在不建議補** —— production 端對 `src/core/` 目前零 import
+  （串接碼只存在於已刪的 `main:src/server.ts`），此刻在 `__tests__/` 自己接線自己斷言，
+  P4 把次序寫反時照樣會綠。應在 P4 有真實串接碼之後才補。
+- **`.config/AGENTS/`** 這批會直接指揮下一個 agent 的指令檔，review 未實質審過內容。
+
 ### 🟢 小決定
 
 | 事項 | P2 的處置 | 待決 |

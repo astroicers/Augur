@@ -4,7 +4,7 @@
 > 原 `airi-ops-bridge`（Grafana→文字→AIRI 橋），已升級為**瀏覽器 avatar 播報**。
 >
 > 本檔是**概覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-07-18。
+> 最後更新：2026-09-16（僅加註狀態；**內文仍是已刪除的舊架構**，見下方警告）。
 
 ## 一句話
 
@@ -70,7 +70,14 @@ monitoring/  docker-compose：Grafana/Prometheus/Loki/Alloy + 告警規則 + web
 
 > ⚠️ **ADR-004 為 `FIRM`（2026-09-16 經 `/asp:approve-adr` 由 `Draft` 升級）。**
 > FIRM 已解除「禁止實作生產代碼」的鎖，改造可以動工；但**5 個 POC gate（G-ADR004-1～5）尚未跑**，
-> 故上表前三份**暫時仍掛 Accepted**，本檔描述的架構在改造落地前仍然有效。
+> 故上表前三份**暫時仍掛 Accepted**。
+>
+> 🚨 **但本檔以下的內容已經失效。** 它描述的資料流（webhook → Node 導播 → Edge TTS → WS →
+> VRM avatar）與所有檔案路徑，已於 commit `d428af1` 整批刪除。本檔目前**只有 git 考古價值**，
+> 整份重寫排在 P6。此處先前寫著「本檔描述的架構在改造落地前仍然有效」—— 那句話寫下時為真，
+> 下一個 commit 就變成假的，現予更正。
+> ⚠️ ADR-004 指定本檔為 ADR 索引的權威入口，所以照 ADR 鏈走的人會落在這裡：
+> **上方的 ADR 索引表是可信的，以下的架構敘述不是。**
 > POC 全綠並回填機械證據後，ADR-004 再由人類授權升 Accepted，前三份屆時轉 Superseded、
 > 本檔需整份重寫（資料流圖全數作廢）。
 
@@ -99,4 +106,5 @@ l2d 的 `character.psd`（canonical 512 框 + namei taxonomy）rig 成 moc3 → 
 - **決策改變 → 先動 ADR**（新增/supersede `docs/adr/`），再回頭同步本檔的「架構/功能/ADR 索引」。ADR 是權威,本檔是導覽。
 - 動到 seam（新 source/sink/avatar controller、config、埠、資料流）時**同步更新對應區塊 + 檔案路徑**，並更新檔頭「最後更新」日期。
 - 新增 avatar 格式 → 實作 `AvatarController` + 更新「avatar 可換」與資料流圖。
-- 保持與 `README.md`（root）/ `web/README.md`（前端）/ `.env.example` 一致（設定表以 `.env.example` 為準）。
+- 保持與 `README.md`（root）/ `src/README.md`（plugin 使用者導向）一致。
+  （原本寫的 `web/README.md` 已隨 `web/` 於 `d428af1` 刪除。）

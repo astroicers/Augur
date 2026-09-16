@@ -16,9 +16,13 @@ dist/
 __pycache__/
 *.pyc
 
-# namei 匯出壓縮檔 —— 內容已解壓在 live2d/_archive/nami/parts/（16 檔位元組數逐一相符），
-# 是完全重複的資料，不進版控。
+# namei 匯出的娜美風角色美術 —— 零出處、零授權記錄，而本 repo 是公開的 Apache-2.0。
+# 已於 review 後從 branch 歷史中移除（只保留 layout.json / manifest.json 兩個純座標檔）。
+# 原檔仍在本機備份，需要時可取回，但**不要再進版控**，除非先補齊出處與授權。
 namei-exports.zip
+live2d/_archive/nami/*.png
+live2d/_archive/nami/library/
+live2d/_archive/nami/parts/
 
 # ---- 以下由 @grafana/create-plugin 7.11.0 腳手架帶入（P2 合併）----
 # yarn / pnp

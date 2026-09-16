@@ -1,5 +1,13 @@
 # Augur 監控 stack — Windows 主機效能/安全 → 語音告警
 
+> 🚨 **本檔描述的 bridge 架構（:3001 webhook 接收端）已於 `d428af1` 刪除**，ADR-004 把
+> Augur 改成 Grafana panel plugin，告警改由 panel 自己 pull。
+> **docker-compose、prometheus、loki、alloy 與 alert rule 的部分仍然有效且在用**；
+> 凡是提到 `:3001`、`host.docker.internal:3001`、bridge、contactpoints 的段落都已作廢。
+> 整份重寫與 `alerting/{contactpoints,policies}.yml` 的去留一併排在 P3，
+> 且需先裁定 ADR-004 決策 7「monitoring/ 全套保留」與計畫 P3「丟」的矛盾
+> （見 `../docs/handoff/P2-handoff.md`）。
+
 用 Docker 起一套 **Grafana + Prometheus + Loki**，監控 **Windows 主機**的效能與安全，
 告警經 Webhook 灌進 **Augur bridge** → AIRI 角色用語音念出。
 
@@ -23,7 +31,8 @@ Port 刻意避開本機既有的 `fh-lgtm`（3000/3100/9090）：**Grafana 3002�
 ## 先決條件
 
 - Docker Desktop（WSL 整合）。
-- Augur bridge 已能連上 AIRI（見 [`../docs/airi-runbook.md`](../docs/airi-runbook.md)）。
+- Augur bridge 已能連上 AIRI。（原本連向的 `../docs/airi-runbook.md` 已於 `d428af1` 隨
+  整條 bridge 管線刪除。）
 - bridge `.env` 需設 **`HOST=0.0.0.0`**（讓 Grafana 容器經 `host.docker.internal:3001` 連回）。
 
 ## 啟動（WSL 端）
