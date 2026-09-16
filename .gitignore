@@ -19,3 +19,32 @@ __pycache__/
 # namei 匯出壓縮檔 —— 內容已解壓在 live2d/_archive/nami/parts/（16 檔位元組數逐一相符），
 # 是完全重複的資料，不進版控。
 namei-exports.zip
+
+# ---- 以下由 @grafana/create-plugin 7.11.0 腳手架帶入（P2 合併）----
+# yarn / pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+/logs
+/pids
+*.pid
+*.seed
+*.pid.lock
+/lib-cov
+/coverage
+/artifacts/
+/work/
+/ci/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+.idea
+.eslintcache
+# ---- P2 新增：jest --json 的中繼輸出（tools/asp-test.sh 用）----
+.jest-result.json

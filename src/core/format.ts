@@ -1,18 +1,19 @@
 /**
- * ParsedAlert → 給角色講的訊息字串（SPEC §8 / §9.3）。
+ * ParsedAlert → 給吉祥物講的訊息字串。
  *
- * 保持笨：只組「事實句」，不接 LLM、不修飾語氣。自然口吻交給 AIRI 的角色 brain
- * （文字會經由 input:text → 本地 LLM → TTS 念出，見 airi.ts）。
+ * 保持笨：只組「事實句」，不接 LLM、不修飾語氣 —— 輸出直接餵給 Web Speech API
+ * 唸出（ADR-004 決策 4）。`formatNumber` 的特別處理正是為了「唸得出來」。
  */
-import type { AlertLang, BroadcastPlan, ParsedAlert } from './types.js'
-import { severityToEmotion } from './emotion.js'
+import type { AlertLang, BroadcastPlan, ParsedAlert } from './types'
+import { severityToEmotion } from './emotion'
 
 export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
   return lang === 'en' ? formatEn(a) : formatZh(a)
 }
 
 /**
- * ParsedAlert → BroadcastPlan（導播輸出）。text 重用 formatAlert，emotion 由 §6 映射。
+ * ParsedAlert → BroadcastPlan（ADR-002 §1 的事件契約，由 ADR-004 決策 5 明文繼承）。
+ * text 重用 formatAlert，emotion 由 severityToEmotion 映射。
  * instance/value 只在有值時帶上（配合 strict / noUncheckedIndexedAccess）。
  */
 export function buildBroadcastPlan(a: ParsedAlert, lang: AlertLang = 'zh'): BroadcastPlan {
@@ -37,9 +38,9 @@ function formatZh(a: ParsedAlert): string {
     parts.push(`嚴重度 ${a.severity}`)
   }
 
-  if (a.instance) parts.push(`受影響對象 ${a.instance}`)
-  if (a.value !== undefined) parts.push(`目前數值 ${formatNumber(a.value)}`)
-  if (a.summary) parts.push(a.summary)
+  if (a.instance) {parts.push(`受影響對象 ${a.instance}`)}
+  if (a.value !== undefined) {parts.push(`目前數值 ${formatNumber(a.value)}`)}
+  if (a.summary) {parts.push(a.summary)}
 
   return `${parts.join('，')}。`
 }
@@ -54,9 +55,9 @@ function formatEn(a: ParsedAlert): string {
     parts.push(`severity ${a.severity}`)
   }
 
-  if (a.instance) parts.push(`on ${a.instance}`)
-  if (a.value !== undefined) parts.push(`current value ${formatNumber(a.value)}`)
-  if (a.summary) parts.push(a.summary)
+  if (a.instance) {parts.push(`on ${a.instance}`)}
+  if (a.value !== undefined) {parts.push(`current value ${formatNumber(a.value)}`)}
+  if (a.summary) {parts.push(a.summary)}
 
   return `${parts.join(', ')}.`
 }
@@ -69,9 +70,9 @@ function formatEn(a: ParsedAlert): string {
  *   → 依量級補足小數位（最多 8 位），讓首位有效數字顯示出來。
  */
 function formatNumber(n: number): string {
-  if (!Number.isFinite(n)) return String(n)
+  if (!Number.isFinite(n)) {return String(n)}
   const abs = Math.abs(n)
-  if (abs >= 1e21) return BigInt(Math.round(n)).toString()
+  if (abs >= 1e21) {return BigInt(Math.round(n)).toString()}
   if (abs > 0 && abs < 0.01) {
     const decimals = Math.min(8, 1 - Math.floor(Math.log10(abs)))
     return n.toFixed(decimals)

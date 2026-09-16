@@ -1,8 +1,8 @@
 /**
- * 嚴重度排名與門檻過濾(SPEC §12 Phase 2:severity 過濾)。
+ * 嚴重度排名與門檻過濾。
  *
- * Grafana 的 `labels.severity` 是任意字串,但實務上集中在幾個常見值。
- * 這裡給一張排名表,讓 bridge 能「只播 >= 門檻」的告警,把雜訊擋在發聲之前。
+ * 嚴重度是任意字串,但實務上集中在幾個常見值。
+ * 這裡給一張排名表,讓播報端能「只播 >= 門檻」的告警,把雜訊擋在發聲之前。
  */
 
 /** 已知嚴重度 → 排名(數字越大越嚴重)。未知字串視為最低(0)。 */
@@ -29,6 +29,6 @@ export function isKnownSeverity(s: string): boolean {
  * `min` 為空字串/undefined → 不過濾(全部放行,最不意外)。
  */
 export function meetsMin(severity: string, min: string | undefined): boolean {
-  if (!min) return true
+  if (!min) {return true}
   return rankOf(severity) >= rankOf(min)
 }

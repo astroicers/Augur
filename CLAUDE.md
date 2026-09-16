@@ -6,8 +6,10 @@
 
 ## 專案說明
 
-[請填寫專案用途]
+Grafana panel plugin `augur-mascot-panel`：2D 3x3 精靈圖吉祥物 + Web Speech 語音，把本面板的告警念出來。零後端（ADR-004，supersede ADR-001/002/003）。
 
 ## 特殊規則（選填，覆蓋 user-level 預設）
 
-[例如：禁止修改 legacy/ 目錄；必須保持向後相容]
+- This repository contains a Grafana plugin. You must Read @./.config/AGENTS/instructions.md before doing changes.
+- **禁止手改 `.config/`**（由 @grafana/create-plugin 託管）。擴充一律走根層的 `tsconfig.json` / `eslint.config.mjs` / `jest.config.js` / `.prettierrc.js` / `playwright.config.ts` wrapper。手改 `.config/` 的後果不是「被覆寫」而是「靜默失效」——migration 全是 `if (!AST match) return` 的早退，改壞比對點就會被無聲 skip。
+- 本專案**不使用**腳手架的根層 `docker-compose.yaml` 與 `provisioning/`（P2 已裁定不落地）；開發環境只有 `monitoring/` 一套，`npm run server` 指向它。`.config/docker-compose-base.yaml` 與 `.config/Dockerfile` 是刻意閒置的託管檔，不要 extends。
