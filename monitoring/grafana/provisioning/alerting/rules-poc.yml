@@ -51,3 +51,42 @@ groups:
               datasource: { type: __expr__, uid: __expr__ }
               intervalMs: 1000
               maxDataPoints: 43200
+
+      # 會翻轉的規則：minute() % 2 —— 奇數分鐘為真、偶數分鐘為假，每分鐘翻一次。
+      # 配 for: 20s，一個「為真」的 60 秒窗內可觀察到：
+      #   Pending(20s) → Alerting(40s) → 下一分鐘 Normal(60s)
+      # 這是唯一能測到 resolved / pending 的辦法 —— always-firing 規則只看得到 alerting，
+      # 而 dedup.ts 的 resolved 綁狀態語意完全建立在能正確辨識「恢復」之上。
+      - uid: augur-poc-flapping
+        title: PocFlapping
+        condition: B
+        for: 20s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 每分鐘翻轉一次，用來觀察 pending / alerting / normal 三態轉換
+          __dashboardUid__: augur-poc
+          __panelId__: "3"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: 'minute() % 2'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A > 0.5'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200

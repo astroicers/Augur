@@ -51,14 +51,54 @@ WebSocket → 自架 React 頁上的 VRM avatar。它能動（20 個後端測試
 **Augur 由「獨立播報頁 + Node 導播」改為單一 Grafana Panel Plugin（`augur-mascot-panel`），零後端。**
 
 ### 1. 形態與技術棧
-`@grafana/create-plugin` 腳手架（webpack，**非** Vite）+ `@grafana/data|ui|runtime` 13.2.x + React 18。
+`@grafana/create-plugin` 腳手架（webpack，**非** Vite）+ React 18。
+**執行期** Grafana 13.2.x；**編譯期** pin `@grafana/data|ui|runtime` **13.1.0**（腳手架預設）——
+兩者可以不同，因為 `@grafana/*` 在 webpack 設定裡是 **externals**，不進 bundle，執行期由 Grafana 本體提供。
+（原文寫「`@grafana/data|ui|runtime` 13.2.x」把編譯期與執行期混為一談，2026-09-17 修訂。）
 樣式改用 `@grafana/ui` 的 `useStyles2` + theme token，**廢除 Tailwind**。
 未簽署 plugin 以 `allow_loading_unsigned_plugins` 載入，plugin 目錄指向建置產物 `dist/`。
 
-### 2. 告警來源：`props.data.alertState` 為主、`fieldConfig.thresholds` 為輔
-**廢除整條 webhook → WS push 管線。** 改由 panel 自己 pull：
-- 主來源 `PanelProps.data.alertState`（`alerting`/`pending`/`ok`/`no_data`/`recovering`/`paused`）
-  —— 這是**真正的 Grafana Alert Rule 狀態**，含 `for` duration 語意，正是 webhook 原本在提供的東西。
+### 2. 告警來源：`alertState` 當觸發訊號、Alerting rules 端點當內容來源
+
+> 🔬 **本節於 2026-09-17 依 POC 實測重寫。** 原文假設 `alertState` 本身就是告警內容來源，
+> 那是錯的 —— 它只有四個欄位。實測記錄見 `.asp-fact-check.md`「alertState / rules 端點實測」一節。
+
+**廢除整條 webhook → WS push 管線。** 改由 panel 自己 pull，**雙軌**：
+
+**(a) 觸發訊號 —— `PanelProps.data.alertState`。** 實測（Grafana 13.2.2）它只回：
+```json
+{ "state": "alerting", "id": 0, "panelId": 1, "dashboardUID": "augur-poc" }
+```
+**僅此四欄。無 `ruleUID`、無 alertname、無 severity、無 summary。**
+它便宜、即時、隨 panel data 一起到，適合當「狀態有沒有變」的訊號，**但當不了內容來源**。
+
+⚠️ 狀態值只有 **`alerting` / `pending` / `ok`** 三種可達（`promAlertStateToAlertState()`
+是 firing→Alerting、pending→Pending、**其餘一律 OK**）。原文列的六態（含 `no_data` /
+`recovering` / `paused`）透過這條路徑永遠到不了。
+⚠️ 它是**黏著的**（`alertState != null ? alertState : 上一次`），**永不回 `undefined`** ——
+所以「偵測不到就降級」這個機制不成立，降級只能靠顯式的 panel option 強制。
+
+**(b) 內容來源 —— `getBackendSrv().get('/api/prometheus/grafana/api/v1/rules', {dashboard_uid, panel_id})`。**
+實測回傳與 `ParsedAlert` **一對一**：`alerts[].labels.alertname` → `name`、
+`labels.severity` → `severity`（本例 `critical`，**直接命中 `severity.ts` 的 RANK 表**）、
+`annotations.summary` → `summary`、`value` → `value`、`activeAt` → `startsAt`。
+`dashboard_uid` + `panel_id` 過濾實測有效（全庫 9 條縮到 1 條），panel 只抓自己的規則。
+
+**降級**：(b) 失敗時退回只用 (a) 播「有 N 條告警正在燒」的泛用句。這是天然的 fallback，不是另一條路。
+
+**接受的風險**：該端點無官方文件保證穩定性（`.asp-fact-check.md` 標中高風險）。
+但 Grafana 自己的 Alerting UI 就在用它，且我們已量過確切 payload 形狀，壞掉時降級路徑是現成的。
+
+**實作時會咬人的三點**（實測）：
+1. 狀態詞彙有三套且不可互比：`alertState.state` = `alerting`（小寫）、
+   rule 層 `state` = `firing`、`alerts[].state` = `Alerting`（首字大寫）。
+2. `value` 是**字串科學記號**（`"1e+00"`），要 `parseFloat` 才能餵給 `format.ts` 的 `formatNumber`。
+3. `alertState` 能到達 panel 有**四個硬前提**，缺一則恆為空：
+   `module.ts` 必須 `.useFieldConfig().setDataSupport({ alertStates: true, annotations: false })`；
+   panel 在 dashboard JSON 必須至少一個 query target 且 `plugin.json` 不可設 `skipDataQuery`；
+   alert rule 必須帶 `__dashboardUid__` / `__panelId__` **註解**；
+   dashboard 時間範圍結尾必須是 `now`。
+   另有 `hasAlertRules` latch —— 先載入 dashboard 再建規則的話必須整頁重新載入。
 - 輔來源 `fieldConfig.defaults.thresholds`（standard field config，**不自訂 option**，
   以保留 overrides、原生編輯 UI 與 `getColorForValue`）。
 
@@ -75,9 +115,25 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 **接受的代價（明碼標價）**：
 - 聲線由 Edge TTS 的 zh-TW Neural 降為**作業系統內建聲線**，且 zh-TW 是否存在由 OS 決定。
 - **ADR-002 §3 的「v0 振幅 lip-sync」直接失效** —— Web Speech 不吐 audio buffer，接不上 `AnalyserNode`。
-  故介面 `setMouth(open: number)` 改為 **`setSpeaking(boolean)`**，嘴型改用
-  `SpeechSynthesisUtterance.onboundary` 做 word-level 開合，或 speaking 期間循環播固定幾格。
+  故介面 `setMouth(open: number)` 改為 **`setSpeaking(boolean)`**，並新增**可選**成員
+  `setMouthOpen?(open: number)` 承接幀級嘴型（未來若有拿得到 audio buffer 的 TTS，
+  振幅 lip-sync 只要實作這個成員就能回來，不必再動一次契約）。
+
+  > 🔬 **2026-09-17 POC 實測修訂**：原文與後續 review 都假設「中文不觸發 boundary，
+  > 只能定速循環」，而 review 進一步以「boundary 模式下 speaking 每秒翻轉 5 次以上」為由
+  > 主張 MVP 砍掉它。**那個頻率是假設，不是量測。**
+  > 實測（Windows 11 / Chrome 152 / Microsoft Hanhan）：77 字句觸發 **21 次** `word` 事件，
+  > `charLength` 介於 **1–14**（引擎在做真正的中文斷詞），頻率 **1.53 次/秒**，
+  > 相鄰間隔平均約 **600ms**。
+  > **結論：boundary 驅動嘴型可行，且優於定速循環** —— `charLength` 給出每組字數可決定擺動次數，
+  > `charIndex` 另可驅動播報 feed 的逐詞高亮。P4 以 boundary 事件為**同步點**，
+  > 兩事件之間跑嘴型循環；`setSpeaking` 保留為不觸發 boundary 的引擎的 fallback。
+  > 另：語速基準 **5.6 字/秒**，典型告警句 77 字 ≈ 14 秒 —— 直接決定播報佇列的積壓速度。
 - 放棄 Grafana 通知政策（`group_wait` / `repeat_interval`）的節流語意。
+- ~~長播報需依時長 ≤10 秒切段~~ —— **2026-09-17 實測未重現「約 15 秒截斷」**
+  （924 字連續發聲至 90 秒仍未中斷）。改為：**使用本機聲線（`localService === true`）時不切段；
+  偵測到遠端聲線時才切段** —— 該 bug 歷史上與遠端聲線相關，而本次用的是本機 Hanhan，
+  有風險的那一組沒測到。
 
 ### 5. 明文繼承 ADR-002 的兩個抽象
 這兩個是前三份 ADR 最好的設計決定，**不隨 supersede 作廢**：
@@ -139,19 +195,32 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 
 ## Follow-up / POC gate（升 FIRM 前必過）
 
-- **G-ADR004-1（plugin 載入）**：`npm run build` → `docker compose up` →
-  Grafana **Administration → Plugins** 看得到 `augur-mascot-panel`，無簽章錯誤。
+- **G-ADR004-1（plugin 載入）✅ PASS（2026-09-17）**：`/api/plugins` 回
+  `id=augur-mascot-panel name=Mascot type=panel enabled=true signature=unsigned`。
+  環境為 `monitoring/` 升至 `grafana/grafana:13.2.2` 後掛 `../dist` + unsigned 白名單。
+  附帶實測：**11.4.0 → 13.2.2 不需要砍 `grafana-data` volume**，沿用既有 volume
+  直接啟動、DB migration 全部成功 —— 先前判定「需 `docker volume rm`」是靜態推理，不成立。
 - **G-ADR004-2（真告警端到端）**：`rules-perf.yml` 的 `WindowsHighCPU` 觸發 →
   panel 收到 `data.alertState.state === 'alerting'` → 吉祥物換 critical 表情 + 開口念出。
 - **G-ADR004-3（防洪）**：持續 firing 下經過數個 refresh interval **只念一次**（`dedup.ts` 生效）。
 - **G-ADR004-4（漸進降級，本 ADR 的關鍵風險驗證）**：開啟
   `enable_frontend_sandbox_for_plugins` 後，plugin **降級而非崩潰**。
-- **G-ADR004-5（語音）**：`voiceschanged` 後取得 zh 聲線；無 zh 語音的環境 fallback 不炸。
+- **G-ADR004-5（語音）✅ PASS（2026-09-17）**：於使用者實際看 dashboard 的機器
+  （Windows 11 / Chrome 152）實測 —— zh-TW 聲線 **4 個**（Hanhan 預設 / Yating / Zhiwei 三個為
+  **本機**引擎）；`getVoices()` 首呼確實為空，單次 `voiceschanged` 於 +17ms 後給滿 25 個；
+  **`speak()` 不需要 user gesture**（零點擊即發聲且使用者確認聽到，且是在沙箱 iframe 內）。
+  ⚠️ Chrome 的自動播放政策對同一 origin 有黏性，工程上仍保留「啟用鈕」，但**不應阻擋首次播報**。
 
 ## 待驗風險
 
 1. **`alertState` 的 `@internal` 標記**（風險：中）。Grafana 核心自用，無聲移除機率低，
-   但無 deprecation 週期保證。緩解：偵測不到時退回 `fieldConfig.thresholds` 自算。
+   但無 deprecation 週期保證。~~緩解：偵測不到時退回 `fieldConfig.thresholds` 自算。~~
+   **2026-09-17 修訂**：該緩解不成立 —— `alertState` 是黏著的、永不回 `undefined`，
+   偵測不到這件事本身偵測不到。降級只能由顯式的 panel option 強制。
+6. **`resolved` / `pending` / `recovering` 的實際表現未測**（新增，2026-09-17）。
+   POC 用的是恆為 firing 的規則，只驗到 `alerting`。需要一條會翻轉的規則才測得到
+   狀態轉換與 `for` duration 的 Pending 期。**列為 P4 硬前置** ——
+   `dedup.ts` 的 resolved 綁狀態語意完全建立在能正確辨識「恢復」之上。
 2. **跨 panel DOM 為 unsupported**（風險：中高）。緩解＝決策 6 的漸進降級 + 每次 Grafana
    minor 升級重跑 G-ADR004-4。README 須明寫不相容 Frontend Sandbox。
 3. **`monitoring/` 落後兩個大版本**（Grafana 11.4.0 → 13.2.x）。升級本身可能牽動既有

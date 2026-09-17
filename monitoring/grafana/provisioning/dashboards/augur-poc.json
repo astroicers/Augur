@@ -1,24 +1,42 @@
 {
   "uid": "augur-poc",
   "title": "Augur POC — alertState 探測",
-  "tags": ["augur", "poc", "adr-004"],
+  "tags": [
+    "augur",
+    "poc",
+    "adr-004"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
-  "time": { "from": "now-15m", "to": "now" },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
       "type": "augur-mascot-panel",
       "title": "Mascot（G-ADR004-1 / alertState 探測）",
       "description": "panel id 必須是 1 —— rules-poc.yml 的 __panelId__ 綁的是這個數字。此 panel 必須至少有一個 query target，否則 alertState 恆為空。",
-      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "vector(1)",
           "instant": false,
           "range": true,
@@ -35,9 +53,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 0.5 },
-              { "color": "red", "value": 0.9 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
             ]
           }
         },
@@ -49,12 +76,23 @@
       "type": "timeseries",
       "title": "對照組：同一個 query 用內建 timeseries 畫",
       "description": "確認資料本身沒問題。若這裡有線而 Mascot panel 沒資料，問題在 plugin 不在 query。",
-      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "vector(1)",
           "instant": false,
           "range": true,
@@ -63,10 +101,52 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
           "min": 0,
           "max": 2
         },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "augur-mascot-panel",
+      "title": "翻轉規則（pending / alerting / normal 三態）",
+      "description": "綁 PocFlapping。panel id 必須是 3 以對上 __panelId__。",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "minute() % 2",
+          "instant": false,
+          "range": true,
+          "legendFormat": "flap"
+        }
+      ],
+      "options": {
+        "text": "flapping",
+        "showSeriesCount": true,
+        "seriesCountSize": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {},
         "overrides": []
       }
     }
