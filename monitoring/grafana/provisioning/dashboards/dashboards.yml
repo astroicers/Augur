@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# 把 provisioning/dashboards/*.json 當成 dashboard 來源。
+# allowUiUpdates: false —— dashboard 以檔案為準，避免有人在 UI 改了但沒進版控。
+providers:
+  - name: augur
+    orgId: 1
+    folder: Augur POC
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
