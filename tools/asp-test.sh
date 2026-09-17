@@ -37,9 +37,9 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = src/core/__tests__ 四支之和（dedup 7 + emotion 3 + severity 4 +
-# format-plan 4）。增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=18
+# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 13）。
+# 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
+MIN_TESTS=31
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \

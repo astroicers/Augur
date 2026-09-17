@@ -1,0 +1,206 @@
+import { createPanelAlertSource, parseRulesResponse, type RuleDetail } from '../panelAlerts';
+import { createDedup } from '../../core/dedup';
+import { meetsMin } from '../../core/severity';
+import { buildBroadcastPlan } from '../../core/format';
+
+const UID = 'augur-poc';
+const PANEL = 1;
+
+/** 實測回應的形狀（見 .asp-fact-check.md）。 */
+function rulesResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    data: {
+      groups: [
+        {
+          rules: [
+            {
+              name: 'PocAlwaysFiring',
+              state: 'firing',
+              labels: { severity: 'critical' },
+              annotations: { __dashboardUid__: UID, __panelId__: '1', summary: '測試用' },
+              alerts: [
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'PocAlwaysFiring', severity: 'critical' },
+                  annotations: { __dashboardUid__: UID, __panelId__: '1', summary: '測試用' },
+                  value: '1e+00',
+                  activeAt: '2026-09-17T01:38:00Z',
+                },
+              ],
+              ...overrides,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function mkSource(fetchRules: () => Promise<RuleDetail[]>, clock = { t: 1_000_000 }) {
+  return createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules,
+    fallbackSeverity: 'critical',
+    ruleCacheSec: 0,
+    now: () => clock.t,
+  });
+}
+
+const DETAIL: RuleDetail[] = [
+  {
+    alertname: 'PocAlwaysFiring',
+    severity: 'critical',
+    summary: '測試用',
+    value: 1,
+    activeAt: '2026-09-17T01:38:00Z',
+  },
+];
+
+test('parseRulesResponse：攤平成 RuleDetail，value 的字串科學記號轉成數字', () => {
+  const out = parseRulesResponse(rulesResponse(), UID, PANEL);
+  expect(out).toHaveLength(1);
+  expect(out[0]).toEqual({
+    alertname: 'PocAlwaysFiring',
+    severity: 'critical',
+    summary: '測試用',
+    value: 1,
+    activeAt: '2026-09-17T01:38:00Z',
+  });
+});
+
+test('parseRulesResponse：別的 panel 的規則要濾掉（過濾參數被忽略時的第二道防線）', () => {
+  const resp = rulesResponse({ annotations: { __dashboardUid__: UID, __panelId__: '99' } });
+  expect(parseRulesResponse(resp, UID, PANEL)).toHaveLength(0);
+});
+
+test('parseRulesResponse：只取 state=Alerting 的 alert，Pending 不算', () => {
+  const resp = rulesResponse();
+  resp.data.groups[0]!.rules[0]!.alerts[0]!.state = 'Pending';
+  expect(parseRulesResponse(resp, UID, PANEL)).toHaveLength(0);
+});
+
+test('parseRulesResponse：形狀不對時回空陣列而不是丟例外', () => {
+  expect(parseRulesResponse(null, UID, PANEL)).toEqual([]);
+  expect(parseRulesResponse({ data: {} }, UID, PANEL)).toEqual([]);
+});
+
+test('alerting → 建立 episode；持續 alerting 回同一個事件（fingerprint 與 startsAt 不漂移）', async () => {
+  const clock = { t: 1_000_000 };
+  const s = mkSource(async () => DETAIL, clock);
+  const first = await s.evaluate({ state: 'alerting' }, UID);
+  clock.t += 30_000;
+  const second = await s.evaluate({ state: 'alerting' }, UID);
+
+  expect(first).toHaveLength(1);
+  expect(first[0]!.status).toBe('firing');
+  expect(first[0]!.fingerprint).toBe('alert:PocAlwaysFiring');
+  expect(first[0]!.severity).toBe('critical');
+  // 不變量 2：時鐘走了 30 秒，startsAt 不能跟著動。
+  expect(second[0]!.startsAt).toBe(first[0]!.startsAt);
+  expect(second[0]!.fingerprint).toBe(first[0]!.fingerprint);
+});
+
+test('ok → 由記住的 episode 複製出 resolved，fingerprint 與 startsAt 逐字相同', async () => {
+  const s = mkSource(async () => DETAIL);
+  const firing = (await s.evaluate({ state: 'alerting' }, UID))[0]!;
+  const resolved = (await s.evaluate({ state: 'ok' }, UID))[0]!;
+
+  expect(resolved.status).toBe('resolved');
+  // dedup 的 resolved 綁狀態只靠 fingerprint；startsAt 一起釘住是不變量 2。
+  expect(resolved.fingerprint).toBe(firing.fingerprint);
+  expect(resolved.startsAt).toBe(firing.startsAt);
+  expect(resolved.name).toBe(firing.name);
+  expect(s.episodeCount()).toBe(0);
+});
+
+test('resolved 不帶 value —— format.ts 會把它念成「目前數值 N」，而恢復時那已不是目前', async () => {
+  const s = mkSource(async () => DETAIL);
+  const firing = (await s.evaluate({ state: 'alerting' }, UID))[0]!;
+  const resolved = (await s.evaluate({ state: 'ok' }, UID))[0]!;
+
+  expect(firing.value).toBe(1);
+  expect(resolved).not.toHaveProperty('value');
+  expect(buildBroadcastPlan(resolved, 'zh').text).not.toContain('目前數值');
+});
+
+test('沒燒過就 ok → 不產生任何事件（不會憑空報恢復）', async () => {
+  const s = mkSource(async () => DETAIL);
+  expect(await s.evaluate({ state: 'ok' }, UID)).toEqual([]);
+});
+
+test('pending 不產生事件 —— 先播 pending 會讓真的燒起來那一刻被 dedup 吞掉', async () => {
+  const s = mkSource(async () => DETAIL);
+  expect(await s.evaluate({ state: 'pending' }, UID)).toEqual([]);
+  expect(s.episodeCount()).toBe(0);
+});
+
+test('未知狀態不產生事件，也不清掉既有 episode', async () => {
+  const s = mkSource(async () => DETAIL);
+  await s.evaluate({ state: 'alerting' }, UID);
+  expect(await s.evaluate({ state: 'no_data' }, UID)).toEqual([]);
+  expect(await s.evaluate(undefined, UID)).toEqual([]);
+  expect(s.episodeCount()).toBe(1);
+});
+
+test('rules 端點失敗 → 仍然播泛用句，不是沉默', async () => {
+  const s = mkSource(async () => {
+    throw new Error('endpoint gone');
+  });
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+  expect(out).toHaveLength(1);
+  expect(out[0]!.fingerprint).toBe(`alert:panel:${PANEL}`);
+  expect(out[0]!.severity).toBe('critical');
+});
+
+test('多條規則綁同一個 panel → 各自獨立的 fingerprint', async () => {
+  const two: RuleDetail[] = [
+    { alertname: 'RuleA', severity: 'warning' },
+    { alertname: 'RuleB', severity: 'critical' },
+  ];
+  const s = mkSource(async () => two);
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+  expect(out.map((a) => a.fingerprint)).toEqual(['alert:RuleA', 'alert:RuleB']);
+});
+
+/**
+ * 這條等價於已刪除的 `test/server.test.ts:84`。
+ * 它驗的是「過濾 → 去重 → 播報」三件事在**真正的處理迴圈**裡有生效，
+ * 而不是各自的單元行為 —— 那是整個專案最有價值的一條測試。
+ */
+test('整合：過濾 info、持續 firing 只播一次、恢復播一次、孤兒 resolved 吞掉', async () => {
+  const clock = { t: 5_000_000 };
+  const detail: RuleDetail[] = [
+    { alertname: 'Noisy', severity: 'info' },
+    { alertname: 'Real', severity: 'critical' },
+  ];
+  const s = mkSource(async () => detail, clock);
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+
+  const spoken: string[] = [];
+  async function tick(state: string) {
+    for (const a of await s.evaluate({ state }, UID)) {
+      if (a.status === 'firing' && !meetsMin(a.severity, 'warning')) {
+        continue;
+      }
+      if (!dedup.shouldSpeak(a)) {
+        continue;
+      }
+      spoken.push(buildBroadcastPlan(a, 'zh').text);
+    }
+  }
+
+  await tick('alerting');
+  clock.t += 30_000;
+  await tick('alerting'); // 持續燒：不該再念
+  clock.t += 30_000;
+  await tick('ok'); // 恢復：念一次
+  clock.t += 30_000;
+  await tick('ok'); // 孤兒 resolved：吞掉
+
+  expect(spoken).toHaveLength(2);
+  expect(spoken[0]).toContain('偵測到告警：Real');
+  expect(spoken[0]).toContain('嚴重度 critical');
+  expect(spoken[1]).toBe('告警已恢復：Real。');
+  // info 的那條從頭到尾沒被念過
+  expect(spoken.join('')).not.toContain('Noisy');
+});

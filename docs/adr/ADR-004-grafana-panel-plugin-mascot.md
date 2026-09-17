@@ -200,9 +200,19 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
   環境為 `monitoring/` 升至 `grafana/grafana:13.2.2` 後掛 `../dist` + unsigned 白名單。
   附帶實測：**11.4.0 → 13.2.2 不需要砍 `grafana-data` volume**，沿用既有 volume
   直接啟動、DB migration 全部成功 —— 先前判定「需 `docker volume rm`」是靜態推理，不成立。
-- **G-ADR004-2（真告警端到端）**：`rules-perf.yml` 的 `WindowsHighCPU` 觸發 →
+- **G-ADR004-2（真告警端到端）✅ PASS（2026-09-17）**：以合成規則 `PocAlwaysFiring`
+  （`vector(1) > 0`）取代真實 Windows 指標 —— 要驗的是「panel 收不收得到並念得出來」，
+  不是「CPU 會不會高」，而 Windows 側 9182 至今無 listener。
+  實測（headless chromium 對 live Grafana）panel 產出：
+  「偵測到告警：PocAlwaysFiring，嚴重度 critical，目前數值 1，POC 用的恆定告警…」
+  —— alertname / severity / value / summary 全部到位，console 零錯誤。
+  翻轉規則 `PocFlapping` 走完整圈：firing → 「告警已恢復：PocFlapping」→ 之後不再重複。
+  （原文的 `WindowsHighCPU` 路徑仍未驗，待 Windows 側裝好 windows_exporter。）
+- ~~**G-ADR004-2（原文）**~~：`rules-perf.yml` 的 `WindowsHighCPU` 觸發 →
   panel 收到 `data.alertState.state === 'alerting'` → 吉祥物換 critical 表情 + 開口念出。
-- **G-ADR004-3（防洪）**：持續 firing 下經過數個 refresh interval **只念一次**（`dedup.ts` 生效）。
+- **G-ADR004-3（防洪）✅ PASS（2026-09-17）**：`PocAlwaysFiring` 在 10:28:05 播報一次後，
+  接下來 **160 秒 / 16 個 refresh 週期再也沒有播報**。孤兒 resolved 也確實被吞掉
+  （恢復後持續 `ok` 不會重複念「已恢復」）。`dedup.ts` **零修改**達成。
 - **G-ADR004-4（漸進降級，本 ADR 的關鍵風險驗證）**：開啟
   `enable_frontend_sandbox_for_plugins` 後，plugin **降級而非崩潰**。
 - **G-ADR004-5（語音）✅ PASS（2026-09-17）**：於使用者實際看 dashboard 的機器
