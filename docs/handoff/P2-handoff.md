@@ -128,6 +128,49 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 
 ---
 
+## 三點五、POC 實測結果（2026-09-17）與它推翻的兩件事
+
+在**使用者實際看 dashboard 的機器**（Windows 11 / Chrome 152 / zh-TW）上跑過 Web Speech 探針，
+五項先前標「查不到」的問題全部有答案。完整記錄見 `.asp-fact-check.md`。
+
+| 問題 | 實測 |
+|---|---|
+| zh-TW 聲線 | **4 個**，其中 `Microsoft Hanhan`（預設）/ `Yating` / `Zhiwei` 三個是**本機**引擎 |
+| `getVoices()` 首呼 | **空的**；單次 `voiceschanged` 於 +17ms 後給滿 25 個 |
+| user gesture | **不需要** —— 零點擊即發聲且實際聽得到（還是在沙箱 iframe 內） |
+| 中文 `onboundary` | **會觸發，詞級**：77 字 21 次，`charLength` 1–14，頻率 1.53 次/秒 |
+| 15 秒截斷 | **未重現** —— 連續發聲 90 秒未中斷 |
+
+### ⚠️ 這推翻 ADR-004 決策 4 的一個前提（需你授權修訂 ADR）
+
+ADR-004 決策 4 寫「嘴型改用 `onboundary` 做 word-level 開合，**或** speaking 期間循環播固定幾格」，
+而 review 進一步主張 **MVP 砍掉 boundary 模式**，理由是「boundary 模式下 speaking 每秒翻轉 5 次以上，
+兩個圖層 visibility 每秒對調 5 次以上」。
+
+**那個頻率是假設的，不是量的。實測是 1.53 次/秒**，相鄰事件平均間隔約 600ms（範圍 200–1950ms）。
+在這個節奏下，boundary 驅動嘴型不但可行，還比定速循環好 ——
+`charLength` 直接給出這一組的字數（1–14），可以讓長組多擺幾下、短組只擺一下；
+`charIndex` 另可驅動播報 feed 的逐詞高亮。
+
+**建議的 P4 做法**（取代 review 的「砍掉 boundary」）：以 boundary 事件為**同步點**，
+在兩個事件之間跑一個嘴型循環，循環次數由 `charLength` 決定。
+`setSpeaking(boolean)` 仍保留作為 fallback（給不觸發 boundary 的語言或引擎），
+`setMouthOpen?(open)` 這個可選成員仍然值得留 —— 它現在有了第二個用途。
+
+### ⚠️ 這也讓「切段 ≤10 秒」失去實證依據
+
+review 要求 `chunkText` 依時長 ≤10s 切。實測 90 秒連續發聲未截斷，該要求目前**沒有證據支撐**。
+但**不建議就此取消**：本次用的是本機 Hanhan，而該 bug 歷史上與**遠端**聲線相關，
+有風險的那一組沒測到。建議改為「使用本機聲線時不切段；偵測到 `localService === false` 時才切段」。
+
+### 給 P4 的實測基準
+
+- **語速 5.6 字/秒**（Hanhan 預設 rate）。一則典型告警句約 77 字 ≈ **14 秒**。
+  這個數字直接決定播報佇列的積壓速度：三則 critical 同時進來就是 42 秒的隊列。
+- **啟用鈕仍保留但不應阻擋首次播報** —— 實測不需手勢，但 Chrome 的自動播放政策對
+  同一 origin 有黏性，不能排除先前互動的影響。
+- 首次 boundary 恆為 `name: "sentence"` 且 `charLength: 0`，是句首標記而非詞 —— 不要當成嘴型觸發。
+
 ## 四、P3/P4 契約備忘（給下一階段執行者）
 
 **types 層**：D1（複製 episode 而非重算）、D5（levelIndex）、D6（repeatFiringMin）、
