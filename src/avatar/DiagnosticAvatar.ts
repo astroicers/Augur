@@ -29,6 +29,7 @@ export class DiagnosticAvatar implements AvatarController {
   private speaking = false;
   private mouth = 0;
   private gaze = CENTER_CELL;
+  private reaction: 'click' | 'pending' | null = null;
   private raf = 0;
   private t0 = 0;
 
@@ -65,11 +66,17 @@ export class DiagnosticAvatar implements AvatarController {
     this.raf = requestAnimationFrame(this.loop);
     const color = EMOTION_HUE[this.emotion];
 
+    // reaction 在儀表上的呈現：click 讓整個網格閃一下，pending 讓中央格慢速呼吸。
+    // 精靈圖版會改成各自的反應格，但語意相同 —— 這裡是讓它看得見。
+    const pulse =
+      this.reaction === 'pending' ? 0.35 + 0.35 * Math.sin((performance.now() - this.t0) / 420) : 0;
     for (let i = 0; i < this.cells.length; i++) {
       const on = i === this.gaze;
       const el = this.cells[i]!;
       el.style.background = color;
-      el.style.opacity = on ? '1' : '0.18';
+      const base = on ? 1 : 0.18;
+      const withPending = i === CENTER_CELL ? Math.max(base, pulse) : base;
+      el.style.opacity = String(this.reaction === 'click' ? Math.max(withPending, 0.7) : withPending);
     }
 
     // setMouthOpen 有值時用它；否則在 speaking 期間跑定速嘴型。
@@ -102,6 +109,10 @@ export class DiagnosticAvatar implements AvatarController {
 
   setMouthOpen(open: number): void {
     this.mouth = Math.max(0, Math.min(1, open));
+  }
+
+  setReaction(kind: 'click' | 'pending' | null): void {
+    this.reaction = kind;
   }
 
   dispose(): void {

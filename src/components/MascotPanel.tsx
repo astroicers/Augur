@@ -211,7 +211,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         setLastClick(`${hit.key}${hit.pluginId ? ` · ${hit.pluginId}` : ''}`);
       } else if (!dom.crossPanel) {
         setLastClick('本 panel（已降級，看不到其他 panel）');
+      } else {
+        return;
       }
+      // 點擊回饋。420ms 後自動回復 —— 它是事件不是狀態。
+      avatarRef.current?.setReaction?.('click');
+      window.setTimeout(() => avatarRef.current?.setReaction?.(null), 420);
     };
 
     target.addEventListener('pointermove', onMove, { passive: true });

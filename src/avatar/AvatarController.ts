@@ -41,5 +41,19 @@ export interface AvatarController {
    */
   setMouthOpen?(open: number): void;
 
+  /**
+   * 可選：非告警的反應狀態。`null` = 回到無反應。
+   *
+   * **為什麼不擴充 `Emotion`**（ADR-004〈待驗風險 4〉原本寫的是「需擴充」，
+   * 2026-09-18 經人類授權改走這條）：`click` 與 `pending` **不是 severity 的函數**。
+   * 把它們塞進 `Emotion` 會逼 `severityToEmotion` 這個純函式去處理與 severity 無關的輸入，
+   * 污染 `core/` 的語意；而 `core/` 是整個專案唯一在架構反轉中零修改存活下來的部分。
+   *
+   * - `click`：使用者點了某個 panel。短暫（約 420ms）後自動回復。
+   * - `pending`：alert rule 的 `for` duration 期間。可持續數分鐘，是 warning/critical 的前驅。
+   *   只在 `emotion === 'calm'` 且未播報時顯示 —— 它不該跟 critical 搶同一張臉。
+   */
+  setReaction?(kind: 'click' | 'pending' | null): void;
+
   dispose(): void;
 }

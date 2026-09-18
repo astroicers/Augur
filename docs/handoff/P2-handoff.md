@@ -171,6 +171,38 @@ review 要求 `chunkText` 依時長 ≤10s 切。實測 90 秒連續發聲未截
   同一 origin 有黏性，不能排除先前互動的影響。
 - 首次 boundary 恆為 `name: "sentence"` 且 `charLength: 0`，是句首標記而非詞 —— 不要當成嘴型觸發。
 
+## 三點六、P5 素材：已裁定與待你回報（2026-09-18）
+
+規格在 `docs/sprite/sprite-sheet-spec.md`（1169 行，21 處跨設計矛盾的裁決全文保留）。
+
+### ✅ 已裁定
+
+| 事項 | 決定 |
+|---|---|
+| `AvatarController` 新增 `setReaction?('click'\|'pending'\|null)` | **放行**（已實作）。同時回覆 ADR-004〈待驗風險 4〉—— 該條原文寫「`emotion.ts` 只有 4 個 emotion，**需擴充**」，實際走相反的路：**不擴 `Emotion`**，因為 click/pending 不是 severity 的函數，擴了會逼 `severityToEmotion` 這個純函式處理與 severity 無關的輸入，污染 `core/` 的語意 |
+| 產製路徑 | **先跑可讀性實測再決定**。委外行情 USD 50–150（`live2d/_archive/DEPRECATED.md` 記載），委外須一併取得書面著作權讓與 |
+| 角色設定（capelet 太暗、瀏海蓋住眉窗） | 建議一併改 —— 不論誰畫都要重畫，現在改免費，畫完再改就是重畫 |
+
+### 🔴 硬 blocker：等你回報
+
+`assets/a1-augur-calm.png` **是 AI 生成的**，而 `docs/asset-provenance.md` 的出處與授權兩欄至今空白。
+那張圖**已經在公開的 Apache-2.0 repo 裡**（`7539cfb` 就進去了）。
+
+**你要做的**：實際讀該生成式服務的官方條款對「輸出歸屬」的規定，把**結論、一級來源 URL、
+查證日期**逐字寫進 `docs/asset-provenance.md`。
+
+⚠️ **不能只寫「見 `.asp-fact-check.md`」** —— 那個檔被根 `.gitignore` 排除，
+公開 repo 的讀者取不到。這是 ASP 鐵則四的範疇，也是 AI 不該代答的事。
+
+**在你回報之前**：sprite 素材即使畫好也**不得進版控**（依 `asset-provenance.md`
+自己訂的「出處不明一律不進版控」）。規格與程式可以繼續做，交付不行。
+
+### ⏳ 進行中：可讀性實測
+
+規格裡**唯一凍結後改不動**的是虹膜直徑與瞳孔位移 —— 改它們等於 18 格全部重畫。
+盲測頁已發佈，36 題、三組參數 × 三個尺寸隨機交錯，結果自動回傳。
+判讀重點是 **128px 那三列**（規格訂的最小顯示尺寸），該列過不了的參數組不能用。
+
 ## 四、P3/P4 契約備忘（給下一階段執行者）
 
 **types 層**：D1（複製 episode 而非重算）、D5（levelIndex）、D6（repeatFiringMin）、
