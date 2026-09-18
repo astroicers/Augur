@@ -213,8 +213,17 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 - **G-ADR004-3（防洪）✅ PASS（2026-09-17）**：`PocAlwaysFiring` 在 10:28:05 播報一次後，
   接下來 **160 秒 / 16 個 refresh 週期再也沒有播報**。孤兒 resolved 也確實被吞掉
   （恢復後持續 `ok` 不會重複念「已恢復」）。`dedup.ts` **零修改**達成。
-- **G-ADR004-4（漸進降級，本 ADR 的關鍵風險驗證）**：開啟
-  `enable_frontend_sandbox_for_plugins` 後，plugin **降級而非崩潰**。
+- **G-ADR004-4（漸進降級，本 ADR 的關鍵風險驗證）✅ PASS（2026-09-18）**：
+  以 `SANDBOX_PLUGINS=augur-mascot-panel docker compose up -d` 開啟 Frontend Sandbox 實測。
+  **sandbox 關閉時**：滑鼠移到別的 panel 上方視線正確跟隨、點擊正確辨識出
+  `panel-2 · timeseries`、兩個 panel 都顯示「全頁追蹤」。
+  **sandbox 開啟時**：兩個 panel 都正常 render、都偵測到降級並顯示「限本 panel」、
+  **核心播報功能完全未受影響**、零 console 錯誤。關掉後自動變回「全頁追蹤」，降級可逆。
+  降級的全部實作就是「監聽 `document` 還是只監聽自己的容器」一行分支 ——
+  其餘邏輯完全相同，這是「少一個功能而非整個 plugin 炸掉」的關鍵。
+  ⚠️ **未涵蓋**：headless chromium 無聲線（`getVoices()` 為 0、`speak()` 回 `not-allowed`，
+  且**關閉 sandbox 時同樣出現**故非 sandbox 所致），所以
+  **「sandbox 開啟時語音還能不能用」仍未驗**，需在有聲線的真實瀏覽器上補。
 - **G-ADR004-5（語音）✅ PASS（2026-09-17）**：於使用者實際看 dashboard 的機器
   （Windows 11 / Chrome 152）實測 —— zh-TW 聲線 **4 個**（Hanhan 預設 / Yating / Zhiwei 三個為
   **本機**引擎）；`getVoices()` 首呼確實為空，單次 `voiceschanged` 於 +17ms 後給滿 25 個；

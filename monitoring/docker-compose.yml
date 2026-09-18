@@ -53,6 +53,12 @@ services:
       # ⚠️ plugin 目錄裡若殘留過期的 MANIFEST.txt，即使列名也不會載入
       #    （官方原文：Plugins with modified signatures are never loaded）。
       - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=augur-mascot-panel
+      # G-ADR004-4 的開關：Plugin Frontend Sandbox（Grafana >=11.5）。
+      # 開啟後 plugin 碰不到自己區域以外的 DOM，跨 panel 視線追蹤與點擊偵測會失效。
+      # ADR-004 決策 6 要求「漸進降級而非崩潰」，這就是驗那件事的方法：
+      #   SANDBOX_PLUGINS=augur-mascot-panel docker compose -f monitoring/docker-compose.yml up -d
+      # ADR 要求每次 Grafana minor 升版都重跑一次，所以做成可切換而不是手改再改回來。
+      - GF_SECURITY_ENABLE_FRONTEND_SANDBOX_FOR_PLUGINS=${SANDBOX_PLUGINS:-}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       # plugin 掛的是 **建置產物 dist/**，不是原始碼。Grafana 掃的是「含 plugin.json
