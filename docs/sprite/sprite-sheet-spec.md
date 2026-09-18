@@ -1,0 +1,1169 @@
+<!-- 產出自 2026-09-18 的 sprite 規格 workflow（3 設計 × 2 對抗性複驗 → 收斂）。
+     收斂者裁決了 21 處跨設計矛盾，裁決全文見本檔末的〈跨設計矛盾與裁決〉。
+     ⚠️ 本檔規格未經實物驗證 —— 第一批素材交付後應回填實際數字（見〈未決〉）。 -->
+
+# Augur 吉祥物精靈圖規格 v1（`sprite-sheet-spec.md`）
+
+> **狀態**：設計收斂完成，**尚未凍結**。凍結條件見 §5.3（可讀性實測）與 §10（待人類裁定）。
+> **權威**：`docs/adr/ADR-004-grafana-panel-plugin-mascot.md`（Accepted, 2026-09-18）。
+> **不可改的既有語意**：`src/avatar/gaze.ts`、`src/avatar/AvatarController.ts`、
+> `src/core/emotion.ts`、`src/core/types.ts`。本規格與它們不一致時，**是規格錯不是程式錯**。
+> **產出日期** 2026-09-18 ｜ 對應分支 `feat/grafana-mascot-panel`
+>
+> 本規格由三份子設計（內容 / 幾何 / 產製）各經兩位對抗性複驗後收斂而成。
+> 收斂過程推翻的事項見 §附錄 A。
+
+---
+
+## §0 範圍與繼承
+
+**SP-0.1** 本規格定義 `augur-mascot-panel` 的 2D 精靈圖素材、其產製流程、機械驗收與載入方式。
+不修改 `gaze.ts` / `AvatarController.ts` / `core/emotion.ts` / `core/types.ts` 的既有語意。
+
+**SP-0.2** 素材為兩張 3×3 精靈圖，對應兩個 panel option `directionsImgUrl` / `reactionsImgUrl`。
+⚠️ **這兩個 option 目前不存在** —— 實查全樹（排除 `node_modules`/`.git`/`dist`）零命中，
+`MascotPanelOptions` 只有 `minSeverity` / `repeatFiringMin` / `fallbackSeverity` /
+`alertLang` / `enableTTS` / `ttsVoice` 六個欄位。P5 需新增，工作項見 SP-8.4。
+兩者留空時使用 plugin 內建的預設素材。
+
+**SP-0.3** `live2d/_archive/live2d-template-spec-v1.md` §3 的**絕對像素**錨點
+（畫布 768×1376、臉中軸 X≈384、眼線 Y≈285、瞳距≈100、頭高≈335）對本素材**作廢** ——
+那是全身基準圖的絕對座標，對 512 方格無意義（`docs/handoff/P2-handoff.md` §四已明文指出）。
+本規格改以格邊長 **S** 為單位於 §2 重新定義。
+另註：該節自己標「目測估值待校正」，而實測 A1 的虹膜中心為 (326,343)/(443,343) ——
+**眼線 Y 實為 ≈343 而非 285、瞳距 ≈117 而非 100**，臉中軸 X=384 正確。
+
+**SP-0.4** §3 真正釘住的**相對關係**逐項沿用（每個 §2 的 Y 值皆由此換算）：
+臉中軸置中、眼線位於頭高 58%、嘴中心位於頭高 87%、肩線位於頭高 148%。
+⚠️ **一處刻意的偏離必須被記錄**：瞳距。§3 的估值給出 100/335 = 0.299·頭高；
+實測 A1 給出 117/365 = 0.320·頭高；本規格取 0.180/0.520 = **0.346·頭高**。
+相對實測放大約 8%，理由是 128–256px 顯示尺寸下的方向可讀性。
+**這已經預支了 §3.3 風險緩解的一部分加碼空間** —— 後續若實測仍讀不出方向，
+加碼方向是虹膜直徑（SP-2.6）而非再加寬瞳距。
+
+**SP-0.5** §6 的四個表情視覺語意原樣沿用，不新增記號詞彙：
+`part_ov_sweat`（汗滴）、`part_ov_gloom`（額前陰影直線）、`part_ov_anger`（怒紋/青筋）、
+`part_ov_sparkle`（閃光），外加 §6 resolved 用到的 `ParamCheek`（腮紅）。
+四表情的參數值逐格沿用：MouthForm +0.2 / −0.2 / −0.6 / +0.6、Sweat=1、Gloom=0.5、
+Anger=1、Sparkle=1、Cheek=0.5。
+
+**SP-0.6** §7 已凍結的角色外觀（銀藍中長髮、齊瀏海、長側髮、右側瀏海星/雪花髮夾、
+紫羅蘭眼、深藍星點斗篷、炭灰高領上衣）原樣沿用。
+⚠️ 兩處與本規格衝突，需人類裁定，見 §10：深藍斗篷不符 SP-6.2 的亮度夾制；
+齊瀏海與 SP-2.10 的眉窗露出要求衝突。
+
+---
+
+## §1 渲染架構：四層疊合，底圖永不切換
+
+> **這是整套設計的承重牆。** 一張圖一次只能顯示一格，但情緒（少變）、嘴型（1.53 次/秒）、
+> 眨眼（0.2Hz）、視線（滑鼠驅動）四個通道在播報當下**同時**在動。
+> 疊合之後，directions 永遠當底、reactions 只做局部覆蓋，18 格可以組出
+> 9(視線) × 4(情緒) × 3(嘴) × 2(眨眼) 種畫面。
+> `P2-handoff` 擔心的「兩張圖對不齊時切換圖層會跳一下」因此**結構上不存在** ——
+> 底圖從頭到尾不換。
+
+**SP-1.1** 吉祥物由一個正方形 stage 容器與其中 4 個 `position:absolute; inset:0` 的圖層
+`<div>` 構成，z 由低到高：
+
+| 層 | 圖 | 取哪一格 |
+|---|---|---|
+| **base** | directions | `cellToBackgroundPosition(gazeCell)` |
+| **expr** | reactions | 格 0(click) / 格 1–3(情緒) / 格 8(pending)，互斥 |
+| **mouth** | reactions | 格 4(半開) 或 格 5(大開)，僅播報中的張口幀顯示 |
+| **blink** | reactions | 格 6(全閉) 或 格 7(半閉) |
+
+**expr 層的顯示優先序**：click > 非 calm 情緒 > pending > 隱藏。
+calm 狀態＝expr 層 `display:none`（不顯示任何格）。
+pending 只在 `emotion === 'calm' && !speaking` 時顯示。
+
+**SP-1.2** base 層永遠使用 directions 圖。**任何情況下都不切換到 reactions 圖。**
+
+**SP-1.3** expr / mouth / blink 三層共用同一個 reactions 圖 URL，各自取不同格。
+不需要第三張素材，也不需要第三個 panel option。
+
+**SP-1.4** 四層全部套用
+`background-size: 300% 300%; background-repeat: no-repeat; image-rendering: auto;`。
+
+**SP-1.5** `background-size` **只能是 `300% 300%`**。禁止 `auto` / `cover` / `contain` / 任何 px 值。
+（實測 `auto 300%` 在 150×100 的元素上污染 5000/15000 像素、在 220×90 上污染 11520/19800；
+`300% 300%` 在任何長寬比下都不滲色，只會把角色拉扁 —— 不滲色不代表可以接受，故仍需 SP-1.7。）
+
+**SP-1.6 【禁止格間 gutter】** 留白必須留在**每一格內部**（見 SP-2.1）。
+格間 gutter 會破壞等分 3×3 網格，使 0%/50%/100% 不再落在格心，
+等於要改一支已凍結且有測試的 `cellToBackgroundPosition`。
+同理**不得**改成 px 算法 —— 實測與百分比逐像素相同，只是把「3×3」這個假設多複製一份到 loader。
+
+**SP-1.7** stage 必須是正方形（`aspect-ratio: 1`），`padding: 0; border: 0; box-sizing: border-box`。
+
+**SP-1.8 【尺寸】**
+```
+maxSideCss = min(256, cellPx / dpr)            // cellPx = 512；dpr 3 → 170
+side       = min(maxSideCss, floor(min(width * 0.42, height * 0.80)))
+side       = round(side * dpr) / dpr           // 對齊裝置像素
+if (side < 128) → 不渲染 sprite，只保留既有 chip 與 feed
+```
+`width` / `height` 取 `PanelProps` 的值（那是扣掉 panel header 與 padding 後的**內容區**，
+不是 dashboard grid 上的 panel 尺寸）。實際生效門檻約為 `width ≥ 305 且 height ≥ 160`。
+**任何情況下不得放大**（實測放大 1.875× 銳利度掉 56%、3.75× 掉 84%；
+縮小則無品質成本 —— 在任一固定的裝置像素尺寸下，所有未放大的來源給出完全相同的 Laplacian 數值）。
+既有的 `roomy = width >= 320 && height >= 180` 是「啟用語音」鈕的門檻，兩者各自獨立、不共用。
+
+**SP-1.9** dpr 變動（視窗被拖到另一台螢幕）時必須重算 SP-1.8：
+監聽 `matchMedia(\`(resolution: ${dpr}dppx)\`)` 的 change 事件。
+
+**SP-1.10 【dead zone 必須跟著 stage 走】** `MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數：
+`{ ...DEFAULT_GAZE, deadZonePx: Math.round(side * 0.25) }`。
+**現行程式碼沒傳 opts**，`deadZonePx` 恆為 28 —— 那是為 34px 量級的 `DiagnosticAvatar` 訂的
+（`gaze.ts:39` 的註解自己寫「吉祥物本身的尺寸量級」）。在 224px 的 stage 上 dead zone
+只佔直徑 25%，游標停在角色臉頰上（離中心 60px）時角色會把視線甩開自己，
+「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
+
+**SP-1.11 【動畫禁令的正確範圍】** 禁止對 `background-position` 加
+`linear` / `ease` / `cubic-bezier` 等**連續**補間 —— 補間會讓畫面滑過相鄰格。
+**`steps()` 明文允許**（ADR-004 決策 3 逐字寫「sprite 的自然實作是
+`<div>` + `background-position` + `steps()`」，而 `steps()` 的定義就是階梯式跳變）。
+需要淡入淡出時一律改用**兩個疊放 div 的 `opacity`**，且下層必須固定 `opacity: 1`
+（見 SP-1.12）。
+
+**SP-1.12 【禁止對稱 cross-fade】** 兩層同時 0.75/0.25 或 0.5/0.5 會讓總覆蓋率
+`1 − (1−a)(1−b) < 1`，panel 底色從角色身上透出來 —— 實測中點亮度掉約 **22%**，
+每次切換都「暗一下再彈回來」。任何淡入淡出期間**總覆蓋率不得低於 1**：
+下層固定 `opacity: 1`，只讓上層 0→1 疊上去，動畫結束後再換下層的 `background-image`。
+（在本架構下這條幾乎不會被用到 —— base 層從不切換。它存在是為了擋住日後的「優化」。）
+
+**SP-1.13 【禁止 transform 縮放】** 不得用 `transform: scale()` 或 `zoom` 改變 sprite 大小，
+也不要在圖層 div 上加 `will-change: transform`：合成層會以變形前的解析度光柵化再拉伸。
+改尺寸一律寫 `width` / `height`。
+
+**SP-1.14 【呼吸】** 作用在 **stage**（四層的共同父容器）上：
+`transform: translateY()`，振幅 **2.0% 邊長**，週期 4s，ease-in-out alternate。
+（128px 時 ±2.6px、peak-to-peak 5.1px。原設計的 0.6% 在 96–224px 下只有 0.58–1.34px，
+接近不可察覺，達不到「滑鼠停住時角色看起來不像死的」這個目的。）
+可改用或疊加 `transform: scaleY()` 的縱向微幅起伏 —— 胸上構圖做呼吸本來就是縱向縮放比整體位移自然。
+作用在共同父容器可保證四層一起位移、對位不變。
+
+**SP-1.15 【prefers-reduced-motion】** `reduce` 時停用呼吸與眨眼；
+**嘴型 flap 保留**（它承載播報中的資訊）。
+
+**SP-1.16 【可及性】** stage 設 `role="img"` 與 `aria-label`
+（格式：`吉祥物：<emotion>`，播報中時附加 `，正在播報`）；四個圖層 div 一律 `aria-hidden="true"`。
+
+**SP-1.17 【禁止 `image-rendering: pixelated`】** 素材是平塗動畫風不是像素畫，
+`pixelated` 在非整數縮放下會產生鋸齒。
+
+**SP-1.18 【百分比定位為什麼安全】** 兩個理由都必須保住：
+(a) **規格層** —— 百分比定位為 `(定位區 − 影像) × p`，影像恰為定位區 3 倍時 offset = `−2·W·p`，
+在 0/50/100% 等於 0 / −W / −2W，**與 W 是否整數無關**，這是代數恆等式；
+(b) **實作層** —— Chromium 把取樣核箝制在該格的來源矩形內。
+(a) 由 SP-1.5/SP-1.7 保住，(b) 是瀏覽器行為，由 SP-2.1 的絕對透明帶提供保險。
+> 實測（2026-09-18，headless chromium）：dpr ∈ {1,2}、元素邊長 ∈ {480, 240, 148.73, 97.31, 61.4, 40} px、
+> 元素座標刻意設為非整數 `left/top: 100.37px`、縮放比 0.94→0.078，共 24 組條件跨格污染像素皆為 0。
+> 對照組 `background-size: 299% 299%` 立即產生 295 個污染像素（最強 R=122），證明量測有效。
+> **Firefox / WebKit 未驗**（本機 playwright 的對應執行檔未安裝），見 §11。
+
+---
+
+## §2 幾何與錨點
+
+> 單位：**格邊長 S = 1.0**。原點為該格左上角，X 向右、Y 向下。
+> **凍結時機**：SP-2.1 ~ SP-2.5、SP-2.7 ~ SP-2.13 在開畫之前凍結，改動需升 v2（= 18 格全部重畫）。
+> SP-2.6（虹膜直徑）與 SP-3.3（瞳孔位移）**在 master frame 的可讀性實測之後才凍結**（見 SP-5.3）。
+
+**SP-2.1 【三層留白】**
+- `0 → 0.020·S` 的外緣帶：**alpha 嚴格等於 0**（防跨格滲色的保險）。
+- `0.020 → 0.040·S`：只允許 alpha 羽化與光暈，不得有實心輪廓。
+- 剪影（**含 SP-6.4 的描邊**）必須完全落在 `[0.040·S, 0.960·S]` 的方框內。
+
+**SP-2.2** 臉中軸 X = **0.500**。
+
+**SP-2.3** 頭頂（顱骨最高處，**不含**髮量與呆毛）Y = **0.080**；下巴 Y = **0.600**；
+故頭高 = **0.520·S**。髮／呆毛最高點 ≥ **0.048·S**（給描邊留出安全帶上方的空間）。
+
+**SP-2.4** 眼線（左右瞳心連線）Y = **0.380**。〔由 §3 的「眼線在頭高 58%」換算：0.080 + 0.58×0.520 = 0.382〕
+
+**SP-2.5** 瞳距 = **0.180**，左瞳心 X = **0.410**、右瞳心 X = **0.590**
+（**螢幕座標**，非角色自身左右）。偏離記錄見 SP-0.4。
+
+**SP-2.6** 虹膜直徑 = **0.065**（暫定）。
+SP-5.3 的可讀性實測有權在 `[0.055, 0.085]` 內調整此值，調完才凍結。
+後續若仍讀不出方向，加碼一律走這個值，**不得**再加寬瞳距。
+
+**SP-2.7** 嘴中心 Y = **0.530**。〔0.080 + 0.87×0.520 = 0.532〕
+
+**SP-2.8** 肩線 Y = **0.850**〔0.080 + 1.48×0.520 = 0.850〕；
+不透明部分止於 Y = **0.890**；`0.890 → 0.950` 為 alpha 線性漸隱至 0；`0.955` 以下全透明。
+**不得**讓肩膀切齊格底 —— 切齊會讓肩色滲進下一格的頭頂區。
+
+**SP-2.9** 頭寬（顱骨最寬處）= **0.400**，即 X ∈ [0.300, 0.700]。剪影最寬處 ≤ **0.840·S**。
+
+**SP-2.10** 瀏海下緣 Y ≤ **0.255** —— 眉窗必須完全露出。
+⚠️ 與 §7 凍結的 straight blunt bangs 衝突，需人類裁定，見 §10。
+
+**SP-2.11 【三個互斥視窗 —— 覆蓋層的產權邊界】**
+
+| 視窗 | 範圍 |
+|---|---|
+| 眼窗 **E** | X[0.280, 0.720] × Y[0.330, 0.445] |
+| 眉窗 **B** | X[0.280, 0.720] × Y[0.255, 0.330] |
+| 嘴窗 **M** | X[0.395, 0.605] × Y[0.475, 0.585] |
+
+⚠️ **視窗是外框上界，不是必須填滿的區域。**
+E 與 B 的左右各有 0.020·S 落在頭部輪廓（SP-2.9）之外，而 §7 的角色有 long side locks，
+那個位置正好是側髮。覆蓋層若做成矩形不透明修補塊，每次眨眼與每次情緒切換都會在髮際線外側
+刷出一條約 3 顯示 px 的膚色 —— 肉眼就是邊緣在閃。剛性約束見 SP-6.5。
+
+**SP-2.12 【記號區 K】** ＝ 安全框內、`E ∪ B ∪ M` 以外的全部區域。
+建議位置：汗滴 (0.70, 0.26)、怒紋 (0.74, 0.17)、
+額前陰影為 X[0.34, 0.66] × Y[0.20, 0.30] 的半透明直線、
+腮紅 X[0.290, 0.370] 與 X[0.630, 0.710] × Y[0.440, 0.500]。
+
+**SP-2.13 【尺寸】** 格邊長 **S = 512 px**，每張圖 **1536 × 1536**、
+**PNG-32（RGBA，colour type 6）、bit depth 8、非交錯（interlace 0）、sRGB**。
+調色盤、灰階、16-bit、Adam7 交錯一律拒收，**且不自動轉檔**
+（轉檔會把「交付物不合規」這個事實吃掉，下次還是一樣）。
+非預乘（straight）alpha；除 sRGB 外不得嵌入其他 ICC profile；
+剝除 gAMA / cHRM 等會讓瀏覽器間渲染不一致的 chunk。
+
+**SP-2.14 【剪影邊緣】** 必須有 ≥ **0.004·S**（S=512 時 2px）的 alpha 漸層，
+禁止 1-bit alpha 硬邊（硬邊在降取樣時會鋸齒）。
+
+**SP-2.15 【色彩擴張（alpha bleed）為必要步驟】** 凡距離任何不透明像素 ≤ 8 px 的
+`alpha = 0` 像素，其 RGB 必須填為最近的不透明像素之 RGB。
+未做會在縮放時沿剪影邊緣產生暗環或白環。
+
+**SP-2.16 【線稿最小寬度】** 線稿最小寬度 ≥ **0.020·S**（S=512 時約 10px）；
+記號（汗滴/怒紋/閃光/腮紅）的最細筆畫 ≥ **0.016·S**。
+理由：S=512 而顯示尺寸 128–256px，縮放倍率 2.0×–4.0×。
+在 1536px 畫布上很自然會畫成 2–4px 的細線，縮到 128px 就剩 0.5–1.0px，
+`image-rendering: auto` 會把它糊成灰霧 —— 而眉形是情緒的主要讀值來源，它會第一個消失。
+
+---
+
+## §3 directions 圖 9 格
+
+> **格號語意由 `gaze.ts` 決定，不可重排。**
+
+**SP-3.1** 格號沿用 `gaze.ts` 的 row-major 0–8：
+```
+0 ↖   1 ↑   2 ↗
+3 ←   4 ·   5 →
+6 ↙   7 ↓   8 ↘
+```
+方向以**螢幕／觀看者座標**為準（格 3 = 瞳孔往畫面左邊移，即角色自身的右）。
+
+**SP-3.2 【格 4 = master frame】** 正視前方：瞳孔置中、雙眼睜開、**閉口 MouthForm +0.2（§6 的 calm）**、
+眉中性、所有記號為 0。**不得畫成閉眼或放空。**
+
+它同時是三件事：`gazeRef` 的初值（`CENTER_CELL`）；游標壓在吉祥物身上時的狀態
+（`MascotPanel` 的 dead zone 量的是游標到 `hostRef` bounding rect 中心的距離 ——
+那一刻閉眼語意完全相反）；以及全套 18 格的唯一來源。
+
+> 註：滑鼠停住或離開視窗時 `pointermove` 不再觸發，視線會**凍在最後一格**而非回中央。
+> 這不是素材問題，需 P4/P5 補 idle timer（建議 4 秒無動作即 `setGaze(CENTER_CELL)`）與
+> `pointerleave`。列入 §10。
+
+**SP-3.3 【瞳孔位移】** Δx = **0.022·S**、Δy = **0.018·S**（暫定，見 SP-5.3）。
+四個角格（0/2/6/8）兩軸**各用滿 Δ，不除 √2** —— 小尺寸下刻意誇張才讀得出來。
+
+逐格偏移（相對 SP-2.5 的瞳心）：
+
+| 格 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| Δx | −Δx | 0 | +Δx | −Δx | 0 | +Δx | −Δx | 0 | +Δx |
+| Δy | −Δy | −Δy | −Δy | 0 | 0 | 0 | +Δy | +Δy | +Δy |
+
+**SP-3.4** 虹膜高光隨虹膜整組移動（高光屬於虹膜，不可留在原位）；
+雙眼位移量相同，不做輻輳。
+
+**SP-3.5 【眼瞼與睫毛必須跟著變】** 這是小尺寸下比瞳孔位移更有效的線索：
+向上看（格 0/1/2）上瞼抬高、虹膜下方露出較多眼白；
+向下看（格 6/7/8）上瞼下壓約 15–20%、睫毛罩住虹膜上緣。
+眉毛**不得**在本圖中變化（眉屬 expr 層產權）。
+
+**SP-3.6 【頭部不動 —— 本規格最硬的一條】**
+頭、髮、瀏海、髮夾、耳、鼻、臉輪廓、頸、肩、斗篷、上衣在 9 格中**必須逐像素相同**。
+任兩格相減的非零像素必須完全落在眼窗 **E** 之內。
+**禁止任何頭部位移、轉動（yaw/pitch/roll）與縮放。**
+
+> 這一條成立之後：兩張圖天生對齊（不需要任何跨圖容差）、眨眼只要一格覆蓋、
+> 情緒覆蓋層只要 3 格而不是 36 格。它由 SP-7.2 的檢查 B 機械承接。
+
+**SP-3.7 【directions 圖必須自成一個完整可用的角色】**
+reactions 圖載入失敗時，只顯示 base 層仍應是一隻閉口、calm、會追視線的正常吉祥物。
+（這也是為什麼 master frame 直接畫成 calm、而 calm 不佔任何 reactions 格。）
+
+**SP-3.8 【9 格全數必要】** `SECTOR_TO_CELL = [5,2,1,0,3,6,7,8]` 把 8 個扇區逐一映到
+0/1/2/3/5/6/7/8，缺任一格都得改 `gaze.ts`，而該檔案已凍結。
+刪任何一格 = 該方向的視線直接落到錯誤的臉。
+
+---
+
+## §4 reactions 圖 9 格
+
+> **格號語意與 `gaze.ts` 無關**，僅重用 `cellToBackgroundPosition` 這支計算函式。
+> 每一格都是**局部透明覆蓋**，不是整隻角色。
+
+| 格 | 內容 | 承載層 | 訊號 | 產權（非零 alpha ⊆） |
+|---|---|---|---|---|
+| 0 | click 反應（驚訝） | expr | `setReaction('click')` | B ∪ M ∪ K ∪ **E** |
+| 1 | warning 表情 | expr | `setEmotion('warning')` | B ∪ M ∪ K |
+| 2 | critical 表情 | expr | `setEmotion('critical')` | B ∪ M ∪ K |
+| 3 | resolved 表情 | expr | `setEmotion('resolved')` | B ∪ M ∪ K |
+| 4 | 半開嘴 | mouth | flap 張口幀（預設） | M |
+| 5 | 大開嘴 | mouth | flap 張口幀（charLength ≥ 4） | M |
+| 6 | 全閉眼 | blink | 眨眼計時器 | E |
+| 7 | 半閉眼 | blink | 眨眼的進／出幀 | E |
+| 8 | pending（待燒／緊張） | expr | `setReaction('pending')` | B ∪ M ∪ K |
+
+**SP-4.0 【calm 不佔任何一格】** calm 狀態＝expr 層 `display:none`。
+master frame（directions 格 4）本身就是 §6 的 calm（MouthForm +0.2、眉中性、記號全 0），
+所以一個 calm 覆蓋格的眉窗只會是底圖眉毛的複製品，真正的差異只剩嘴窗裡一條微彎 ——
+一整格 512×512 花在一條嘴線上，而且是修補塊面積最大、出現時間最長、最容易看到接縫的一格。
+**情緒格號不等於情緒索引**，必須明表：calm→隱藏、warning→1、critical→2、resolved→3。
+
+**SP-4.1 格 0 = click 反應（驚訝）**：眉上揚、小圓開口、一顆閃光；
+**此格允許畫入眼窗 E**（短暫覆蓋視線可接受）。
+訊號來自 `dashboardPanels.panelAt()` —— `MascotPanel` 已接好的 click handler
+（降級模式下亦會在本 panel 內觸發）。
+拿掉的後果：跨 panel 點擊偵測（ADR-004 決策 6 花最大力氣驗的 G-ADR004-4）
+在畫面上完全沒有回饋，只剩一行「最後點擊」文字。
+
+**SP-4.2 格 1 = warning**：眉略下、閉口 MouthForm −0.2、汗滴 100%、額前陰影 50%。
+拿掉的後果：warning 與 critical 視覺上不可分，嚴重度分級失去意義。
+
+**SP-4.3 格 2 = critical**：眉下壓、閉口 MouthForm −0.6、怒紋 100%。
+註：§6 的「眼略放大」在本架構下**不實作**（眼窗是 base 層產權），改由眉形與怒紋承擔。
+拿掉的後果：整個 plugin 最重要的狀態沒有表情。
+
+**SP-4.4 格 3 = resolved**：閉口 MouthForm +0.6（微笑）、閃光 100%、腮紅 50%。
+拿掉的後果：「告警已恢復」只剩聲音沒有畫面，恢復的正回饋消失。
+
+> 四個情緒格逐一可達，已實查：`parseRulesResponse` 的 `severity` 預設為 `'unknown'`
+> ＋ `DEFAULT_OPTIONS.minSeverity = ''` ＋ `meetsMin` 空字串直接 return true → calm 拿得到；
+> `resolvedAll()` ＋ ADR-004 G-ADR004-2 的翻轉實證 → resolved 拿得到。
+
+**SP-4.5 格 4 = 半開嘴**：**只畫嘴窗 M**，含不透明修補塊蓋掉底下的閉口嘴。
+這是**預設的張口幀**。
+
+**SP-4.6 格 5 = 大開嘴**：同上，開口更大。僅在 `charLength ≥ 4` 時使用
+（實測 77 字 / 20 個詞級 boundary，平均 3.85，門檻取中位數上緣讓兩格都活著）。
+
+> ⚠️ **格 4/5 在兩種情況下會雙雙變死格，規格必須給答案**：
+> (a) `enableTTS` 為 false 或 `window.speechSynthesis` 不存在時
+> （`MascotPanel` 把 `speakerRef.current` 設為 null），`setSpeaking`/`setMouthOpen` 一次都不會被呼叫；
+> (b) 引擎不觸發 `onboundary` 時（這正是 `setSpeaking` 這個 fallback 存在的理由，
+> ADR-004 決策 4 明文保留），`setMouthOpen` 永遠不被呼叫。
+> 處置見 SP-8.10：**張口幀預設為格 4**，`setSpeaking(true)` 期間以格 4 跑定速 flap。
+
+**SP-4.7 格 6 = 全閉眼**：在**眼形輪廓範圍內必須完全不透明**
+（含膚色／眼瞼實色，蓋掉底層睜眼的**全部**像素）；
+輪廓外（含髮、背景、E 框內的其餘區域）必須 `alpha = 0`。
+> 「只畫閉合的眼瞼線與睫毛、其餘全透明」是**錯的寫法** —— blink 層疊在 base 之上，
+> base 那一格畫的是睜開的眼睛，只畫一條線的話底下的虹膜會從線上下方透出來，
+> 變成「閉著眼還看得到眼珠」。
+> 同時**不得蓋到眉毛**（眉毛由 expr 層畫，眨眼時不該消失）—— 由 SP-7.4 釘住。
+
+**SP-4.8 格 7 = 半閉眼**：上眼瞼降到約 50%，其餘同格 6 的產權規則。
+用於眨眼的進／出幀，讓 110ms 的眨眼讀起來是眨眼而不是閃爍。
+繪製成本極低（格 6 的複製 + 眼瞼位置調整）。
+> 若美術預算真的吃緊，此格可留空（全透明）並在 manifest 宣告為 `intentionally_empty`，
+> 眨眼退化為單幀。這是唯一允許留空的格。
+
+**SP-4.9 格 8 = pending（待燒／緊張）**：眉微皺、抿嘴、一顆小汗滴，
+強度明顯**弱於** warning；**不得畫入眼窗 E**（此狀態可持續數分鐘，視線必須保持活的）。
+訊號：`alertState.state === 'pending'`。
+拿掉的後果：`for` duration 期間完全不可見 —— 吉祥物會從 calm 直接跳到 critical，中間毫無預警。
+
+> **為什麼 pending 可以進臉，而佇列積壓／sandbox 降級／語音錯誤不行**（分類線見 SP-4.10）：
+> pending 與情緒**同一個通道**（它是 warning/critical 的前驅，是 alert 狀態），
+> 不與情緒競爭，且已規定只在 `emotion === 'calm' && !speaking` 時顯示。
+> ⚠️ **但它的持續時間是 `for` duration，典型 1–5 分鐘。** 因此 SP-8.8 規定
+> pending 期間**不得是靜止的**（眨眼間隔減半、呼吸振幅 ×1.4），
+> 否則一張緊繃的臉連續掛三分鐘讀起來就是「卡住了」。
+
+**SP-4.10 【明文砍掉且不畫】** 佇列積壓、sandbox 降級、語音錯誤 / TTS 關閉。
+分類線是**通道**不是持續時間：**表情通道承載「告警狀態」，chip 通道承載「plugin 自身狀態」。**
+這三者是 plugin 狀態，會與 critical 直接搶同一張臉
+（三則 critical 的佇列就是 42 秒，`MascotPanel` 已有「佇列 N」「限本 panel」與錯誤 chip 在承接）。
+日後若真要表現積壓，用非素材手段（加快 flap、提高眨眼頻率）即可，不需重畫。
+
+**SP-4.11 【明文不做】** 依 `panelAt()` 回傳的 `pluginId` 給不同的臉。
+Grafana 的 panel 型別有數十種，逐型別給格必然大量永遠用不到；
+`pluginId` 的正確用途是 P6 的播報文字（「這是一張時序圖」），不是精靈格。
+
+---
+
+## §5 產製流程與交付物
+
+**SP-5.1 【交付物是一個分層原始檔，不是 18 張各自獨立的 PNG】**
+主交付物 ＝ **一個分層原始檔（.psd / .kra / .xcf）＋ 一份圖層匯出設定**。
+18 格全部由它切圖層匯出。實際繪製量是
+**1 張完整胸上立繪（= directions 格 4）+ 17 個局部圖層編輯**。
+
+> 「兩張圖的比例錨點必須在畫之前凍結」這件事因此不是靠人自律，
+> 是靠**它們本來就是同一個檔案**。
+
+分層原始檔必須具備**獨立可動的**：眼白 / 虹膜 / 高光 / 上眼瞼 / 下眼瞼 / 睫毛（左右各一組）、
+左右眉、嘴、腮紅，以及四張記號 overlay（汗滴 / 怒紋 / 額前陰影 / 閃光）。
+
+**SP-5.2 【繪製順序】**
+1. 完成 **master frame**（= directions 格 4，完整胸上立繪，§6 的 calm 表情，眼/眉/嘴各自獨立圖層）。
+2. 跑 **SP-5.3 的可讀性實測**，據以定案並凍結 SP-2.6（虹膜直徑）與 SP-3.3（Δx/Δy）。
+3. 由 master frame 衍生其餘 8 個方向格（**只動眼睛圖層群**）。
+4. 由 master frame 衍生 9 個 reactions 格（改眉/嘴/眼瞼/記號後，關閉全部底圖圖層再匯出）。
+
+**SP-5.3 【凍結前的可讀性實測 —— 唯一不能省的前置】**
+成本只有 master frame 的眼部：把 9 個瞳孔位置各出一張，
+縮到 **128 / 160 / 224 px** 三種尺寸，讓人盲測猜方向。
+以結果回頭定 Δx / Δy 與虹膜直徑，**再**凍結。
+
+> 這一步不能放到凍結之後 —— SP-2「畫之前凍結、改動需升版」加 SP-7.5「容差 ±0.004·S」
+> 之後，「讀不出來就加大虹膜」這個緩解手段已經不可用（那要重畫全部 18 格）。
+> 這是本規格最貴的失敗模式（畫完了才發現讀不出來），而擋下它的成本只有一張 master frame 的眼部。
+
+**SP-5.4 【覆蓋格的產製方法固定】**
+複製 master frame → 局部編輯 → 抹除視窗外全部像素。
+未編輯處必須是 master frame 的**原像素**，這讓覆蓋層的不透明修補塊與底圖逐位元相同。
+
+**SP-5.5 【禁止以生成式模型逐格產圖】** 理由有二，都不需要實績佐證：
+(a) 生成式模型無法保證 18 格共用**逐像素相同**的底圖 —— 這是第一性原理；
+(b) SP-7.2 的檢查 B 是機械可驗的，而它只有在「18 格從同一個分層檔切出」時才可能通過。
+
+> **產製路徑的三筆前車之鑑**（實查，與上面的禁令獨立）：
+> - `.claude/skills/image-layer-split/parts/live2d-character.json` 的 `notes` 逐字寫著
+>   「眼睛細件(white/iris/highlight/lid/lash)與共用 overlay 不在此 preset，
+>   建議拆層後在 Photoshop 手工細分/手繪」，且 `eye_l` 的 desc 是
+>   「iris, eye white, eyelid and lashes **together**」一整顆。
+>   **也就是本規格需要的眼睛細件，這條管線產不出來。**
+> - `live2d/_archive/layerwork/layers/` 是**空目錄** —— 同一張基準圖的 `PROMPTS.md`
+>   已產出 **16** 筆 prompt（不是 17），人工生圖那步從未完成。
+> - `assets/layers/` 的 6 張 `part_*.png` 是另一支工具 **l2d-factory** 的顏色分群輸出
+>   （capelet / dark_eyes_lineart / hair / leftover / skin / top），不是解剖部件 ——
+>   `part_dark_eyes_lineart.png` 的 bbox 為 (68,129)-(699,1348)，涵蓋整個人形線稿。
+>   **不得**以它們作為合成來源。（順帶：`README` 目前寫「assets/ = …拆出的分層 PNG（sprite 素材來源）」，
+>   這句話會誤導下一個人，P5 落地時要一併改掉。）
+> - `live2d/_archive/DEPRECATED.md` 廢除 Live2D 的理由正是
+>   「GUI 手工、無法自動化…我(agent)做不到的一步…或外包 USD 50–150」。
+
+**SP-5.6 【解析度不是排除既有立繪的理由】** 實測 A1 髮頂 y=127、臉部皮膚下緣 y≈492 →
+頭高 365px；塞進 512 格內頭高佔 52% 只需 0.71× 縮小，不需放大。
+排除沿用的理由是**構圖與表情不可分離**（`assets/layers/` 不是解剖部件），
+**不是**像素不足；文件不得以解析度為由記載此決定。
+
+**SP-5.7 【外包是並列主選項】** 委外手繪不是第三備案。
+以「沒有美術背景的專案主人」為前提時，它與自繪並列。
+委外時交付同時須取得**書面的著作權讓與或授權書**，掃描件路徑記入出處欄（SP-9.10）。
+
+**SP-5.8 【眉窗與嘴窗內禁止漸層與陰影】** 維持 §7 已凍結的平塗 cel shading，
+否則不透明修補塊會被看見。
+
+---
+
+## §6 色彩與主題相容
+
+**SP-6.1 【凍結色票】** 全套素材共用一組凍結色票：髮 銀藍、眼 violet、
+斗篷 navy + 白色星點、上衣 charcoal-grey、線稿單一色值。
+**線稿色值與虹膜色值必須另外明文記錄** —— SP-7.3 的方向綁定檢查要用虹膜色值做遮罩。
+
+**SP-6.2 【亮度夾制】** 角色剪影中**面積 ≥ 1% 的髮、服裝、斗篷色塊**，
+其 sRGB 相對亮度必須落在 **[0.047, 0.61]**。
+
+- **豁免**：線稿、虹膜高光、**鞏膜（眼白）**、腮紅。
+  （眼白在胸上構圖下實測佔剪影面積 2.25% > 1%，但眼白/瞳孔的邊界正是視線線索本身，必須豁免。）
+- **臉部膚色直接指定合規值 `#E2C8B1`（L = 0.607）**，不要讓畫師去試。
+  典型動畫膚色 `#F5D9C0`（L = 0.728）不合規；乘 0.923 即得上述值，
+  膚/瞳對比由 12.47:1 降到 10.52:1，視線仍讀得出來。
+- ⚠️ **這個門檻是 1.59:1，不是 1.6:1，而且它不是無障礙標準。**
+  WCAG 1.4.11 對非文字元素是 3:1。它只是「不要溶進 panel 背景」的地板，
+  真正的分離由 SP-6.4 的描邊承擔。
+- ⚠️ §7 凍結的 dark navy capelet（L ≈ 0.02）**不合規**，需重新打光或改色。見 §10。
+
+**SP-6.3 【主題參考色】**（實查 `@grafana/data` 的 `palette.mjs`，2026-09-18）
+dark canvas `#111217`、dark panel `#181b1f`（L = 0.0108）、dark elevated `#22252b`；
+light canvas `#fbfbfb`、light panel `#ffffff`。
+QA 必須把 sheet 分別合成到這五個底色上目視。
+
+**SP-6.4 【中性描邊（主線）】** 角色外圍烘進一圈寬 **0.016·S**（±0.002·S）的中性描邊，
+目標 sRGB 相對亮度 **0.18–0.24**（參考色 `#6E7681`，L = 0.1786）。
+
+對比：vs `#181b1f` = **3.76:1**、vs `#111217` = **4.07:1**、vs `#ffffff` = **4.59:1**
+—— 一套描邊同時吃 light 與 dark，執行期零成本、零 filter 重繪。
+
+> **寬度為什麼是 0.016 而不是 0.010**：實測 0.010·C 的描邊在 dpr=1 / side 64 時
+> 最高只有 2.52:1（達 3:1 的像素數為 0）、side 84 為 3.50:1，要到 side ≥ 134 才量得到 3.76:1 ——
+> 因為 dpr=1 時它的名目寬度只有 0.64–0.84 裝置像素，被抗鋸齒吃掉。
+> 0.016·S 在本規格的下限（128 CSS px / dpr 1）下 = **2.0 裝置像素**。
+
+**SP-6.5 【描邊的兩條限制】**
+描邊**不得**沿 SP-2.8 的下襬漸隱區繪製（會出現一道弧形切邊）；
+描邊在 18 格中的寬度必須一致。
+
+**SP-6.6 【覆蓋層產權的剛性約束】**
+覆蓋格（reactions 全部 9 格）的非零 alpha 必須 **⊆ master frame 的臉部皮膚遮罩** ——
+不得覆寫剪影外、側髮、斗篷、描邊。
+這比 SP-4 表格的「⊆ E / B / M / K」更嚴，兩條同時生效。
+
+**SP-6.7 【變體 B（備案）】** 若美術方向否決烘進的描邊，改用執行期 4 向 `drop-shadow`：
+`filter: drop-shadow(${1/dpr}px 0 0 C) …`，C 依 `theme.isDark` 取
+`rgba(255,255,255,.55)` 或 `rgba(0,0,0,.45)`。
+成本是每次狀態變更多一次 filter 重繪。變體 A 與 B 二選一，不並用。
+（SP-1.8 的 128px 下限已讓變體 A 在整個尺寸範圍內成立，本備案不預期被動用。）
+
+**SP-6.8 【素材不得烘進背景】** 不得有任何背景色、地面陰影或面板色底。背景一律全透明。
+
+---
+
+## §7 機械驗收
+
+> **「畫之前凍結錨點」必須有機械承接才算數，否則就是口頭約定。**
+> `docs/handoff/P2-handoff.md` 已點名這件事，但沒說怎麼驗。這一節就是答案。
+
+**SP-7.0 【工具與零依賴原則】**
+新增 `tools/check-sprite-sheets.mjs`，以 `node tools/check-sprite-sheets.mjs` 呼叫，
+`package.json` 增列 `"check:sprites"`（比照既有的 `check:jssuffix`）。
+
+**不得引入任何第三方依賴**：以 Node 內建 `node:zlib` 解 IDAT、自行反 filter（type 0–4）取得
+RGBA 緩衝區。已實測可行性：1536×1536 RGBA 解碼 45–60ms、九格統計 11–59ms，
+對 colour type 2、調色盤、真交錯三種違規均正確硬失敗。
+
+> 這是它能不能進 commit 閘的唯一分水嶺。`sharp` 是原生二進位（約 30 MB、自帶傳遞相依），
+> 與 P2-handoff 記的「有漏洞的套件不會隨 plugin 出貨 —— 乾淨是靠架構不是靠運氣」直接衝突；
+> Pillow/numpy/scipy 在本機有，但 repo 從來沒宣告過 Python 依賴
+> （無 `requirements.txt`，`package.json` 的 engines 只寫 node>=22）。
+> 手寫 defilter 的風險（Paeth 最容易寫錯）由 SP-2.13 的單一格式限制緩解 ——
+> 解碼器只剩一條路徑 —— 並用既有的 `assets/a1-augur-calm-cutout.png` 當 fixture 回歸。
+
+**SP-7.1 【檢查 A — 格式與衛生】**（硬失敗）
+- 兩張圖皆為 1536×1536、bit depth 8、colour type 6、interlace 0。
+- 兩張圖的像素尺寸必須完全相同。
+- 每格 SP-2.1 的絕對透明帶（外緣 0.020·S）內 alpha 嚴格為 0。
+- 不得有黑邊 matte：`0 < alpha < 255` 且 RGB 為純黑的像素不得超過單格的 0.1%
+  （出現即代表匯出成了預乘 alpha）。
+- 除 manifest 明文宣告的 `intentionally_empty` 外，同一張 sheet 內任兩格不得逐位元組相同。
+- 格內不透明覆蓋率：**首版以警告記錄**，待第一批實際交付後回填為硬上下限。
+  （回填起點建議取實測值 —— 把 A1 cutout 裁成胸上 512 格量到 54.7% ——
+  而非任何估計區間。）
+
+**SP-7.2 【檢查 B — 頭部不動】**（硬失敗，直接驗收 SP-3.6）
+對 `i ≠ 4`，`directions[i]` 與 `directions[4]` 的差異像素必須**全部落在眼窗 E 之內**。
+差異定義為任一 RGBA 通道差 > 2/255。
+
+**SP-7.3 【檢查 C — 視線方向綁定 `gaze.ts`】**（硬失敗）
+> **這是本規格最有價值的一條檢查，而三份子設計都沒有它。**
+> 沒有它，整張圖行列顛倒交付會全綠 —— 身體相同、格 4 中性、兩兩相異全部滿足，
+> 但吉祥物看反方向。
+
+對每個 `c ≠ 4`：
+1. 以 SP-6.1 記錄的虹膜色值（含容差）在眼窗 E 內取遮罩，算質心 `(cx, cy)`。
+2. 與 `directions[4]` 的質心相減得 `(Δx, Δy)`。
+3. 要求 `sign(Δx) === (c % 3 − 1)` 且 `sign(Δy) === (floor(c / 3) − 1)`。
+4. 非零軸的 `|Δ|` 必須落在標稱 Δ（SP-3.3）的 **[0.6, 1.4] 倍**；
+   應為零的軸 `|Δ| ≤ 0.2 ×` 標稱 Δ。
+
+> 推導依據為 `gaze.ts` 的 `SECTOR_TO_CELL = [5,2,1,0,3,6,7,8]`：
+> cell 0=135°左上、1=90°上、2=45°右上、3=180°左、5=0°右、6=225°左下、7=270°下、8=315°右下
+> —— 正好就是 row-major 的 `col − 1` / `row − 1`（螢幕座標，y 向下為正）。
+> 已對照 `src/avatar/__tests__/gaze.test.ts` 的既有斷言。
+
+**SP-7.4 【檢查 D — 覆蓋層產權】**（硬失敗）
+- 逐格驗證 SP-4 表格的 alpha 範圍（⊆ E / B / M / K 的對應組合）。
+- 驗證 SP-6.6：覆蓋格的非零 alpha ⊆ master frame 的臉部皮膚遮罩。
+- 驗證 `composite(directions[4], reactions[j])` 在該格視窗**之外**與 `directions[4]` 逐位元相同。
+- 格 6 / 格 7 額外驗：眼形輪廓範圍內 alpha 必須 = 255（SP-4.7 的「不足」失敗模式）；
+  且與眉窗 B 的交集為空（眨眼不得吃掉眉毛）。
+
+**SP-7.5 【檢查 E — 錨點】**（硬失敗）
+以 master frame 的量測值比對 §2 的錨點表，容差 **±0.004·S**。
+量測法：臉中軸由剪影對稱軸、眼線由虹膜遮罩質心的 y 平均、
+頭寬與頭頂/下巴由皮膚+髮遮罩的 bbox。
+> **不採用洋紅註冊點（`.reg.png`）方案。** 它要求每格恰好 4 個點且其中兩個是瞳心，
+> 而閉眼格根本沒有瞳心可標；且 4 點只被檢查成 5 個純量，面內旋轉（roll）9.9° 可以全綠通過
+> —— 那時下巴橫向位移已達 0.0354·C（顯示 256 裝置像素時 9.1px），是宣告預算的 9 倍。
+> 本規格改用「像素同一性」承擔對齊，錨點檢查只驗 master frame 一張。
+
+**SP-7.6 【檢查 F — 降採樣可讀性】**（首版警告，第一批交付後回填為硬失敗）
+把 `composite(directions[4], reactions[2])` 降採樣到 **128px**，
+量眉線區域的線性亮度 `max − min` ≥ **0.25**（暫定門檻，需以實際素材校準）。
+> 這比體積門檻重要得多 —— SP-2.16 的線稿寬度規定若沒被遵守，
+> 眉形（情緒的主要讀值來源）會第一個消失成灰霧，而檢查 A–E 一條都不會紅。
+
+**SP-7.7 【檢查 G — 亮度與描邊】**（硬失敗）
+- SP-6.2 的亮度夾制（含豁免清單）。
+- SP-6.4 的描邊存在且 18 格寬度一致。
+
+**SP-7.8 【檢查 H — 體積】**（硬失敗）
+每張圖最佳化後 ≤ **900 KB**，兩張合計 ≤ **1.2 MB**。
+平塗畫風用 pngquant 調色盤量化通常可砍 60–70%。
+仍超標時改用 **S = 384（1152 × 1152）** 重新匯出 ——
+在本架構下降 S 不影響任何容差推導，是安全的退路。
+> 對照：現行 `dist/` 為 **129,659 bytes**、`dist/module.js` 為 **20,915 bytes**。
+> （P2-handoff 記的 2,729 bytes 是 P2 時期的 `module.js`，已過期 8 倍，不要再引用。）
+
+**SP-7.9 【檢查 I — 合成聯絡表】**（人工複核，但有明確產出物）
+腳本產出 4 張合成聯絡表到 `.sprite-check/`：
+9 個視線格 × master 情緒、3 個情緒 × 閉口、張口/閉口交替的 GIF、pending 與 click 各一張；
+全部縮到 **128 / 160 / 224 px** 三種尺寸並排，在 Grafana 深/淺兩個主題背景上輸出。
+> 檢查 A–H 全是像素級/幾何級的不變量，沒有一條會因為「臉太小看不懂」或
+> 「嘴巴像發條玩具」而紅。這是唯一能擋下那類失敗的閘門。
+
+**SP-7.10 【診斷輸出】** 不通過時必須印出逐格表格
+（格號、覆蓋率、質心、bbox、失敗項目、**超出容差多少**），
+並在 `.sprite-check/` 產出差異像素以洋紅標示的診斷圖
+（沿用 `check_layers.py` 的粉紅慣例）。
+只印「不過」而不印「差多少」不符本規格。
+`.sprite-check/` 必須加進 `.gitignore`，**不得**寫入 `src/`。
+
+**SP-7.11 【退出碼分級】** 0 = 通過；1 = 素材違規；2 = 工具或格式錯誤
+（檔案讀不到、PNG 格式不受支援、manifest 壞掉）。
+
+**SP-7.12 【不提供旁路】** 不提供 `--force` / `--skip`。
+要放寬只能修改 manifest 中凍結的錨點值或容差參數，該修改視同規格變更、須經 review，
+且會被 sha256 連帶影響。
+
+**SP-7.13 【閘門接線】**
+- `tools/asp-test.sh` 增列第四道檢查，位置緊接 `bash tools/check-js-suffix.sh` 之後、`jest` 之前：
+  `node tools/check-sprite-sheets.mjs || GATE_OK=false`。
+- ⚠️ **同時必須改 summary 字串**。現行末段是
+  `[ "$GATE_OK" = true ] || SUM="typecheck/lint/js-suffix 未過；$SUM"` ——
+  sprite 檢查失敗時寫進 `.asp-test-result.json` 的會是錯的原因，
+  而這個檔正是 ASP hook 唯一會讀的痕跡。改成四項並列。
+- **不得**寫成 jest 測試：`testMatch` 只涵蓋 `src/**`，把影像檢查塞進 src 會讓交付物驗收
+  寄生在產品碼樹裡；且 jest 的斷言輸出無法承載 SP-7.10 的逐格表格。
+- **不得**改動 `.git/index`（不呼叫任何 git 指令），以免破壞 `tools/asp-test.sh` 註解所述
+  「最後一個動作必須是寫 `.asp-test-result.json`」的時序判定。
+- 先在根 `eslint.config.mjs` 的 `ignores` 加 `'tools/**'`。
+  實查該清單目前沒有 `tools/`，而 `@grafana/eslint-config/flat.js` 未宣告 `files`
+  （其設定套到所有被 lint 的檔案，`base.js` 的 `ecmaVersion` 為 **2019** →
+  `?.` 與 `??` 會是 parse error，而一支自然寫法的零依賴 PNG 解碼器幾乎一定會用到）。
+
+**SP-7.14 【開關與可見的跳過】**
+以 `src/img/sprite/sprite-manifest.json` 是否存在決定：存在 → 檢查為強制；
+不存在 → 印出固定 sentinel 行 `SPRITE-CHECK: NOT-DELIVERED` 並回 0。
+`tools/asp-test.sh` 擷取該 sentinel，把「sprites: 未交付」串進 `.asp-test-result.json` 的 `summary`。
+> 只靠退出碼無法區分「跳過」與「通過」——「跳過本身要看得見」是這條的全部用意。
+> 用一個版控的 manifest 當開關（而非「PNG 檔在不在」），關閘會是一筆看得見的 diff。
+
+**SP-7.15 【manifest】** `src/img/sprite/sprite-manifest.json` 內容：
+sheet 像素尺寸、`cellPx`、`cols`/`rows`、§2 的完整錨點表、SP-2.11 的三個視窗、
+SP-3.3 的 Δx/Δy、SP-6.1 的線稿與虹膜色值、18 格的語意對照、
+`intentionally_empty` 宣告、以及**兩張 PNG 的 sha256**。
+腳本先比對 sha256 再做像素檢查 —— **換圖而不更新 manifest 必須是紅的**。
+> 該檔會被 `copyFiles.ts` 的 `{ from: '**/*.json', to: '.' }` 自動複製進
+> `dist/img/sprite/sprite-manifest.json`。⚠️ 注意兩張 sheet **不會**被複製（見 SP-8.3），
+> 所以 dist 裡會有一份 manifest 而 sheet 走的是 webpack 的 hash 檔名 ——
+> manifest **不得**記錄 sheet 的路徑，只記 sha256。
+
+**SP-7.16 【保證範圍】** 本檢查只涵蓋 repo 內建的兩張 sheet。
+使用者經 panel option 指定的外部 sheet 未經驗證，
+loader 必須在畫面上標示「自訂圖，對齊未驗證」。
+
+---
+
+## §8 載入與 `SpriteController`（給工程師）
+
+**SP-8.1 【三個檔案，職責分開】**
+| 檔案 | 職責 |
+|---|---|
+| `src/avatar/spriteSheet.ts` | 純格號常數與計算，**零圖片 import**，可測 |
+| `src/avatar/spriteAssets.ts` | 只做兩行 `import url from '../img/sprite/*.png'`，**測試不得引用** |
+| `src/avatar/SpriteController.ts` | 實作 `AvatarController`，`kind = 'sprite'` |
+
+**SP-8.2** `spriteSheet.ts` **必須重用** `gaze.ts` 的 `cellToBackgroundPosition`，
+不得複製一份 —— 兩張圖的格號計算是同一支函式，只是格號語意不同。
+
+**SP-8.3 【素材必須以 `import` 取得 URL】**
+實查 `.config/bundler/copyFiles.ts` 的 `copyFilePatterns` 只有
+README / `plugin.json` / LICENSE / CHANGELOG / `**/*.json` / `**/query_help.md`，
+外加 **`plugin.json` 裡宣告的 logo 與 screenshot 路徑** —— **沒有 png 萬用字元**。
+`src/img/logo.svg` 能進 `dist/` 純粹因為 `src/plugin.json` 的 `info.logos` 指名它，
+**不是**因為它在 `src/` 底下（`dist/img/` 裡實際只有 `logo.svg` 一個檔）。
+
+webpack 已有 `test: /\.(png|jpe?g|gif|svg)$/ → asset/resource`
+（production `filename: '[hash][ext]'`、`publicPath: public/plugins/augur-mascot-panel/`），
+所以 `import` 這條路是通的。
+
+⚠️ **不得**把 sheet 掛進 `plugin.json` 的 `info.screenshots` 來夾帶複製 ——
+那是 plugin 商店展示圖，掛 1536×1536 雪碧圖名實不符。
+
+⚠️ **不採用 WebP。** 該資產規則**不含 webp**，而 `.config/types/bundler-rules.d.ts`
+**有** `declare module '*.webp'` —— 所以 typecheck 會過、bundle 才爆
+（`Module parse failed … no loaders are configured to process this file`）。
+要走 WebP 必須依 `.config/README.md` 的 `webpack-merge` 做法在專案根覆寫 webpack config
+（**不要直接改 `.config/`** —— 那是腳手架管理的目錄，`create-plugin update` 會覆寫，
+且其 migration 全是 `if (!AST match) return` 的早退，手改的後果是靜默失效）。
+不值得為體積多一個活動零件，見 SP-7.8 的 pngquant 路線。
+
+**SP-8.4 【新增兩個 panel option — 三處都要動】**
+1. `src/panelOptions.ts`：`MascotPanelOptions` 加 `directionsImgUrl: string` 與 `reactionsImgUrl: string`。
+2. 同檔 `DEFAULT_OPTIONS`：兩者皆為**空字串**。
+3. `src/module.ts`：`setPanelOptions` builder 補兩個 `.addTextInput`。
+
+預設值**必須是空字串**（不得寫死路徑字串）——
+production 建置的檔名是 `[hash][ext]`，由 `SpriteController` 在空字串時取
+`spriteAssets.ts` 的 import 值。
+
+**SP-8.5 【不得新增 `src/images.d.ts`】**
+`.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`（連 gif/jpg/jpeg/webp/svg 都有），
+且 `.config/tsconfig.json` 的 `include` 是 `["../src", "./types"]`，該 `.d.ts` 在編譯範圍內。
+再加一份同名 ambient module 宣告會得到 `TS2300: Duplicate identifier 'src'`（兩檔各報一次），
+`tsc` exit 2，直接弄紅 `tools/asp-test.sh` 的第一項。
+**什麼都不必加**，`import url from './x.png'` 現在就通過型別檢查。
+
+**SP-8.6 【jest 必須合併而非覆蓋】**
+根 `jest.config.js` 現行全文是 `module.exports = { ...require('./.config/jest.config') }`。
+直接在 spread 後面加同名鍵 `moduleNameMapper` 會**整個覆蓋掉**繼承來的那份，
+連帶弄丟 `'\\.(css|scss|sass)$': 'identity-obj-proxy'` 與 `react-inlinesvg` 的 mock
+（後者存在的唯一理由是擋掉 `@grafana/ui` Icon 對 `/public/img/icon/*.svg` 的 fetch 錯誤），
+症狀是既有測試莫名開始紅。正確寫法：
+```js
+process.env.TZ = 'UTC';
+const base = require('./.config/jest.config');
+module.exports = {
+  ...base,
+  moduleNameMapper: {
+    ...base.moduleNameMapper,
+    '\\.(png|jpe?g|gif|webp)$': '<rootDir>/tools/jest/fileMock.js',
+  },
+};
+```
+fileMock 放在 `.config/` 之外（`testMatch` 只掃 `src/**`，放 `tools/` 不會被當成測試）。
+
+**SP-8.7 【載入與降級 — 每一條都是預期內路徑，不是例外處理】**
+1. 兩張圖皆以 `new Image()` + `img.decode()` 在**第一次繪製之前**預先解碼完成才啟用 sprite 層
+   （否則第一次播報會閃一格空白，那比錯位更明顯）。
+2. `img.onerror`（含跨網域被 CSP/CORS 擋）→ 退回 `DiagnosticAvatar` 並顯示降級原因。
+3. `naturalWidth !== naturalHeight` 或不能被 3 整除 → 同上。
+4. 兩張 sheet 尺寸不一致 → 只保留 directions 層、停用 reactions 層、顯示 chip。
+
+沿用 ADR-004 決策 6 的紀律：**壞掉時少一個功能，不是整個 plugin 炸掉。**
+
+**SP-8.8 【眨眼排程】**
+間隔於 2.8–6.5 秒間隨機；序列為 格 7(45ms) → 格 6(90ms) → 格 7(45ms)，直接換格不做補間；
+約 18% 機率於 160ms 後補第二次。
+抑制條件：`prefers-reduced-motion: reduce`、或 click 反應顯示中
+（blink 層在 expr 之上會蓋掉格 0 的驚訝眼）。
+**播報中不抑制。**
+pending 期間間隔**減半**，且呼吸振幅 ×1.4（SP-4.9 的非靜止要求）。
+
+**SP-8.9 【嘴型 — 擺動次數由 charLength 決定】**
+`setMouthOpen(v)` 是唯一的 flap 觸發點：
+```
+charLength = clamp(round((v − 0.35) × 14), 1, 14)   // 反推 MascotPanel 的 0.35 + c/14
+N          = clamp(charLength, 1, 5)                 // 本次 boundary 要擺幾下
+frame      = charLength >= 4 ? 格5 : 格4             // 張口幅度
+```
+跑 N 次 flap（每次 110ms 張 / 110ms 閉），跑完**回閉口停住**等下一個 boundary
+（詞與詞之間本來就有停頓）。`setSpeaking(false)` 立即隱藏 mouth 層並把 frame 重置回格 4。
+
+> **為什麼不是固定 220ms 自走**：`.asp-fact-check.md` 記 boundary 間隔 200–1950ms。
+> 固定週期自走會讓 200ms 的短間隔只擺 1 下、1950ms 的長間隔擺 9 下 ——
+> 擺動量與那一組實際有幾個字完全脫鉤，14 秒內以 4.55Hz 做 64 次一模一樣的開合，
+> 看起來是發條玩具不是在講話。
+> 本條與 ADR-004（Accepted）決策 4 的「`charLength` 給出每組字數**可決定擺動次數**」
+> 及 P2-handoff 的「循環次數由 charLength 決定」一致。
+>
+> **門檻 4 的由來**：實測 77 字觸發 21 次 word 事件（首次為 `charLength: 0` 的句首標記，
+> 不計），平均 3.85 字/次。原設計用的 `v > 0.70` 反推是 `charLength ≥ 5`，
+> 會讓多數詞落在格 4 而格 5 幾乎用不到。取 4 讓兩格都活著。
+> （順帶更正一個流傳的錯誤敘述：現行公式「幾乎只會落在大開」是算反的，
+> 正確的說法是「永遠不會落到閉口」—— 那才是它真正要解的問題。）
+
+**SP-8.10 【從未收到 `setMouthOpen` 時的 fallback】**
+`setSpeaking(true)` 期間以**格 4** 跑週期 220ms 的定速 flap。
+這條不可省 —— 省了會讓格 4 或格 5 其中一格在
+`enableTTS=false` / 引擎不吐 boundary 的路徑上變成永遠用不到的死格，且是哪一格未定義。
+
+**SP-8.11 【`setMouthOpen` 的語意差異必須寫在檔頭註解】**
+`DiagnosticAvatar` 的實際判準是 `if (open === 0 && this.speaking)` ——
+它把 **0 當成「沒給值」**，所以顯式的 `setMouthOpen(0)`（閉嘴）仍會被定速循環蓋過。
+照字面寫成 `!== undefined` 會與 `DiagnosticAvatar` 行為不一致。
+`SpriteController` 把每一次呼叫當成一次 boundary 同步點，這是刻意的差異，必須註明。
+
+**SP-8.12 【click 反應】** 顯示 **420ms**，期間凍結視線（格 0 含眼窗 E）。
+**播報中不抑制 click 反應** ——
+z 序已經解掉衝突：格 0 的小圓開口落在嘴窗 M，而 mouth 層在 expr 之上會蓋掉它，
+剩下的眉上揚與閃光正是想要的回饋。
+> 原設計的「播報中不觸發 click」是不必要的自我閹割：一則告警 14 秒、一批三則 42 秒，
+> 而使用者最會滿螢幕亂點的時刻恰好就是告警剛念出來的那幾秒 ——
+> 那會讓 ADR-004 花最大力氣驗的 G-ADR004-4 在最需要它的時候看不見。
+
+**SP-8.13 【pending 反應】** `alertState.state === 'pending'` 且
+`emotion === 'calm' && !speaking` 時，expr 層顯示格 8；離開 pending 即恢復。
+
+**SP-8.14 【pending 訊號的取得路徑】**
+由 `MascotPanel` **直接讀 `data.alertState.state`** 後轉呼叫 `setReaction`，
+**不繞經 `panelAlerts.evaluate`**。
+該函式對 pending 回 `[]` 是**正確行為，不可改** ——
+pending 與 alerting 共用 fingerprint，先播 pending 會讓「真的燒起來」那一刻被 dedup 吞掉。
+`REACHABLE_STATES` 已包含 `pending`，訊號確實拿得到。
+
+**SP-8.15 【契約異動】**
+`AvatarController` 新增**可選**成員 `setReaction?(kind: 'click' | 'pending' | null): void`，
+比照既有 `setMouthOpen?` 的前例 —— `DiagnosticAvatar` 不實作亦不受影響。
+⚠️ 此為 ADR-004 決策 5 的介面異動，**需人類授權後才可實作**。見 §10。
+
+**SP-8.16 【表情必須綁到「正在念的那一則」】**
+`MascotPanel` 現行是 `setEmotion(plans[0]!.plan.emotion)` —— **每批只呼叫一次**，
+而 `for (const p of plans) sp.enqueue(p.plan)` 把整批都排進去。
+一個 panel 綁 warning + critical 兩條規則同時燒就是一批兩則：
+臉定在 critical、嘴巴卻在念「嚴重度 warning」，持續 14–28 秒；三則就是 42 秒一張臉。
+
+`speaker.ts` 的 `SpeakerEvents.onStart?: (plan: BroadcastPlan) => void` **本來就把 plan 傳出來了**，
+而 `MascotPanel` 現行寫的是 `onStart: () => {...}` 把它丟掉。改成：
+```ts
+onStart: (plan) => {
+  setSpeechErr(null);
+  avatarRef.current?.setEmotion(plan.emotion);
+  setEmotion(plan.emotion);
+  avatarRef.current?.setSpeaking(true);
+},
+```
+⚠️ **enqueue 時那次 `setEmotion` 不能刪** —— `enableTTS === false` 時
+`speakerRef.current` 是 null、`onStart` 永不觸發。
+
+**SP-8.17 【stage 由 `MascotPanel` 決定尺寸】**
+`MascotPanel` 依 SP-1.8 算出 `side` 後，顯式設定 `hostRef` 的 `width` / `height`
+並保證 1:1；`SpriteController` 的四層只用 `inset: 0`。
+**契約不新增 `setSize()`** —— 避免再開一次 ADR-004 決策 5 的介面。
+⚠️ 這需要重排 panel 版面（目前 `hostRef` 是 header flex row 裡一個
+`flex: 0 0 auto` 的小 div，`DiagnosticAvatar` 自己撐到約 34px）。
+建議 `width ≥ 320` 時左圖右 feed。**這是 SP-1.8 的前置 blocker，不是 open question。** 見 §10。
+
+---
+
+## §9 進版控前置：授權與出處
+
+**SP-9.1** 兩張精靈圖進版控**之前**，`docs/asset-provenance.md` 必須先補上對應列。
+這是該文件自身的規則：「新增任何美術資產進版控之前，先在上表補一列。出處不明的一律不進版控。」
+
+**SP-9.2 【「AI 生成」四個字不構成出處】** 出處欄至少須含七項：
+生成產品名稱、可讀到的版本字串（未公開版本時明寫「App 未公開版本」，**不得臆造**）、
+生成日期、操作者、逐字 prompt 的版控路徑、輸入參考圖的版控路徑、
+後製工具與操作者（無後製則明寫「無」）。
+
+**SP-9.3** 全部 prompt 與所附參考圖逐字存入 `docs/sprite/SOURCE-PROMPTS.md` 並進版控。
+出處欄引用該檔的錨點，而非以散文轉述。
+
+**SP-9.4 【🔴 出處鏈的根現在是斷的】**
+本套 sprite 以 `assets/a1-augur-calm.png` 為風格與色票參考，
+而該圖在 `docs/asset-provenance.md` 的「出處」與「授權」兩欄至今是「⚠️ 待補」。
+**該列必須先由專案主人補齊**，否則依該文件自身規則，sprite 不得進版控。
+
+**SP-9.5 【授權欄兩段式，不得合併成一句】**
+(a) 生成服務條款對輸出歸屬的結論，附**一級來源 URL 與查證日期**；
+(b) 專案的主張，措辭為「專案自有，以專案實際持有之權利為限，隨 repo Apache-2.0 釋出」。
+
+**SP-9.6 【(a) 必須逐字內嵌於版控文件】**
+不得只寫「見 `.asp-fact-check.md`」—— 該檔被根 `.gitignore` 排除，公開 repo 的讀者取不到。
+同一事實可另行同步進 `.asp-fact-check.md`（ASP 鐵則四），但版控側必須自足。
+做法比照 ADR-004 的 Verification Evidence 表（每列自帶一級來源）。
+
+**SP-9.7 【否定聲明】** 授權欄須包含一句：
+「未以任何第三方角色 IP、指名畫師風格、或未授權的參考圖作為生成輸入」。
+這是公開 Apache-2.0 repo 真正承載風險的那句話。
+
+**SP-9.8 【備註欄】** 記錄兩張 PNG 的 sha256（與 SP-7.15 的 manifest 同值）。
+
+**SP-9.9 【禁止接觸 namei 匯出物】**
+交付流程不得接觸 `namei-exports.zip` 或任何 namei 匯出物。
+該 zip 目前存在於工作樹根目錄（未追蹤、已被 `.gitignore` 排除），
+其衍生物正是 2026-09-16 被從分支歷史移除的零出處美術。
+
+**SP-9.10 【委外】** 交付同時須取得書面的著作權讓與或授權書，掃描件路徑記入出處欄；
+缺此文件者，依 SP-9.1 不得進版控。
+
+**SP-9.11 【分層原始檔】** 建議**不**進版控（體積），但需在 `docs/asset-provenance.md`
+註明其存放位置與負責人，並明寫「本 repo 無法單獨重建此素材」。
+它是 18 格的唯一真實來源，遺失等同整套素材無法再編輯。
+是否進版控依實際體積另行裁定。
+
+**SP-9.12 【交付清單】** 進版控的交付物共四項，位置固定：
+```
+src/img/sprite/augur-directions.png     (1536×1536)
+src/img/sprite/augur-reactions.png      (1536×1536)
+src/img/sprite/sprite-manifest.json
+docs/sprite/SOURCE-PROMPTS.md
+```
+可編輯母本置於 `assets/sprite-src/`（是否進版控見 SP-9.11）。
+18 格的標號打樣圖由腳本按需產生到 `.sprite-check/`，**不進版控**。
+
+**SP-9.13 【交付視為完成的條件】** 三者缺一不得 land：
+`node tools/check-sprite-sheets.mjs` 回 0；
+`docs/asset-provenance.md` 已補列且出處鏈完整（含 SP-9.4 的 A1 那一列）；
+`bash tools/asp-test.sh` 全綠。
+
+---
+
+## §10 待人類裁定（開畫前必須有答案的用 🔴 標示）
+
+1. 🔴 **A1 的出處與授權**（SP-9.4）。不答則素材不能進版控。
+2. 🔴 **是否放行 `setReaction?(kind)` 這個可選契約成員**（SP-8.15）。
+   **同時請一併裁定它對 ADR-004〈待驗風險 4〉的回覆** ——
+   該條逐字寫「emotion.ts 目前只有 4 個 emotion，吃不滿 9 格，**需擴充**」，
+   而本規格選的是相反的路：不擴 Emotion（擴了會污染 `severityToEmotion` 的純函式語意，
+   且 click/pending 根本不是 severity 的函數），改用可選成員承接。
+   不放行的退路：格 0 與格 8 不畫，reactions 降為 7 格，其餘設計完全不受影響。
+3. 🔴 **深藍斗篷不符 SP-6.2 的亮度夾制**，在 dark panel 上會溶掉。
+   重新打光、提高明度、還是改色？改到什麼程度仍算「同一個 Augur」？
+4. 🔴 **齊瀏海 vs SP-2.10 的眉窗露出**。改髮型還是改錨點？
+   建議改髮型 —— 後者會讓覆蓋層的產權邊界從「臉部皮膚遮罩」擴張到含髮絲，
+   SP-7.4 的機械檢查會跟著失去剛性。
+5. 🔴 **master frame 由誰畫、用什麼工具、預算多少**（SP-5.7）。
+6. 🔴 **panel 版面重排由誰在哪一階段做**（SP-8.17）。這是 SP-1.8 的前置，不是 open question。
+7. **情緒衰減**：`MascotPanel` 目前只在有新 plan 時 `setEmotion`，之後**永遠不會回到 calm** ——
+   一則 resolved 播完後吉祥物會頂著閃光與腮紅停在那裡直到下一則告警。
+   chip 已有同樣問題，精靈圖會讓它明顯得多。要不要加（建議 3 分鐘）？這是行為異動。
+8. **idle timer / pointerleave**：滑鼠停住或離開視窗時視線凍在最後一格而非回中央。
+   要不要在 P4/P5 補 4 秒 idle 即 `setGaze(CENTER_CELL)`？這會讓格 4 真正成為 idle 狀態。
+9. **分層原始檔是否進版控**（SP-9.11）。體積要等實際交付才知道。
+10. **生成服務條款對輸出歸屬的規定**（SP-9.5a）。本次未查證，屬 ASP 鐵則四。
+11. **SP-6.4 的烘進描邊有貼紙感**，是否接受？否決的話走 SP-6.7 的變體 B。
+12. **外部 URL 這個 panel option 要不要留**？Grafana 的 CSP 是否允許跨網域圖片未查證；
+    若被擋，它只是一個永遠失敗的選項，不如只接受相對於 plugin 的路徑。
+
+---
+
+## §11 未驗／未決（技術性，不必然需要人類）
+
+1. **SP-2.6 與 SP-3.3 目前是暫定值** —— SP-5.3 的可讀性實測還沒跑。
+   凍結後改不動，這是唯一不能省的前置實測。
+2. **Firefox / WebKit 的跨格滲色未驗**。零滲色結論只對 Chromium 成立
+   （本機 playwright 需要的 firefox-1543 / webkit-2359 執行檔未安裝）。
+   SP-2.1 的 0.020·S 透明帶即為保險。補法：`npx playwright install firefox webkit` 後重跑。
+3. **pngquant 後的實際體積未知**。SP-7.8 的 900KB/1.2MB 預算與 S=384 退路都沒被真實素材檢驗。
+4. **SP-7.6 的對比門檻 0.25 與 SP-7.1 的覆蓋率上下限是暫定/留白**，需第一批交付後回填。
+   用沒有實據的數字擋住第一次交付是錯的。
+5. **`tools/*.mjs` 會不會被 eslint 擋，未實測**（本次唯讀、不能在 repo 內建檔）。
+   SP-7.13 已指定先加 `ignores`，不要賭語法。
+6. **`alertState` 的 alerting → pending 轉換是否會殘留舊值導致 SP-4.9 的臉卡住，未驗**。
+   需要一條帶 `for` duration 的翻轉規則 —— 正是 ADR-004〈待驗風險 6〉點名未測的那一項。
+7. **「sandbox 開啟時語音還能不能用」仍未驗**（ADR-004 Accepted 時留下的兩處缺口之一）。
+   這影響 SP-8.10 的 fallback 路徑實際會不會被走到。
+8. **`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定**。不影響任何機械檢查。
+
+---
+
+## 附錄 A：收斂過程推翻的事項（存檔，以免日後重新發明）
+
+| 被推翻的主張 | 來源 | 為什麼不收 |
+|---|---|---|
+| 兩張圖二選一顯示 + 120ms opacity cross-fade | 幾何設計 §2.9 | 實測對稱 cross-fade 在中點亮度掉 22%，自己製造了一次亮度軸上的跳動（SP-1.12） |
+| 以 4 個洋紅註冊點（`.reg.png`）凍結錨點 | 幾何設計 §3.5 / §9.1 | §6.1 的瞳孔位移與 §3.8 的容差數學上不相容（8 個非中央格必紅）；閉眼格沒有瞳心可標；4 點只被檢查成 5 個純量，roll 9.9° 全綠通過而下巴已橫移 0.0354·C |
+| reactions 全部採 `dir[4]` 的頭部姿勢，容差 ±0.004·C | 幾何設計 §3.9 | 在四層疊合下沒有適用對象 —— 跨圖對齊誤差是代數上的 0 |
+| 允許 yaw ≤±5°、pitch ≤±4°、lean ≤±0.010·C | 幾何設計 §6.2 | 頭一動，覆蓋層就要逐視線格重畫（4 情緒 × 9 視線 = 36 格） |
+| 出貨用 WebP（`cwebp -q 90`） | 幾何設計 §1.3 | webpack 資產規則 `/\.(png\|jpe?g\|gif\|svg)$/` **不含 webp**，而 `*.webp` 的型別宣告存在 → typecheck 過、bundle 爆 |
+| 18 張獨立 1024 母檔 + 打包腳本 | 幾何設計 §1.1 / §11 | 重新引入漂移可能；「頭不動」不再是免費的 |
+| 頭高 0.430·C、crownY 0.155 | 幾何設計 §3.2 | 沒有等價於 §3 相對關係的推導鏈；且頭越大視線越讀得出來 |
+| side ≥ 64 即渲染 | 幾何設計 §1.7 | 64/dpr1 時垂直瞳孔位移只有 1.15 裝置像素，低於它自己用來否決全身構圖的 1.4–1.8px |
+| 描邊 0.010·C「一套吃兩個主題」 | 幾何設計 §7.4 | 實測 dpr=1/side 64 只有 2.52:1（達 3:1 的像素數為 0）；名目寬度 0.64–0.84 裝置像素被抗鋸齒吃掉 |
+| tolPx = max(1, floor(cellPx/(maxCss×DPR))) 與整套錨定帶容差 | 產製設計 §C3–C8 | 在四層疊合下沒有適用對象；副作用是 S=384 的退路變安全了 |
+| 「單張 base → image-layer-split → 程式合成 18 格」 | 產製設計 §A1 / §A4 | 該 preset 的 notes 逐字寫明眼睛細件與 overlay 不在此 preset，`eye_l` 是「iris, eye white, eyelid and lashes together」一整顆 —— 本規格需要的圖層它產不出來 |
+| 新增 `src/images.d.ts` | 產製設計 §F7 | `.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`；再加一份得 `TS2300`，弄紅閘門第一項 |
+| reactions cell 4 必須是與 directions cell 4 逐像素相同的中性格 | 產製設計 §C8 | 覆蓋層架構下 reactions 各格不是整隻角色；格 4 改為半開嘴 |
+| reactions 格 0 = calm 表情覆蓋 | 內容設計 SP-4.1 | 底圖本來就是 calm，格 0 只剩一條嘴線；且是修補塊面積最大、出現時間最長的一格。改為 calm＝expr 隱藏，格 0 讓給 click |
+| charLength 當「張口幅度選擇器」、flap 固定 220ms 自走 | 內容設計 決策 10 | 與 ADR-004（Accepted）決策 4 及 P2-handoff 原文相反；boundary 間隔 200–1950ms，固定週期會讓擺動量與字數完全脫鉤 |
+| 禁止對 `background-position` 加任何 CSS animation | 內容設計 SP-1.5 | ADR-004 決策 3 逐字寫 `steps()`，而 `steps()` 正是解法不是病因 |
+| 呼吸振幅 0.6% 邊長 | 內容設計 SP-1.8 | 0.58–1.34px，接近不可察覺，達不到它自己設定的目的 |
+| 「9 格一格不浪費」 | 內容設計 摘要 | 不成立（見 calm 那一列）。本規格明說格 7 是低成本的眨眼中間幀，且允許在預算吃緊時宣告為 `intentionally_empty` |
+| 「PROMPTS.md 跑了 17 筆只落地 6 張」 | 內容設計 SP-5.3 | 實查是 **16** 筆，且指定輸出目錄至今為空；`assets/layers/` 的 6 張是另一支工具 l2d-factory 的產物，不是這批 prompt 的殘骸。禁令改用第一性原理支撐 |
+| 「dist/ 只有 2,729 bytes」 | 幾何/產製設計 | 那是 P2 時期的 `dist/module.js`。實查現行 `dist/` = 129,659 bytes、`module.js` = 20,915 bytes |
+| 「`directionsImgUrl`/`reactionsImgUrl` 是已定的 panel option」 | 三份皆有 | 全樹與全部 commit 零命中。改寫為「P5 需新增」，工作項見 SP-8.4 |
+
+---
+
+## SpriteController 實作契約
+
+給寫 `src/avatar/SpriteController.ts` 的人。
+
+- `SpriteController implements AvatarController`，`kind = 'sprite'`，放在 `src/avatar/SpriteController.ts`。
+- 檔案切三支：`spriteSheet.ts`（純格號常數與計算、零圖片 import、可測）、`spriteAssets.ts`（只做兩行 `import url from '../img/sprite/*.png'`，測試不得引用）、`SpriteController.ts`（渲染與時序）。
+- `spriteSheet.ts` **必須重用** `gaze.ts` 匯出的 `cellToBackgroundPosition`，不得複製一份 —— 兩張圖用同一支函式，只是格號語意不同。
+- `mount(container)` 內建四個 `position:absolute; inset:0` 的 div，z 由低到高：base / expr / mouth / blink；全部 `background-size: 300% 300%; background-repeat: no-repeat; image-rendering: auto;` 且 `aria-hidden="true"`。
+- base 層永遠用 directions 圖，`background-position = cellToBackgroundPosition(gazeCell)`；**任何情況下都不切換到 reactions 圖**。
+- expr / mouth / blink 三層共用同一個 reactions 圖 URL，各自取不同格。
+- `setGaze(cell)` 只改 base 層的 `background-position`，不做任何額外格號換算，不加 transition。
+- `setEmotion(e)`：calm → expr 層 `display:none`；warning → 格 1；critical → 格 2；resolved → 格 3。直接查表，不做運算。
+- expr 層的顯示優先序為 click(格 0) > 非 calm 情緒(格 1–3) > pending(格 8) > 隱藏；pending 只在 `emotion === 'calm' && !speaking` 時顯示。
+- `setSpeaking(true)` 只把 mouth 層設為可用；**不**自己啟動固定週期循環。`setSpeaking(false)` 立即隱藏 mouth 層並把張口幀重置回格 4。
+- `setMouthOpen(v)` 是唯一的 flap 觸發點：由 `v` 反推 `charLength = clamp(round((v − 0.35) × 14), 1, 14)`，跑 `N = clamp(charLength, 1, 5)` 次 flap（每次 110ms 張 / 110ms 閉），跑完回閉口停住等下一個 `setMouthOpen`。
+- 張口幀選格：`charLength >= 4 → 格 5（大開）`，否則 `格 4（半開）`。門檻 4 來自實測中位數（77 字 / 20 個詞級 boundary，平均 3.85），不是 0.70 這個換算後的值。
+- **從未收到 `setMouthOpen` 時**（`enableTTS=false`、`speechSynthesis` 不存在、或引擎不吐 boundary）：`setSpeaking(true)` 期間以格 4 跑週期 220ms 的定速 flap。這是 ADR-004 決策 4 保留的 fallback，不可省 —— 省了格 4 或格 5 其中一格會變成永遠用不到的死格。
+- `setMouthOpen` 的語意在本實作中與 `DiagnosticAvatar` **不同**，必須在檔頭註解寫明：`DiagnosticAvatar` 的實際判準是 `if (open === 0 && this.speaking)`（把 0 當成「沒給值」），本實作把每一次呼叫當成一次 boundary 同步點。照字面寫成 `!== undefined` 會與 `DiagnosticAvatar` 行為不一致。
+- 眨眼由控制器自走：間隔 2.8–6.5 秒隨機，序列為 格 7(半閉, 45ms) → 格 6(全閉, 90ms) → 格 7(45ms)，約 18% 機率於 160ms 後補第二次。
+- 眨眼抑制條件：`prefers-reduced-motion: reduce`、或 click 反應顯示中（blink 層在 expr 之上會蓋掉格 0 的驚訝眼）。**播報中不抑制眨眼。**
+- `setReaction?(kind: 'click' | 'pending' | null)` 為**可選**成員（比照既有 `setMouthOpen?`）。click 顯示 420ms 後自動回復；pending 為持續狀態直到收到 `null` 或非 pending。此成員需人類授權後才可加進 `AvatarController`（見 needs_human）。
+- **不要**抑制播報中的 click 反應。z 序已經解掉衝突：格 0 的小圓開口落在嘴窗 M，而 mouth 層在 expr 之上會蓋掉它，剩下的眉上揚與閃光正是想要的回饋。
+- 呼吸作用在四層的**共同父容器**（stage）上：`transform: translateY()`，振幅 2.0% 邊長，週期 4s，ease-in-out alternate。`prefers-reduced-motion: reduce` 時停用。
+- pending 期間眨眼間隔減半、呼吸振幅 ×1.4 —— pending 可持續數分鐘，靜止的臉讀起來是「卡住了」。
+- stage 由 **`MascotPanel` 設定尺寸**（`width`/`height` 顯式 px、`aspect-ratio: 1`），`SpriteController` 只用 `inset: 0`。契約**不**新增 `setSize()`，避免再開一次 ADR-004 決策 5 的介面。
+- 兩張圖皆以 `new Image()` + `img.decode()` 在第一次繪製前預先解碼完成才啟用 sprite 層；否則第一次播報會閃一格空白。
+- 載入或幾何驗證失敗時回報失敗，由 `MascotPanel` 退回 `DiagnosticAvatar` 並在畫面顯示降級原因（沿用 ADR-004 決策 6「壞掉時少一個功能，不是整個 plugin 炸掉」）。
+- 幾何驗證為**預期內路徑**不是例外處理：`naturalWidth === naturalHeight` 且能被 3 整除；兩張圖尺寸必須相同；`img.onerror` 需有獨立分支（跨網域 URL 在 Grafana 下可能撞 CSP/CORS，此時 §幾何檢查根本跑不到）。
+- `panelOptions` 的 `directionsImgUrl` / `reactionsImgUrl` 預設值**必須是空字串**，由 `SpriteController` 在空字串時取 `spriteAssets.ts` 的 import 值 —— production 建置的檔名是 `[hash][ext]`，不得寫死路徑字串。
+- **不要**新增 `src/images.d.ts`：`.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`，再加一份會得到 `TS2300: Duplicate identifier 'src'` 並弄紅 `tools/asp-test.sh` 的 typecheck。
+- `MascotPanel` 側必須配合的四件事（不在控制器內，但控制器的行為依賴它們）：(1) 把 `setEmotion` 從 `onStart: () => {}` 改成 `onStart: (plan) => { ...; avatarRef.current?.setEmotion(plan.emotion); }` —— `SpeakerEvents.onStart` 本來就把 plan 傳出來了，現行程式碼把它丟掉，導致一批三則時臉定在 `plans[0]` 的情緒長達 42 秒；(2) enqueue 時那次 `setEmotion` **不能刪**（`enableTTS === false` 時 `speakerRef.current` 是 null、`onStart` 永不觸發）；(3) `gazeCell(dx, dy, gazeRef.current, { ...DEFAULT_GAZE, deadZonePx: Math.round(side * 0.25) })` —— 現行呼叫沒傳第四參數；(4) pending 訊號由 `MascotPanel` 直接讀 `data.alertState.state` 後轉呼叫 `setReaction`，**不繞經 `panelAlerts.evaluate`**（它對 pending 回 `[]` 是正確行為，不可改）。
+
+---
+
+## 跨設計矛盾與裁決
+
+收斂者在三份子設計之間找到 21 處互斥，逐條裁決如下。
+保留裁決理由是刻意的 —— 日後想改規格的人需要知道當初為什麼不走另一條。
+
+### 1. content（四層疊合，reactions 為透明局部覆蓋）× geometry（兩張整圖 120ms opacity cross-fade）× production（§C8 要求 reactions[4] 與 directions[4] 逐像素相同的中性 idle 格）
+
+**衝突**：三份對「reactions 的一格是什麼」給了互斥的答案：局部透明覆蓋、整隻角色、共用中性立繪。geometry 與 production 的方案都需要用容差去追「兩張圖對不對得齊」；content 的方案讓底圖從不切換，對齊變成構造上成立。
+
+**裁決**：採 content 的四層疊合。理由不是偏好：(a) geometry 的複驗者實測 opacity cross-fade 本身在 0.5/0.5 時亮度掉約 22%（兩層半透明合成總覆蓋率 1−(1−a)(1−b)<1，panel 底色透出來）—— 這個「解法」自己製造了一次亮度軸上的跳動；(b) geometry 的錨點凍結機制被另一位複驗者證明對面內旋轉（roll）9.9° 全綠、對閉眼格無點可標；(c) 覆蓋格由 master frame 複製後局部編輯產生，未編輯處逐位元相同，這是零容差而非 ±4px。代價：geometry §2.9、§3.9、§3.10 與 production §C8 全部作廢；reactions 的格 4 改為半開嘴，不再是中性格。
+
+### 2. geometry §3.5（faceAxisX / eyeLineY 由兩瞳導出）× geometry §6.1（瞳孔位移 ±0.022·C / ±0.018·C）× geometry §3.8（T-gaze 上限 ±0.015·C / ±0.012·C）
+
+**衝突**：兩位複驗者各自獨立算出同一個結果：兩瞳同向平移時中點就整個平移 0.022·C，8 個非中央格必然違反 §3.8，超標 47%／50%。§6.3 的降階路徑（先砍 lean、再砍 pitch）走到底仍然違反。同一組錨點也打穿 T-freeze —— 任何動到眼睛的反應格，瞳孔中心位移都遠超 ±0.004·C。
+
+**裁決**：整個註冊點錨點方案不收。錨點不再由「量出來的點」承擔，改由「像素同一性」承擔：directions 9 格除眼窗 E 外逐像素相同，reactions 各格由 master frame 複製後只在自己的視窗內編輯。瞳孔位移改列為獨立的 gaze 量測（SP-7.3 的方向綁定檢查），只驗方向與幅度，不進任何頭部位置容差。§3.1–§3.10、§9.1(b)(c) 的 .reg.png 機制全數不收。
+
+### 3. geometry §6.2（允許 yaw ≤±5°、pitch ≤±4°、lean ≤±0.010·C）× content 決策 2（禁止頭部位移與轉動）
+
+**衝突**：只要頭會動，兩張圖的對位就回到容差問題，眨眼覆蓋層與情緒覆蓋層也必須跟著頭轉動而逐格重畫（4 情緒 × 9 視線 = 36 格）。
+
+**裁決**：禁止一切頭部位移、轉動與縮放。這是整套設計的承重牆：頭不動 → 覆蓋層只要一份 → 眨眼只要一格 → SP-7.2 的機械檢查可驗。方向感全部由瞳孔位移、眼瞼形狀與睫毛承擔（geometry §6.4 的輔助線索保留，且升為主要線索）。
+
+### 4. geometry §1.3 / §8.2（出貨 WebP，cwebp -q 90）× production §B5 / §B7（PNG-32、colour type 6、非交錯，明文不採 WebP）
+
+**衝突**：體積 vs 建置可行性。
+
+**裁決**：出 PNG。實查 `.config/webpack/webpack.config.ts:113` 的資產規則是 `/\.(png|jpe?g|gif|svg)$/` —— **不含 webp**；而 `.config/types/bundler-rules.d.ts` **有** `declare module '*.webp'`，所以 typecheck 會過、webpack 才爆。要走 WebP 必須在專案根用 webpack-merge 覆寫腳手架設定，多一個會被 `create-plugin update` 影響的活動零件，不值得。體積改用 pngquant 調色盤量化控制（平塗畫風），並保留 S=384 的退路 —— 在本架構下降 S 不影響任何容差推導（見矛盾 8）。
+
+### 5. geometry §1.1 / §11（18 張獨立 1024 母檔 + 打包腳本）× content SP-5.1（一個分層原始檔 + 匯出設定）× production §A1（單張 base → 語意分層 → 程式合成 18 格）
+
+**衝突**：母檔的形態決定「頭不動」是免費的還是要靠驗收抓。
+
+**裁決**：母檔是**一個分層原始檔**。18 格全部由它切圖層匯出。18 張獨立母檔會重新引入漂移可能；production 的「程式合成」路徑其指名的工具（image-layer-split 的 live2d-character preset）實查產不出所需圖層（見矛盾 12）。驗收腳本直接對出貨的兩張 1536² sheet 切九宮格檢查，不需要中繼的逐格母檔。
+
+### 6. content SP-2.3（頭頂 0.080、下巴 0.600、頭高 0.520·S）× geometry §3.2/§3.3（crownY 0.155、chinY 0.585、頭高 0.430·C）
+
+**衝突**：同一件事兩組數字，差 21%。頭越大在 128px 下視線越讀得出來，但構圖越擠。
+
+**裁決**：採 content 的 0.520。理由：(a) 兩者的眼線值意外一致（0.080+0.58×0.520=0.382；0.155+0.523×0.430=0.380），可見分歧只在頭的大小；(b) content 的三個 Y 值（眼線 0.380、嘴 0.530、肩線 0.850）由 live2d-template-spec §3 的相對關係 58%/87%/148% 逐項換算而來、內部自洽，geometry 的 0.430 沒有等價的推導鏈；(c) 本 plugin 的招牌功能是視線，頭大是正確的偏誤方向。geometry §3.2/§3.3/§3.4 不收。
+
+### 7. content SP-1.7（stage 下限 96px）× geometry §1.7（side < 64 不渲染）× 兩位複驗者的實測
+
+**衝突**：content 的複驗者代進錨點算出 96px 時虹膜 5.3px、瞳孔位移 2.1px、嘴窗高 10.6px；geometry 的複驗者算出 side 64/dpr1 時垂直瞳孔位移只有 1.15 裝置像素，低於 geometry §5.2 自己用來否決全身構圖的 1.4–1.8px 區間。兩邊的下限都低於自己的可讀性論證。
+
+**裁決**：下限 **128 CSS px**，低於此一律不渲染 sprite（只留既有 chip 與 feed）。上限 `min(256, 512/dpr)`，任何情況下不放大。連帶裁定：`MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數把 `deadZonePx` 改成 `round(side × 0.25)` —— 現行程式碼沒傳 opts，`deadZonePx` 恆為 28，那是為 34px 的 DiagnosticAvatar 訂的；在 224px 的 stage 上 dead zone 只佔直徑 25%，游標停在角色臉頰上時角色會把視線甩開自己，「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
+
+### 8. production §C3（tolPx = max(1, floor(cellPx /(maxRenderCssPx × DPR)))）與 §C4/§G3（封頂是驗收前提）× 本規格的疊合架構
+
+**衝突**：production 的整套容差推導建立在「兩張圖的同名格要對齊到一個裝置像素以內」上。
+
+**裁決**：tolPx 在本架構下沒有適用對象 —— 跨圖對齊誤差是代數上的 0，不是「2px 以內」。§C3/§C4/§C6/§C7/§C8 全數不收，由 SP-7.2（頭部不動：差異像素必須全落在眼窗內）與 SP-7.3（覆蓋層 alpha 產權）取代。副作用是 production 複驗者點名的「B4 降 S=384 會把 tolPx 壓到 1px 而悄悄改變閘門強度」不再存在，降 S 變成安全的退路。
+
+### 9. content SP-4.1（reactions 格 0 = calm 表情覆蓋）× content SP-3.8（directions 自成完整可用的 calm 角色）× content SP-5.4（覆蓋格未編輯處與 master frame 逐位元相同）
+
+**衝突**：複驗者指出：底圖本來就畫著中性眉與閉口嘴，格 0 的眉窗只會是底圖眉毛的複製品，真正的差異只剩嘴窗裡一條 MouthForm +0.2 的微彎 —— 一整格花在一條嘴線上，而且它是修補塊面積最大、出現時間最長的一格（最容易看到接縫）。
+
+**裁決**：採複驗者的修正。master frame 直接畫成 §6 的 calm（MouthForm +0.2），calm 狀態定義為 **expr 層 display:none**，不顯示任何格。省下的格 0 改放 click。連帶改寫 content SP-4.10：情緒格號**不再等於**情緒索引，改為明表 calm→隱藏、warning→1、critical→2、resolved→3。
+
+### 10. content 決策 6（佇列積壓／sandbox／語音錯誤都是「狀態不是事件」，狀態該進 chip）× content 決策 7（pending 給一格）
+
+**衝突**：複驗者指出 pending 的持續時間是 alert rule 的 `for` duration，典型 1–5 分鐘，比決策 6 用來否決另外三個的 42 秒長一個數量級，而且同樣是狀態。用「它是唯一看不見的狀態」來區分，論證的是價值不是分類。
+
+**裁決**：兩條都改。分類線重畫為**通道**而非**持續時間**：表情通道承載「告警狀態」，chip 通道承載「plugin 自身狀態」。pending 是 alert 狀態、是 warning/critical 的前驅，與情緒同通道且不與之競爭（規定只在 `emotion === 'calm' && !speaking` 時顯示）；佇列積壓／sandbox 降級／TTS 關閉是 plugin 狀態，會與 critical 直接搶同一張臉，故留在 chip。同時採納複驗者的附帶條件：pending 期間**不得是靜止的** —— 眨眼間隔減半、呼吸振幅加大（SP-8.8），否則讀起來是「卡住了」。
+
+### 11. content 決策 10（charLength 當「張口幅度選擇器」，flap 固定 220ms 自走）× ADR-004（Accepted）決策 4 與 P2-handoff §四（charLength 決定**擺動次數**）
+
+**衝突**：content 宣稱自己與 P2-handoff 一致，實際只保留了「boundary 當同步點」那半句。複驗者算出後果：`.asp-fact-check.md` 記 boundary 間隔 200–1950ms，固定 220ms 自走會讓 200ms 的短間隔只擺 1 下、1950ms 的長間隔擺 9 下，擺動量與那一組實際有幾個字完全脫鉤。
+
+**裁決**：採 ADR-004 與 handoff 的原意：每次 boundary 觸發 **N = clamp(charLength, 1, 5)** 次 flap，跑完回閉口停住等下一個 boundary。同時刪掉 content 決策 10 的錯誤論據 ——「現行公式幾乎只會落在大開」是算反的（`0.35 + charLength/14 > 0.70` ⟺ charLength ≥ 5，而實測平均 3.85，多數落在半開）；正確的說法是「現行公式永遠不會落到閉口」，那才是它真正要解的問題。另補複驗者點名的死格：`enableTTS=false` 或引擎不吐 boundary 時 `setMouthOpen` 從未被呼叫，規格必須指定預設張口幀（格 4）。
+
+### 12. production §A4（分層作業使用 image-layer-split 的 live2d-character preset）× production §A2/§A3（只准移動虹膜／高光圖層、只准替換眉／嘴／眼皮與四個 overlay）
+
+**衝突**：被指派的複驗者實讀該 preset 並判定推翻。我複查屬實：`.claude/skills/image-layer-split/parts/live2d-character.json` 的 notes 逐字寫「眼睛細件(white/iris/highlight/lid/lash)與共用 overlay 不在此 preset，建議拆層後在 Photoshop 手工細分/手繪」，`eye_l` 的 desc 是「iris, eye white, eyelid and lashes **together**」一整顆。也就是 §A2 的虹膜、§A3 的眼皮與四個 overlay 在這條管線上沒有來源。
+
+**裁決**：§A1/§A4 的「程式合成」主推路徑不收。改為：交付物是**一個具備獨立眼（白/虹膜/高光/上下眼瞼/睫毛）、眉、嘴、記號圖層的分層原始檔**，由會用分層繪圖軟體的人產製（自繪或委外並列為主選項，不是第三備案）。image-layer-split 只能當身體／頭髮／斗篷粗胚的起點，眼睛無論如何都要手工。附證：`live2d/_archive/layerwork/layers/` 實查為**空目錄**（16 筆 prompt 的指定輸出從未落地），`assets/layers/` 的 6 張是另一支工具 l2d-factory 的顏色分群輸出（`part_dark_eyes_lineart.png` 的 bbox 橫跨整個人形），`DEPRECATED.md` 廢除 Live2D 的理由正是「GUI 手工、無法自動化…我(agent)做不到的一步…或外包 USD 50–150」。同時更正 content SP-5.3 的引用：PROMPTS.md 是 **16** 筆不是 17，且那 6 張分層不是這批 prompt 的殘骸。
+
+### 13. production §F7（新增 `src/images.d.ts` 內含 `declare module '*.png'`）× `.config/types/bundler-rules.d.ts` 的實際內容
+
+**衝突**：production 兩處聲稱 `.config/tsconfig.json` 沒有 `*.png` 宣告。複驗者實測相反並會弄紅閘門第一項。
+
+**裁決**：§F7 明文刪除。我複查：`.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`（連 gif/jpg/jpeg/webp/svg 都有），而 `.config/tsconfig.json` 的 include 是 `["../src", "./types"]`，該 .d.ts 在編譯範圍內。再加一份同名 ambient module 宣告會得到 `TS2300: Duplicate identifier 'src'`，直接弄紅 `tools/asp-test.sh` 第一項 typecheck。**什麼都不必加**，`import url from './x.png'` 現在就通過型別檢查。
+
+### 14. content SP-1.5（禁止對 background-position 加任何 CSS transition 或 animation）× ADR-004 決策 3（sprite 的自然實作是 <div> + background-position + **steps()**）
+
+**衝突**：SP-1.5 的理由（補間會滑過相鄰格）對 linear/ease 成立，但 `steps()` 的定義就是階梯式跳變，它是解法不是病因。照現行禁令，兩幀 flap 這種一行 CSS 就能做掉、且由合成執行緒跑的東西被迫改用 JS 計時器。
+
+**裁決**：改為「禁止 linear / ease / cubic-bezier 等**連續**補間；`steps()` 明文允許」。但本規格的 flap 因為擺動次數由 charLength 決定（矛盾 11），實務上仍由 JS 驅動；`steps()` 的許可保留給眨眼與日後的固定循環。
+
+### 15. content SP-2.11（眼窗 E、眉窗 B 為 X[0.280,0.720]、SP-2.12 腮紅 X[0.290,0.370]/[0.630,0.710]）× content SP-2.9（頭寬 X[0.300,0.700]）
+
+**衝突**：複驗者指出每側有 0.020·S 落在頭部輪廓之外，而 §7 凍結的角色有 long side locks，那個位置正好是側髮。覆蓋層若做成矩形不透明修補塊，每次眨眼與每次情緒切換都會在髮際線外側刷出一條約 3 顯示 px 的膚色。SP-5.5 只管 alpha ⊆ 視窗、SP-6.4 只驗視窗**之外**逐位元相同，這個洞正好落在兩條規則的縫裡。
+
+**裁決**：採納：視窗是**外框上界，不是必須填滿的區域**；新增剛性約束「覆蓋格的非零 alpha 必須 ⊆ master frame 的臉部皮膚遮罩」，並在檢查 C 增驗。同時採納它的鏡像修正：SP-4.7 的「只畫眼窗 E（閉合的眼瞼線與睫毛），其餘全透明」按字面會畫出半透明閉眼、底下睜開的虹膜從線下方透出來 —— 改寫成「眼形輪廓範圍內必須完全不透明，輪廓外 alpha = 0」。兩條是同一個產權問題的兩面（一個溢出、一個不足），都要寫。
+
+### 16. geometry §7.4（烘進 0.010·C 中性描邊，一套吃兩個主題）× geometry §7.6（變體 A/B 二選一不得並用）× 複驗者的實測
+
+**衝突**：複驗者依規格做出剪影 + 0.010·C 描邊實測：dpr=1 / side 64 最高只有 2.52:1（達 3:1 的像素數為 0）、side 84 為 3.50:1，要到 side ≥134 或任何 dpr=2 才量得到宣稱的 3.76:1。原因是 dpr=1 時描邊的名目寬度只有 0.64–0.84 裝置像素，被抗鋸齒吃掉。而「二選一」讓小尺寸下沒有備案。
+
+**裁決**：描邊寬度提到 **0.016·C**（S=512 時 8px；在本規格的下限 128 CSS px / dpr 1 下 = 2.0 裝置像素）。「二選一」的禁令放寬為：變體 A 為主線，若美術方向否決才改用變體 B，兩者不並用 —— 但下限 128px 的裁定（矛盾 7）已經讓變體 A 在整個尺寸範圍內成立，這條備案不預期被動用。
+
+### 17. geometry §7.2（剪影中面積 ≥1% 的色塊亮度必須落在 [0.047, 0.61]，僅豁免線稿與眼部高光）× 角色可讀性與 live2d-template-spec §7 的凍結色票
+
+**衝突**：複驗者實測眼白佔剪影面積 2.25%，超過 1% 會被夾到 ≤#CD —— 而眼白/瞳孔的邊界正是視線線索本身。同時該夾制禁掉典型動畫膚色（#F5D9C0 的 L=0.728）。另外它宣稱的 1.6:1 實際算出來是 1.59:1。
+
+**裁決**：夾制收窄為「**髮、服裝、斗篷**等大面積色塊」，鞏膜（眼白）、虹膜高光、線稿明文豁免；臉部膚色直接把合規值寫進規格（#E2C8B1，L=0.607）而不是讓畫師去試。門檻誠實標為 **1.59:1，且明文聲明這不是無障礙標準**（WCAG 1.4.11 對非文字元素是 3:1）—— 它只是「不要溶進 panel 背景」的地板，真正的分離由 0.016·C 的中性描邊承擔（對 #181b1f 3.76:1、對 #111217 4.07:1、對白 4.59:1；geometry 原寫的 3.98 我複算為 4.07，差 2%）。連帶：§7 凍結的 dark navy 斗篷（L≈0.02）不合規，需重新打光或改色 —— 這是角色設定異動，列入 needs_human。
+
+### 18. content 決策 12 / SP-1.8（呼吸振幅 0.6% 邊長）× 決策 12 的目的（讓角色在滑鼠停住時不像死的）
+
+**衝突**：複驗者算出 0.6% 在 96–224px 下是 0.58–1.34px 振幅、週期 4 秒，接近不可察覺。
+
+**裁決**：振幅提到 **2.0% 邊長**（128px 時 ±2.6px、peak-to-peak 5.1px），並允許以 `transform: scaleY()` 的縱向微幅起伏替代或疊加（胸上構圖做呼吸本來就是縱向縮放比整體位移自然）。作用點仍在 stage 這個四層的共同父容器，「四層一起動、對位不變」的論證不受影響。
+
+### 19. production §C（全部是格對格比較）× production §A1（合成路徑讓身體層在 18 格裡是同一批像素）
+
+**衝突**：複驗者指出：在主推路徑上 C6/C7 必然回傳 IoU=1.0、重心差=0，§C 驗的是合成器有沒有 bug 不是美術對不對齊；而且沒有任何一條檢查把格號綁回 `gaze.ts` 的方向語意 —— 整張圖行列顛倒交付會全綠，吉祥物看反方向。
+
+**裁決**：採納，並升為本規格最有價值的一條檢查。新增 **SP-7.3 視線方向綁定檢查**：對每個 c≠4，量該格眼窗內虹膜色像素的質心相對格 4 的位移 (Δx,Δy)，要求 `sign(Δx) === (c%3 − 1)` 且 `sign(Δy) === (floor(c/3) − 1)`（此即 `gaze.ts` 的 `SECTOR_TO_CELL`：cell 1 = 上 = row 0、cell 3 = 左 = col 0，已對照 `gaze.test.ts` 語意），並要求非零軸的位移落在標稱 Δ 的 [0.6, 1.4] 倍、應為零的軸 ≤ 0.2 倍。不需要語意理解，只要比像素，是目前唯一會把 sheet 釘回 `gaze.ts` 的檢查。同時採納它的第二條：新增合成聯絡表（檢查 F），因為 A–E 全是像素級不變量，沒有一條會因為「臉太小看不懂」而紅。
+
+### 20. 三份規格 × repo 現況（`directionsImgUrl` / `reactionsImgUrl`）
+
+**衝突**：content SP-0.2 稱「已定的 panel option」、geometry §10.4 與 production §G5 當成既存事實。三位複驗者各自 grep 皆零命中，我複查確認：全樹（排除 node_modules/.git/dist）零命中，`MascotPanelOptions` 只有 minSeverity / repeatFiringMin / fallbackSeverity / alertLang / enableTTS / ttsVoice 六個欄位，`module.ts` 的 builder 也只註冊這六個。
+
+**裁決**：改寫為「P5 需新增」，並明列要動的三處（`panelOptions.ts` 的 interface 與 `DEFAULT_OPTIONS`、`module.ts` 的兩個 `.addTextInput`），預設值為空字串（理由見 SP-8.4 的 [hash][ext]）。
+
+### 21. content SP-2.10（瀏海下緣 Y ≤ 0.255，眉窗必須完全露出）× live2d-template-spec §7 凍結的「straight blunt bangs」
+
+**衝突**：齊瀏海的慣例畫法直接壓到眉上；若不露出眉窗，情緒覆蓋層會蓋到頭髮，SP-5.5 的 alpha 產權切分就會含髮絲像素而變脆弱。
+
+**裁決**：本規格不自行裁定角色設定。暫定「瀏海下緣 ≤ 0.255·S」並標為**需人類/美術裁定**：改髮型（瀏海提高、露出眉）或改錨點（讓覆蓋層連瀏海一起重畫）。建議前者，理由是後者會讓覆蓋層的產權邊界從「臉部皮膚遮罩」擴張到含髮絲，SP-7.4 的機械檢查會跟著失去剛性。
+
+---
+
+## 待人類決定
+
+- **[硬 blocker]** `assets/a1-augur-calm.png` 在 `docs/asset-provenance.md` 的「出處」與「授權」兩欄至今是「⚠️ 待補」。新 sprite 若沿用同一角色設定（§7 已凍結外觀），出處鏈的根是斷的；依該文件自身規則「出處不明的一律不進版控」，sprite 也不得進版控。誰用什麼工具在什麼時候產生了 A1？該工具的條款容不容許放進公開的 Apache-2.0 repo？只有專案主人知道。
+- **[ADR 層級]** 是否放行在 `AvatarController` 新增可選成員 `setReaction?(kind: 'click' | 'pending' | null): void`。這是 ADR-004 決策 5 明文繼承的介面異動。**同時請一併裁定它對 ADR-004〈待驗風險 4〉的回覆** —— 該條逐字寫著「emotion.ts 目前只有 4 個 emotion，吃不滿 9 格，**需擴充**」，而本規格選的是相反的路：不擴 Emotion（擴了會污染 `severityToEmotion` 的純函式語意，且 click/pending 根本不是 severity 的函數），改用可選契約成員承接。不放行的退路：reactions 的格 0（click）與格 8（pending）不畫，降為 7 格，其餘設計完全不受影響。
+- **[角色設定]** §7 凍結的 dark navy hooded capelet 相對亮度約 0.02，低於 SP-6.2 的下限 0.047，在 Grafana dark panel `#181b1f` 上會直接溶掉。重新打光、提高明度、還是改色？改到什麼程度仍算「同一個 Augur」？
+- **[角色設定]** §7 的「straight blunt bangs」與 SP-2.10「瀏海下緣 ≤ 0.255·S（眉窗必須完全露出）」衝突。改髮型（瀏海提高、露出額頭與眉）還是改錨點（讓表情覆蓋層連瀏海一起重畫）？本規格建議改髮型，但這是角色設定的更動。
+- **[產製／預算]** master frame 由誰畫、用什麼工具？本規格已裁定 image-layer-split 的 `live2d-character` preset 產不出獨立的虹膜/高光/眼瞼圖層（preset 自己的 notes 寫明），`assets/layers/` 的 6 張是顏色分群不是解剖部件。需要一個會用分層繪圖軟體的人 —— 自己畫、找人畫、還是委外（`DEPRECATED.md` 記的行情是 USD 50–150）？委外的話 §9 要求同時取得書面的著作權讓與或授權書。
+- **[範圍／排程]** panel 版面重排由誰在哪一階段做？目前 `hostRef` 是 header flex row 裡一個 `flex: 0 0 auto` 的小 div（DiagnosticAvatar 自己撐到約 34px），而本規格的 stage 需要 128–256px 的獨立方形區塊（建議 width ≥ 320 時左圖右 feed）。這是 P5 還是 P6？同時請確認可以讓 `MascotPanel` 直接設定 hostRef 的 width/height（本規格選這條，以避免為 `setSize()` 再開一次介面）。
+- **[行為異動]** `MascotPanel` 目前只在有新 plan 時呼叫 `setEmotion`，之後**永遠不會回到 calm** —— 一則 resolved 播完後吉祥物會頂著閃光與腮紅停在那裡直到下一則告警。chip 已經有同樣問題，精靈圖會讓它明顯得多。要不要加情緒衰減（建議：3 分鐘無新播報即回 calm）？這是 P4/P5 的程式碼行為異動，不在素材規格範圍內。
+- **[產製／版控]** 分層原始檔（.psd/.kra/.xcf）要不要進版控？它是 18 格的唯一真實來源，遺失等同整套素材無法再編輯；但體積可能數十 MB。不進版控時必須在 `docs/asset-provenance.md` 註明存放位置與負責人，並明寫「本 repo 無法單獨重建此素材」。體積要等實際交付才知道。
+- **[外部事實查證／ASP 鐵則四]** 若產製過程用到任何生成式服務，其服務條款對「輸出歸屬」的規定必須實際讀一次官方條款，把結論、一級來源 URL 與查證日期記下來，依 SP-9.6 **逐字內嵌進版控文件**（不可只寫「見 `.asp-fact-check.md`」—— 該檔被根 `.gitignore` 排除，公開 repo 的讀者取不到），並同步寫入 `.asp-fact-check.md`。這是人的事不是 AI 的事。
+- **[產品觀感]** SP-6.4 的烘進中性描邊（變體 A）有貼紙感。本規格以實測對比選了它（執行期零成本、對四種底色都量過），但視覺風格是美術方向決定。否決的話改用變體 B 的執行期 4 向 drop-shadow，代價是每次狀態變更多一次 filter 重繪。
+
+---
+
+## 未決 / 未驗
+
+以下都**沒有實測支撐**。寫進規格是為了不讓它們被遺忘，不是因為已經確定。
+
+- **可讀性實測尚未跑，故 SP-2.6（虹膜直徑 0.065）與 SP-3.3（瞳孔位移 Δx 0.022 / Δy 0.018）目前是暫定值。** SP-5.3 已把這個實測排在凍結**之前**（成本只有 master frame 的眼部：把 9 個瞳孔位置各出一張，縮到 128/160/224px 讓人盲測猜方向），但它還沒跑。凍結後這兩個值改不動（改 = 18 格全部重畫），所以這是唯一不能省的前置實測。
+- **Firefox / WebKit 的跨格滲色未驗。** geometry 的零滲色結論（dpr∈{1,2}、元素邊長 40–480px、非整數元素座標、縮放比 0.94→0.078 共 24 組條件污染像素全為 0；對照組 `299% 299%` 立即產生 295 個污染像素）只在 Chromium 上成立 —— 本機 playwright 需要的 firefox-1543 / webkit-2359 執行檔未安裝。SP-2.1 的 0.020·S 絕對透明帶即為此保險（S=512 時 10 個來源像素、顯示 224px 時約 4.4 個裝置像素，遠大於任何合理取樣核伸出的約 2 像素）。要補：`npx playwright install firefox webkit` 後重跑。
+- **pngquant 後的實際體積未知。** geometry 實測九格各異的 1536² PNG 為 2006 KB；本架構的 reactions 圖大部分是透明的，directions 圖是 9 張近乎相同的平塗立繪，理論上量化後砍得很兇，但沒有實際數字。SP-6.6 的預算（每張 ≤900 KB、合計 ≤1.2 MB）與 S=384 的退路都還沒被真實素材檢驗過。
+- **SP-7.6 的降採樣對比門檻（眉線在 128px 下 max−min 線性亮度 ≥0.25）是暫定值**，沒有實際素材可以校準。首版應以警告發出，待第一批交付後回填為硬限 —— 用一個沒有實據的數字擋住第一次交付是錯的。同理 SP-7.1 的格內不透明覆蓋率上下限也留白（production 複驗者實測胸上裁切的 cutout 為 54.7%，可作為回填起點；原設計估的 35–45% 會把合規的圖擋掉）。
+- **`tools/*.mjs` 會不會被 eslint 擋，未實測。** 實查根 `eslint.config.mjs` 的 ignores 清單確實沒有 `tools/`，而 `@grafana/eslint-config/flat.js` 未宣告 `files`（設定套到所有被 lint 的檔案，`base.js` 的 `ecmaVersion` 為 2019 → `?.` 與 `??` 會是 parse error，而一支自然寫法的零依賴 PNG 解碼器幾乎一定會用到）。本次唯讀、不能在 repo 內建檔實測。落地時先在 ignores 加 `'tools/**'`，不要賭語法。
+- **`alertState` 的 pending → alerting → pending 轉換未實測。** ADR-004 決策 2 實測 `alertState` 是黏著的（`alertState != null ? alertState : 上一次`、永不回 `undefined`），所以 pending → alerting 觀察得到，但 alerting → pending 是否可能出現殘留舊值導致 SP-4.9 的臉卡住，尚未驗。需要一條帶 `for` duration 的翻轉規則才驗得到 —— 這正是 ADR-004〈待驗風險 6〉點名未測的那一項，該條已寫明是 P4 硬前置。
+- **跨網域 sheet URL 在 Grafana 下會不會撞 CSP，未查證。** 若被擋，`directionsImgUrl` / `reactionsImgUrl` 對外部 URL 就只是一個永遠失敗的選項，不如只接受相對於 plugin 的路徑。SP-8.7 已要求把 `img.onerror` 當成預期內分支處理（幾何檢查在圖片載入失敗時根本跑不到），但這不能取代查證。
+- **「sandbox 開啟時語音還能不能用」仍未驗**（ADR-004 Accepted 時明文留下的兩處缺口之一，headless chromium 無聲線）。這不影響素材，但影響 SP-8.10「從未收到 setMouthOpen 時用格 4 定速 flap」這條 fallback 路徑實際會不會被走到。
+- **`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定。** 純粹是文件擺放慣例，不影響任何機械檢查，但值得一次講定免得日後兩處各長一半。本規格暫用 `docs/sprite/`。
