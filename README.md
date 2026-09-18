@@ -12,21 +12,24 @@
 
 ## 狀態
 
-**P2 完成**：腳手架併入、`src/core/` 遷入、舊管線刪除。
-**plugin 目前還是腳手架的預設畫面** —— 吉祥物、語音、視線追蹤都還沒實作（P4）。
-ADR-004 的 5 個 POC gate（G-ADR004-1～5）一個都還沒跑。
+**P2–P4 完成**：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
+跨 panel 互動層與 `AvatarController` 介面就位。**5 個 POC gate 全數 PASS。**
+
+**還沒有精靈圖** —— avatar 目前是 `DiagnosticAvatar`，它把契約的四個輸入
+（表情／講話／視線格／張口幅度）畫成儀表，**刻意長得不像吉祥物**。
+`SpriteController`（P5）會是同一介面的第二個實作，屆時只換 class、上層一行不動。
 
 ## ADR（決策權威，`docs/adr/`）
 
 | ADR | 主題 | 狀態 |
 |---|---|---|
-| ADR-001 | SOC 播報架構（瀏覽器 avatar + TS 導播 + React） | Accepted（待 ADR-004 定案後轉 Superseded） |
-| ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | 同上 |
-| ADR-003 | 前端 visual-web-stack | 同上 |
-| **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **FIRM** |
+| **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
+| ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
+| ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded |
+| ADR-003 | 前端 visual-web-stack | Superseded |
 
-ADR-004 supersede 前三份，但**要等它自己升 Accepted** 才生效 —— 在那之前前三份仍掛 Accepted。
-ADR-004 升 FIRM 而非直升 Accepted，是為了不讓「POC 一個都沒跑」被狀態值掩蓋。
+ADR-004 的 5 個 POC gate 全數 PASS 後才升 Accepted —— 它先前刻意停在 `FIRM`，
+是為了不讓「POC 一個都沒跑」被狀態值掩蓋。機械證據回填在該檔的 Verification Evidence。
 
 ADR-002 有兩個抽象被 ADR-004 **明文繼承**，不隨 supersede 作廢：
 `BroadcastPlan` 事件契約、`AvatarController` avatar-agnostic 介面。

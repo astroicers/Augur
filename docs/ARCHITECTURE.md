@@ -1,110 +1,134 @@
 # Augur — 架構總覽
 
-> **Augur ＝ Grafana 告警 → 會講話有表情的動漫 avatar 播報**（SOC 資安氛圍播報 runtime）。
-> 原 `airi-ops-bridge`（Grafana→文字→AIRI 橋），已升級為**瀏覽器 avatar 播報**。
->
-> 本檔是**概覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-09-16（僅加註狀態；**內文仍是已刪除的舊架構**，見下方警告）。
+> **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
+> 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
+> 最後更新：2026-09-18（ADR-004 升 Accepted 後整份重寫）。
 
 ## 一句話
 
-Grafana webhook 進來 → 過濾/去重/格式化 → 產「播報計畫」`BroadcastPlan{text,severity,emotion}` →
-Edge TTS 合成中文語音 → WebSocket 推前端 → **VRM/Live2D avatar 講出 + 依 severity 換表情 +
-振幅 lip-sync + 播報 feed**。live 迴路**零 Python**。
+panel 讀自己的 `props.data` → 判斷有沒有在燒 → 打 Alerting rules 端點補細節 →
+severity 過濾 → dedup 防洪 → 產 `BroadcastPlan` → 瀏覽器 Web Speech 念出來 +
+avatar 換表情、動嘴、追滑鼠。**零後端、零常駐服務。**
 
-## 資料流 / 架構
+## 資料流
 
 ```
-Grafana Alerting ──webhook(JSON)──▶ 導播（backend, Node/TS, Hono）
-  POST /grafana/webhook  [:3001, bearer auth, async-200 → queueMicrotask]
-     └ src/sources/grafana.ts   parseGrafanaWebhook → ParsedAlert[]
-     └ src/core/severity.ts     meetsMin 過濾（firing）
-     └ src/core/dedup.ts        同 fingerprint 防洪 + resolved 綁定
-     └ src/core/format.ts       buildBroadcastPlan：formatAlert(text) + emotion
-     └ src/core/emotion.ts      severityToEmotion（Live2D spec §6 映射；error→critical）
-     └ src/tts/edgeTts.ts       createEdgeTTS（msedge-tts）→ base64 mp3
-     └ src/sink/broadcastSink.ts  ws WebSocketServer [:3002] + TTS
-            ▼ {type:'broadcast', plan, audio}（推所有前端）
-  React 前端（web/, Vite + TS + Tailwind + Zustand）
-     ├ src/avatar/AvatarController.ts   介面（avatar-agnostic；choice C 可換）
-     ├ src/avatar/VrmController.ts      three-vrm 實作（含 T-pose→自然垂手）
-     ├ src/avatar/Live2DController.ts   pixi-live2d-display 實作（未來 2D 皮）
-     ├ src/avatar/AvatarStage.tsx       canvas + Web Audio(decodeAudioData→BufferSource
-     │                                   →analyser 振幅 lip-sync) + 播報佇列
-     ├ src/hooks/useBroadcastSocket.ts  WS 客戶端（收播 + dev-trigger）
-     ├ src/store/broadcastStore.ts      Zustand（connected/emotion/severity/feed）
-     └ src/components/                  SeverityIndicator / BroadcastFeed / GrafanaPanel(選配 iframe)
-
-monitoring/  docker-compose：Grafana/Prometheus/Loki/Alloy + 告警規則 + webhook contactpoint
+Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
+  │
+  ├─ props.data.alertState ──────┐  觸發訊號：只有 {state,id,panelId,dashboardUID} 四欄
+  │  （alerting / pending / ok）  │  ⚠️ 黏著，永不回 undefined
+  │                              ▼
+  │                      src/sources/panelAlerts.ts
+  │                        ├ alerting → 打 rules 端點補細節，建立／沿用 episode
+  │                        ├ pending  → 不產生事件（見 ADR-004 決策 2）
+  │                        └ ok       → 由記住的 episode 複製出 resolved
+  │                              │
+  └─ /api/prometheus/grafana/api/v1/rules?dashboard_uid&panel_id
+       （src/sources/rulesFetcher.ts；內容來源，與 ParsedAlert 一對一）
+                                 │
+                                 ▼  ParsedAlert[]
+                      src/components/MascotPanel.tsx（導播）
+                        ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
+                        ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
+                        └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
+                                 │
+              ┌──────────────────┴──────────────────┐
+              ▼                                     ▼
+   src/speech/speaker.ts                  src/avatar/AvatarController
+     佇列、逐則播、不疊音                    setEmotion / setSpeaking
+     onboundary → 嘴型同步點                setGaze / setMouthOpen?
+     watchdog（先 cancel 再 finish）         現行實作：DiagnosticAvatar
+                                            未來：SpriteController（P5）
+                                                  ▲
+                                     src/dom/dashboardPanels.ts
+                                       跨 panel 能力偵測 + 漸進降級
+                                       （看得到別的 panel → 追全頁滑鼠；
+                                         看不到 → 只管自己的容器）
 ```
 
-## 功能
+## 檔案
 
-- Grafana 告警即時語音播報（中文，Edge TTS `zh-TW-HsiaoChenNeural`）。
-- severity → 表情（calm/warning/critical/resolved）+ 振幅 lip-sync。
-- **avatar 可換**：`?avatar=vrm`（預設，three-vrm）/ `?avatar=live2d`（pixi-live2d + Hiyori）。
-- 多告警**佇列**（逐則播、不疊音/截斷）；**mobile 響應**；選配 **Grafana 面板嵌入**。
-- dev「測試播報」鈕（`ALLOW_DEV_TRIGGER` 控制，生產應關）。
+| 路徑 | 職責 |
+|---|---|
+| `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
+| `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
+| `src/components/MascotPanel.tsx` | 導播 + 呈現。是舊 `server.ts:68-77` 處理迴圈的搬家 |
+| `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
+| `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
+| `src/core/` | 來源中立的核心（273 行）。**從舊 push 架構整包繼承，零修改** |
+| `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
+| `src/avatar/AvatarController.ts` | avatar-agnostic 契約（繼承 ADR-002 §2） |
+| `src/avatar/gaze.ts` | 視線格計算。兩層防抖：dead zone + 角度遲滯 |
+| `src/avatar/DiagnosticAvatar.ts` | 契約的第一個實作。**刻意不是吉祥物**，把四個輸入畫成儀表 |
+| `src/dom/dashboardPanels.ts` | 跨 panel DOM 能力偵測。本專案**唯一** unsupported 的部分 |
+| `monitoring/` | docker-compose 開發環境 + alert rules + provisioned dashboard |
+| `tools/` | `check-js-suffix.sh`（守門）、`asp-test.sh`（ASP commit 閘） |
 
-## 關鍵設計（DI / 邊界）
+## 關鍵設計
 
-- **後端 DI 乾淨**：`createServer(config, sink, dedup)`；sink 可抽換（`src/airi.ts` 保留 dormant，ADR-008 Superseded）。
-- **avatar 抽象**：前端只依賴 `AvatarController` 介面 → 換 VRM/Live2D 不動 App/WS/lip-sync。
-- **WS 分離埠**：Hono 守 webhook `:3001`、`ws` WebSocketServer 給前端 `:3002`。
-- config 全 env（見 `.env.example`）。
+**唯一的抽象邊界是 `ParsedAlert`**（`src/core/types.ts`）。來源層把任何來源轉成它，
+`core/` 只認得它。這條線在 push → pull 的方向反轉中**完好無損** ——
+`src/core/` 那 273 行一行沒改就承接了新架構。
 
-## 設定（env）
+**來源層的三個不變量**（`panelAlerts.ts` 檔頭有完整說明）：episode 用複製而非重算、
+`startsAt` 釘死、每次評估都無條件 emit 而把抑制交給 dedup。
+第三條讓 `dedup.ts` 既有語意零修改就是對的。
 
-`WEBHOOK_SECRET`(必) · `HOST`/`PORT`(3001) · `WS_PORT`(3002) · `ALERT_LANG`(zh) ·
-`TTS_VOICE`(空=依 lang) · `ALLOW_DEV_TRIGGER`(dev true/生產 false) · `MIN_SEVERITY` ·
-`DEDUP_WINDOW_SEC`(300) · `AIRI_*`(legacy/dormant, 選填)。前端：`VITE_WS_URL` · `VITE_GRAFANA_PANEL_URL`(選配)。
+**avatar 可換**：上層只依賴 `AvatarController` 介面。換實作不動導播、不動語音、不動 DOM 層。
+
+**漸進降級**（ADR-004 決策 6）：跨 panel 互動是 unsupported 的，
+所以降級的全部實作就是「監聽 `document` 還是只監聽自己的容器」一行分支 ——
+其餘邏輯完全相同。壞掉時是少一個功能，不是整個 plugin 炸掉。
+
+## 設定
+
+Panel options（`src/panelOptions.ts`）：`minSeverity`、`repeatFiringMin`、
+`fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`。
+
+**Threshold 不在這裡** —— ADR-004 決策 2 要求走 standard field config
+（`fieldConfig.defaults.thresholds`），自訂 option 會失去 overrides 與原生編輯 UI。
+
+開發環境設定在 `monitoring/.env`（由 `.env.example` 複製）。埠與啟動方式見 `README.md`。
 
 ## ADR 索引（決策權威，`docs/adr/`）
 
 | ADR | 主題 | 狀態 |
 |---|---|---|
-| ADR-001 | SOC 播報架構（瀏覽器 avatar + TS 導播 + React；替換 AIRI） | Accepted |
-| ADR-002 | 表情導播 + lip-sync + `AvatarController` 可換介面 | Accepted |
-| ADR-003 | 前端 visual-web-stack（React/Vite/Tailwind/Zustand） | Accepted |
-| ADR-004 | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端）—— supersede ADR-001/002/003 | **FIRM** |
+| **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
+| ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
+| ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded（**§1／§2 被 ADR-004 決策 5 明文繼承**） |
+| ADR-003 | 前端 visual-web-stack | Superseded |
 
-> ⚠️ **ADR-004 為 `FIRM`（2026-09-16 經 `/asp:approve-adr` 由 `Draft` 升級）。**
-> FIRM 已解除「禁止實作生產代碼」的鎖，改造可以動工；但**5 個 POC gate（G-ADR004-1～5）尚未跑**，
-> 故上表前三份**暫時仍掛 Accepted**。
->
-> 🚨 **但本檔以下的內容已經失效。** 它描述的資料流（webhook → Node 導播 → Edge TTS → WS →
-> VRM avatar）與所有檔案路徑，已於 commit `d428af1` 整批刪除。本檔目前**只有 git 考古價值**，
-> 整份重寫排在 P6。此處先前寫著「本檔描述的架構在改造落地前仍然有效」—— 那句話寫下時為真，
-> 下一個 commit 就變成假的，現予更正。
-> ⚠️ ADR-004 指定本檔為 ADR 索引的權威入口，所以照 ADR 鏈走的人會落在這裡：
-> **上方的 ADR 索引表是可信的，以下的架構敘述不是。**
-> POC 全綠並回填機械證據後，ADR-004 再由人類授權升 Accepted，前三份屆時轉 Superseded、
-> 本檔需整份重寫（資料流圖全數作廢）。
+ADR-004 的 5 個 POC gate 全數 PASS，機械證據回填在該檔的 Verification Evidence。
+ADR-001／002 引用的 `broadcaster-spikes/` 在 repo 中已不存在，那兩份的 POC 證據無法複驗。
 
 ## 技術棧
 
-Node + TypeScript · Hono + @hono/node-server · `ws` · `msedge-tts`（Edge TTS）·
-React 18 + Vite + Tailwind + Zustand · `@pixiv/three-vrm` / `pixi-live2d-display-lipsyncpatch` ·
-`node:test`（backend 20 測試）· pnpm。
+`@grafana/create-plugin` 7.11.0 腳手架（**webpack**，非 Vite）·
+執行期 Grafana **13.2.x**、編譯期 pin `@grafana/*` **13.1.0**（externals，不進 bundle）·
+React 18 · Emotion（`@grafana/ui` 的 `useStyles2`）· Jest + @swc/jest（36 測試）· npm。
 
-## 與 l2d-factory 的關係
+**`.config/` 由 create-plugin 託管，禁止手改** —— 手改的後果不是被覆寫而是**靜默失效**
+（migration 全是 `if (!AST match) return` 的早退）。要擴充就改根層的 wrapper。
 
-**分離 repo、鬆耦合**。l2d-factory ＝上游 2D 素材產線；Augur ＝播報 runtime。
-現行 VRM avatar 由 VRoid 製作，**l2d 不在播報關鍵路徑**。未來若走 Live2D 皮（ADR-009 hand-rig 模板），
-l2d 的 `character.psd`（canonical 512 框 + namei taxonomy）rig 成 moc3 → Augur `?avatar=live2d` 換皮。
+## 已知缺口
 
-## 待辦 / 已知限制
-
-- viseme v1（母音精準嘴型）：需有 phoneme 時戳的 TTS（如 Azure，需金鑰）；現為 v0 振幅。
-- WS token auth：WS 曝露於 localhost 之外時應加（現靠 `HOST` 綁定 + `ALLOW_DEV_TRIGGER`）。
-- Grafana 面板嵌入 CSP：需 Grafana `allow_embedding = true`。
+- **精靈圖 avatar 未做**（P5）。素材規格與美術定案是前置。
+- **真實 Windows 指標路徑未驗** —— 9182 無 listener，POC 以合成規則 `vector(1)` 繞開。
+- **sandbox 開啟時語音是否可用未驗** —— headless 無聲線，測不出來。
+- `alertState` 標 `@internal`、rules 端點無官方穩定性保證。兩者都有降級路徑。
+- 跨 panel DOM 隨 Grafana 版本變動的風險 —— 每次 minor 升版應重跑 G-ADR004-4：
+  `SANDBOX_PLUGINS=augur-mascot-panel docker compose -f monitoring/docker-compose.yml up -d`
 
 ---
 
 ## 維護規則
 
-- **決策改變 → 先動 ADR**（新增/supersede `docs/adr/`），再回頭同步本檔的「架構/功能/ADR 索引」。ADR 是權威,本檔是導覽。
-- 動到 seam（新 source/sink/avatar controller、config、埠、資料流）時**同步更新對應區塊 + 檔案路徑**，並更新檔頭「最後更新」日期。
-- 新增 avatar 格式 → 實作 `AvatarController` + 更新「avatar 可換」與資料流圖。
-- 保持與 `README.md`（root）/ `src/README.md`（plugin 使用者導向）一致。
-  （原本寫的 `web/README.md` 已隨 `web/` 於 `d428af1` 刪除。）
+- **決策改變 → 先動 ADR**（新增／supersede `docs/adr/`），再回頭同步本檔。
+  ADR 是權威，本檔是導覽。
+- 動到 seam（新 source、新 `AvatarController` 實作、新 panel option、資料流改向）時
+  **同步更新上方的資料流圖與檔案表**，並更新檔頭「最後更新」日期。
+- 保持與 `README.md`（給 repo 開發者）與 `src/README.md`（給裝 plugin 的人）一致。
+  兩份受眾不同，不要互相複製。
+- **實測優於推理。** 這個專案已經有五次「靜態推理得出的結論實測不成立」
+  （見 `.asp-fact-check.md`）。寫進本檔的行為描述應該是跑過的，不是推出來的。

@@ -1,10 +1,10 @@
-<!-- ADR-004 | Status: FIRM -->
+<!-- ADR-004 | Status: Accepted -->
 # ADR-004：Augur 由獨立播報頁升級為 Grafana Panel Plugin —— 2D 精靈圖吉祥物 + 瀏覽器語音
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `FIRM` |
-| **日期** | 2026-09-16 |
+| **狀態** | `Accepted` |
+| **日期** | 2026-09-18 |
 | **決策者** | astroicers |
 
 > **狀態說明**：`Draft`（**禁止實作生產代碼**）→ `FIRM`（POC 驗證）→ `Accepted`（人類審核放行）。**AI 不可自行升級狀態**（ASP 鐵則）。
@@ -26,8 +26,17 @@
 > 「POC 未跑」這個事實因此誠實留在檔上，未被 Accepted 掩蓋。
 > **人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
 >
-> ⏭️ **升 Accepted 的條件**：G-ADR004-1～5 全綠並在 Verification Evidence 回填機械證據後，
-> 再次由人類經 `/asp:approve-adr` 授權。
+> ⬆️ **由 `FIRM` 升 `Accepted`（2026-09-18）**：astroicers 授權，逐字回覆
+> **「我認為沒問題adr04可以升了」**。
+> 路徑為 **FIRM → Accepted**（非 Draft 直升，故不需第二次確認）。
+> 升級依據 = **G-ADR004-1～5 全數 PASS 並已回填機械證據**（見下方 Verification Evidence
+> 的「POC gate 機械證據」表），滿足本檔先前自訂的升級條件。
+> 授權當下已知並仍然成立的兩處缺口：**真實 Windows 指標路徑未驗**（9182 無 listener，
+> POC 以合成規則繞開）、**sandbox 開啟時語音是否可用未驗**（headless 無聲線測不出來）。
+> 兩者皆記入待驗風險，**不因 Accepted 而消失**。
+> **人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
+>
+> 📌 **本 ADR 自此生效，ADR-001／002／003 轉 `Superseded`。**
 
 > ⚠️ **證據鏈告示**：ADR-001/002/003 的 Verification Evidence 大量引用 `broadcaster-spikes/`（spike A/B/C）與本 repo 的 `.asp-fact-check.md`。**兩者在本 repo 皆不存在**（`.asp-fact-check.md` 另被根 `.gitignore` 排除）。前三份 ADR 的 POC 證據**已無法複驗**。本 ADR 的外部查證改記於下方 Verification Evidence，並同步寫入 `.asp-fact-check.md`。
 
@@ -171,6 +180,28 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 > 本 ADR 只列真的打算裝的東西，且 POC gate 必須驗到裝了什麼。
 
 ## Verification Evidence
+
+### POC gate 機械證據（2026-09-17／18 實跑，非推理）
+
+全部以 headless chromium 對 live Grafana 13.2.2 實跑，環境為 `monitoring/` +
+provisioned dashboard `augur-poc` + 合成告警規則。
+
+| Gate | 結論 | 機械證據 |
+|------|------|---------|
+| **G-ADR004-1** plugin 載入 | ✅ PASS | `/api/plugins` 回 `id=augur-mascot-panel name=Mascot type=panel enabled=true signature=unsigned` |
+| **G-ADR004-2** 真告警端到端 | ✅ PASS | 真 Grafana alert rule → panel 產出「偵測到告警：PocAlwaysFiring，嚴重度 critical，目前數值 1，POC 用的恆定告警…」；alertname／severity／value／summary 全到位，console 零錯誤。翻轉規則走完整圈 firing → 「告警已恢復」→ 不再重複 |
+| **G-ADR004-3** 防洪 | ✅ PASS | 持續 firing 下 **160 秒／16 個 refresh 週期只播報一次**；孤兒 resolved 亦被吞掉。`dedup.ts` **零修改**達成 |
+| **G-ADR004-4** 漸進降級 | ✅ PASS | sandbox 關閉：視線跨 panel 跟隨、點擊辨識出 `panel-2 · timeseries`。sandbox 開啟：兩 panel 正常 render、偵測到降級顯示「限本 panel」、**核心播報未受影響**、零錯誤；關掉後變回「全頁追蹤」，可逆 |
+| **G-ADR004-5** 語音 | ✅ PASS | 於使用者實際看 dashboard 的機器（Windows 11／Chrome 152）實測：zh-TW **4 個聲線**（3 個本機）、`getVoices()` 首呼為空而 `voiceschanged` 於 +17ms 補上、**不需 user gesture**（零點擊即發聲且使用者確認聽到） |
+
+> ⚠️ **兩處誠實標記**（不影響上述判定，但不該被 Accepted 掩蓋）：
+> 1. G-ADR004-2 用的是合成規則 `vector(1) > 0` 而非原文寫的 `WindowsHighCPU` ——
+>    Windows 側 9182 至今無 listener，**真實指標路徑仍未驗**。
+> 2. **「sandbox 開啟時語音還能不能用」未驗** —— headless chromium 無聲線
+>    （`getVoices()` 為 0、`speak()` 回 `not-allowed`，且**關閉 sandbox 時同樣出現**
+>    故非 sandbox 所致）。需在有聲線的真實瀏覽器上補。
+
+### 外部事實查證
 
 外部事實查證日期 **2026-09-16**（同步寫入 `.asp-fact-check.md`）。
 

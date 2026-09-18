@@ -1,15 +1,23 @@
-<!-- ADR-003 | Status: Accepted -->
+<!-- ADR-003 | Status: Superseded -->
 # ADR-003：播報前端 —— visual-web-stack（React/Vite/R3F）承載 avatar + Grafana 嵌入
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `Accepted` |
+| **狀態** | `Superseded`（被 ADR-004 取代） |
 | **日期** | 2026-07-18 |
 | **決策者** | astroicers（待人類審核） |
 
 > **狀態說明**：`Draft`（禁止生產代碼）→ `FIRM`（POC）→ `Accepted`。**AI 不可自行升級**。承 ADR-001/002,定前端技術棧與結構。
 
 > ⬆️ **由 `Draft` 升 `Accepted`（2026-07-18）**：使用者顯式授權 Accept。升級依據 = **POC gate G-ADR003-1 前端消費 `BroadcastPlan` WS + VRM 播報 PASS**(React/Vite 前端 lip-sync + 表情 + feed,`vite build`+`tsc` 乾淨,見 Verification Evidence)。**人類顯式授權,非 AI 自行升級**。剩餘:Grafana 面板嵌入、mobile 響應式於生產階段補。
+
+> 🔻 **由 `Accepted` 轉 `Superseded`（2026-09-18）**：被 **ADR-004** 取代。
+> 建置鏈由 Vite 換成 webpack（`@grafana/create-plugin` 託管）、樣式由 Tailwind 換成
+> `@grafana/ui` 的 Emotion，而 `GrafanaPanel` 的 iframe 嵌入**方向完全相反**——
+> 現在是 plugin 住在 Grafana 裡，不是把 Grafana 嵌進來。
+> ⚠️ 本檔宣告的 9 項技術棧實際只裝了 4 項（React／Vite／Tailwind／Zustand），
+> Radix、R3F、Drei、Motion、next-themes 一項都沒裝，React 也是 18 而非宣告的 19。
+> **決策文件與實作脫節的前例**——ADR-004 已將此列為明文告誡。
 
 ## 痛點 / 需求
 

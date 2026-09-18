@@ -1,15 +1,23 @@
-<!-- ADR-001 | Status: Accepted -->
+<!-- ADR-001 | Status: Superseded -->
 # ADR-001：SOC 播報架構 —— Augur 由 AIRI 文字橋升級為瀏覽器原生 avatar 播報 runtime
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `Accepted` |
+| **狀態** | `Superseded`（被 ADR-004 取代） |
 | **日期** | 2026-07-18 |
 | **決策者** | astroicers（待人類審核） |
 
 > **狀態說明**：`Draft`（禁止實作生產代碼）→ `FIRM`（POC 驗證）→ `Accepted`（人類審核放行）。**AI 不可自行升級狀態**（ASP 鐵則）。本 ADR 由 2 個最小 spike（`broadcaster-spikes/`，2026-07-18）與 `.asp-fact-check.md` 外部授權查證支撐。
 
 > ⬆️ **由 `Draft` 升 `Accepted`（2026-07-18）**：使用者於對話明確表示「三支 ADR 都同意」並授權 Accept。升級依據 = **POC gate G-ADR001-1 端到端骨架 PASS**(mock 告警→TS 導播→WS→React VRM 講話+表情,見 Verification Evidence)。**人類顯式授權,非 AI 自行升級**(符合 ASP ADR 狀態變更鐵則)。剩餘生產增量(真 Grafana webhook、Grafana 嵌入、延遲量測)於生產階段補。
+
+> 🔻 **由 `Accepted` 轉 `Superseded`（2026-09-18）**：被 **ADR-004** 取代。
+> 本 ADR 的三根柱子——Node/TS 導播、WebSocket 推播、3D VRM avatar——全數拔除，
+> 相關程式碼已於 commit `fbd81f4` 刪除（`git log` 可取回）。
+> **仍然有效的部分**：它記錄的「為何否決 AIRI」「為何否決常駐 THA 即時神經渲染」
+> 兩項評估，以及 §待驗風險 1 對 Web Speech 的否決理由——
+> ADR-004 決策 4 正是明文推翻後者，讀那一節時應對照本檔。
+> ⚠️ 本檔 Verification Evidence 引用的 `broadcaster-spikes/` 在 repo 中**已不存在**，證據無法複驗。
 
 ## 痛點 / 需求
 
