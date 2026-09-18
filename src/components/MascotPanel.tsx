@@ -13,7 +13,11 @@ import { createSpeaker, type Speaker } from '../speech/speaker';
 import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
 import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import type { AvatarController } from '../avatar/AvatarController';
-import { CENTER_CELL, gazeCell } from '../avatar/gaze';
+import { CENTER_CELL, DEFAULT_GAZE, gazeCell } from '../avatar/gaze';
+import { createFlapDriver, type FlapDriver } from '../avatar/flap';
+
+/** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
+const EMOTION_DECAY_MS = 3 * 60 * 1000;
 
 interface Props extends PanelProps<MascotPanelOptions> {}
 
@@ -113,6 +117,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
   const gazeRef = useRef(CENTER_CELL);
+  const flapRef = useRef<FlapDriver | null>(null);
 
   const [feed, setFeed] = useState<FeedLine[]>([]);
   const [emotion, setEmotion] = useState<Emotion>('calm');
@@ -132,11 +137,26 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     const a = new DiagnosticAvatar();
     a.mount(host);
     avatarRef.current = a;
+    flapRef.current = createFlapDriver((open) => a.setMouthOpen?.(open));
     return () => {
+      flapRef.current?.stop();
+      flapRef.current = null;
       a.dispose();
       avatarRef.current = null;
     };
   }, []);
+
+  // 情緒衰減。沒有這個，一則 resolved 播完後臉會頂著閃光停到下一次告警。
+  useEffect(() => {
+    if (emotion === 'calm') {
+      return;
+    }
+    const h = window.setTimeout(() => {
+      setEmotion('calm');
+      avatarRef.current?.setEmotion('calm');
+    }, EMOTION_DECAY_MS);
+    return () => window.clearTimeout(h);
+  }, [emotion, feed]);
 
   // ---- 互動層：能力偵測 + 漸進降級 ----
   useEffect(() => {
@@ -169,7 +189,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           return;
         }
         const r = el.getBoundingClientRect();
-        const next = gazeCell(px - (r.left + r.width / 2), py - (r.top + r.height / 2), gazeRef.current);
+        // dead zone 必須跟著 stage 大小走。寫死 28px 是為 DiagnosticAvatar 的 ~34px
+        // 訂的，換成 128–256px 的精靈圖 stage 後，游標停在角色臉上時角色會把視線
+        // 甩開自己 —— 「中央格＝游標壓在身上」的語意整個反過來。
+        const side = Math.min(r.width, r.height);
+        const next = gazeCell(px - (r.left + r.width / 2), py - (r.top + r.height / 2), gazeRef.current, {
+          ...DEFAULT_GAZE,
+          deadZonePx: Math.max(12, Math.round(side * 0.25)),
+        });
         if (next !== gazeRef.current) {
           gazeRef.current = next;
           avatarRef.current?.setGaze(next);
@@ -229,23 +256,34 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       ...(ttsVoice ? { preferredVoice: ttsVoice } : {}),
       lang: alertLang === 'en' ? 'en-US' : 'zh-TW',
       events: {
-        onStart: () => {
+        // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
+        // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
+        // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
+        onStart: (plan) => {
           setSpeechErr(null);
+          setEmotion(plan.emotion);
+          avatarRef.current?.setEmotion(plan.emotion);
           avatarRef.current?.setSpeaking(true);
+          // 引擎不吐 boundary 時的 fallback（ADR-004 決策 4 保留）。
+          // 收到第一個 boundary 就會被 boundary() 接管。
+          flapRef.current?.idle();
         },
         onEnd: () => {
+          flapRef.current?.stop();
           avatarRef.current?.setSpeaking(false);
           setPending(speakerRef.current?.pending() ?? 0);
         },
-        // 實測中文為詞級 boundary（1.53 次/秒、charLength 1–14）。
+        // 實測中文為詞級 boundary。charLength 決定**擺動次數**而非振幅
+        // （ADR-004 決策 4 的原意；見 flap.ts 檔頭）。
         // charLength 0 是句首標記不是詞，不當嘴型觸發。
         onBoundary: ({ charLength }) => {
           if (charLength > 0) {
-            avatarRef.current?.setMouthOpen?.(Math.min(1, 0.35 + charLength / 14));
+            flapRef.current?.boundary(charLength);
           }
         },
         onError: (e) => {
           setSpeechErr(e);
+          flapRef.current?.stop();
           avatarRef.current?.setSpeaking(false);
         },
       },
