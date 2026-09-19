@@ -3,10 +3,10 @@
     "allow": [
       "Bash(*)",
       "Bash(mkdir -p /tmp/namei)",
+      "Bash(node --import tsx --test test/*.test.ts)",
       "Bash(python3 -c ' *)",
       "Bash(python3 .claude/skills/image-layer-split/scripts/gen_prompts.py assets/a1-augur-calm.png --out live2d/layerwork)",
-      "Edit(/.claude/skills/image-layer-split/**)",
-      "Bash(node --import tsx --test test/*.test.ts)"
+      "Edit(/.claude/skills/image-layer-split/**)"
     ],
     "deny": [
       "Bash(docker deploy *)",
