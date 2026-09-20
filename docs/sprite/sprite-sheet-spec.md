@@ -41,7 +41,7 @@
 實測 A1 給出 117/365 = 0.320·頭高；本規格取 0.180/0.520 = **0.346·頭高**。
 相對實測放大約 8%，理由是 128–256px 顯示尺寸下的方向可讀性。
 **這已經預支了 §3.3 風險緩解的一部分加碼空間** —— 後續若實測仍讀不出方向，
-加碼方向是虹膜直徑（SP-2.6）而非再加寬瞳距。
+加碼方向是虹膜直徑而非再加寬瞳距。（原引用的 SP-2.6 已於 2026-09-20 廢除，此處僅存設計意圖。）
 
 **SP-0.5** §6 的四個表情視覺語意原樣沿用，不新增記號詞彙：
 `part_ov_sweat`（汗滴）、`part_ov_gloom`（額前陰影直線）、`part_ov_anger`（怒紋/青筋）、
@@ -127,7 +127,9 @@ if (side < 128) → 不渲染 sprite，只保留既有 chip 與 feed
 
 **SP-1.10 【dead zone 必須跟著 stage 走】** `MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數：
 `{ ...DEFAULT_GAZE, deadZonePx: Math.round(side * 0.25) }`。
-**現行程式碼沒傳 opts**，`deadZonePx` 恆為 28 —— 那是為 34px 量級的 `DiagnosticAvatar` 訂的
+~~現行程式碼沒傳 opts，`deadZonePx` 恆為 28~~ **✅ 已於 `de98011` 修好（2026-09-18）**：
+`MascotPanel.tsx` 已傳第四參數 `deadZonePx: Math.max(12, Math.round(side * 0.25))`。
+下面這段保留為背景說明 —— 28 是為 34px 量級的 `DiagnosticAvatar` 訂的
 （`gaze.ts:39` 的註解自己寫「吉祥物本身的尺寸量級」）。在 224px 的 stage 上 dead zone
 只佔直徑 25%，游標停在角色臉頰上（離中心 60px）時角色會把視線甩開自己，
 「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
@@ -427,7 +429,9 @@ Grafana 的 panel 型別有數十種，逐型別給格必然大量永遠用不�
 
 **SP-5.2 【繪製順序】**
 1. 完成 **master frame**（= directions 格 4，完整胸上立繪，§6 的 calm 表情，眼/眉/嘴各自獨立圖層）。
-2. 跑 **SP-5.3 的可讀性實測**，據以定案並凍結 SP-2.6（虹膜直徑）與 SP-3.3（Δx/Δy）。
+2. ~~跑 SP-5.3 的可讀性實測，據以定案並凍結 SP-2.6 與 SP-3.3~~
+   **【2026-09-20 刪除】** 三者皆已廢除，可讀性改為交付驗收（SP-V.1）。
+   繪製順序直接由第 1 步接第 3 步。
 3. 由 master frame 衍生其餘 8 個方向格（**只動眼睛圖層群**）。
 4. 由 master frame 衍生 9 個 reactions 格（改眉/嘴/眼瞼/記號後，關閉全部底圖圖層再匯出）。
 
@@ -580,10 +584,16 @@ RGBA 緩衝區。已實測可行性：1536×1536 RGBA 解碼 45–60ms、九格�
 1. 以 SP-6.1 記錄的虹膜色值（含容差）在眼窗 E 內取遮罩，算質心 `(cx, cy)`。
 2. 與 `directions[4]` 的質心相減得 `(Δx, Δy)`。
 3. 要求 `sign(Δx) === (c % 3 − 1)` 且 `sign(Δy) === (floor(c / 3) − 1)`。
-4. ~~非零軸的 `|Δ|` 必須落在標稱 Δ（SP-3.3）的 [0.6, 1.4] 倍~~
-   **2026-09-20 廢除**（SP-3.3 已無標稱值）。改由 SP-V.1 的方向辨識驗收取代 ——
-   量「人看不看得出來」而不是量「瞳孔移了幾個單位」；
-   應為零的軸 `|Δ| ≤ 0.2 ×` 標稱 Δ。
+4. **應為零的軸**：`|Δ|` 必須 ≤ **該格非零軸實測 `|Δ|` 的 0.2 倍**。
+   （2026-09-20 改寫：原文以 SP-3.3 的「標稱 Δ」為基準，而 SP-3.3 已廢除、無值可代，
+   照原文寫不出程式碼。改用**同一格自己的非零軸**當基準 —— 自足、不需要任何規格數值，
+   且仍然擋得住「往左看的格子同時明顯往下」這個真實的失敗模式。
+   純水平／純垂直格（1/3/5/7）只有一個非零軸，另一軸即以此為基準；
+   對角格（0/2/6/8）兩軸皆非零，本點不適用，由第 3 點的 sign 檢查承接。）
+
+> **為什麼保留這條而不是整條刪掉交給 SP-V.1**：SP-V.1 是人工盲測，
+> 擋得住「看不出方向」但擋不住「每一格都偏一點點」這種系統性漂移；
+> 而本點是機械的、每次交付都跑。兩者互補不重疊。
 
 > 推導依據為 `gaze.ts` 的 `SECTOR_TO_CELL = [5,2,1,0,3,6,7,8]`：
 > cell 0=135°左上、1=90°上、2=45°右上、3=180°左、5=0°右、6=225°左下、7=270°下、8=315°右下
@@ -656,10 +666,13 @@ RGBA 緩衝區。已實測可行性：1536×1536 RGBA 解碼 45–60ms、九格�
   寄生在產品碼樹裡；且 jest 的斷言輸出無法承載 SP-7.10 的逐格表格。
 - **不得**改動 `.git/index`（不呼叫任何 git 指令），以免破壞 `tools/asp-test.sh` 註解所述
   「最後一個動作必須是寫 `.asp-test-result.json`」的時序判定。
-- 先在根 `eslint.config.mjs` 的 `ignores` 加 `'tools/**'`。
-  實查該清單目前沒有 `tools/`，而 `@grafana/eslint-config/flat.js` 未宣告 `files`
-  （其設定套到所有被 lint 的檔案，`base.js` 的 `ecmaVersion` 為 **2019** →
-  `?.` 與 `??` 會是 parse error，而一支自然寫法的零依賴 PNG 解碼器幾乎一定會用到）。
+- ~~先在根 `eslint.config.mjs` 的 `ignores` 加 `'tools/**'`~~ **【2026-09-20 廢除】**
+  原條文推論 `base.js` 的 `ecmaVersion` 為 2019 故 `?.` / `??` 會是 parse error ——
+  **那是推論不是實測，而且是錯的**。實測
+  `printf 'const a={b:1};\nconst c=a?.b ?? 2;\nexport default c;\n' |
+  npx eslint --stdin --stdin-filename tools/probe.mjs` → **exit 0、零 parse error**。
+  **不要加 ignores** —— 加了會讓這支手寫 PNG defilter（Paeth 是最容易寫錯的一段）
+  永久失去唯一的靜態檢查，為一個不存在的問題付出真實代價。
 
 **SP-7.14 【開關與可見的跳過】**
 以 `src/img/sprite/sprite-manifest.json` 是否存在決定：存在 → 檢查為強制；
@@ -670,7 +683,8 @@ RGBA 緩衝區。已實測可行性：1536×1536 RGBA 解碼 45–60ms、九格�
 
 **SP-7.15 【manifest】** `src/img/sprite/sprite-manifest.json` 內容：
 sheet 像素尺寸、`cellPx`、`cols`/`rows`、§2 的完整錨點表、SP-2.11 的三個視窗、
-SP-3.3 的 Δx/Δy、SP-6.1 的線稿與虹膜色值、18 格的語意對照、
+~~SP-3.3 的 Δx/Δy~~（已廢除，改記**交付後實測**的逐格虹膜質心，供日後回歸比對）、
+SP-6.1 的線稿與虹膜色值、18 格的語意對照、
 `intentionally_empty` 宣告、以及**兩張 PNG 的 sha256**。
 腳本先比對 sha256 再做像素檢查 —— **換圖而不更新 manifest 必須是紅的**。
 > 該檔會被 `copyFiles.ts` 的 `{ from: '**/*.json', to: '.' }` 自動複製進
@@ -771,13 +785,25 @@ fileMock 放在 `.config/` 之外（`testMatch` 只掃 `src/**`，放 `tools/` �
 pending 期間間隔**減半**，且呼吸振幅 ×1.4（SP-4.9 的非靜止要求）。
 
 **SP-8.9 【嘴型 — 擺動次數由 charLength 決定】**
-`setMouthOpen(v)` 是唯一的 flap 觸發點：
+`setMouthOpen(v)` 是**單純的幀選擇器**，不是 flap 觸發器：
 ```
-charLength = clamp(round((v − 0.35) × 14), 1, 14)   // 反推 MascotPanel 的 0.35 + c/14
-N          = clamp(charLength, 1, 5)                 // 本次 boundary 要擺幾下
-frame      = charLength >= 4 ? 格5 : 格4             // 張口幅度
+v === 0        → 閉口（格 4 的閉嘴態）
+0 < v < 0.8    → 格 4（半開）
+v >= 0.8       → 格 5（大開）
 ```
-跑 N 次 flap（每次 110ms 張 / 110ms 閉），跑完**回閉口停住**等下一個 boundary
+**時序完全由 `src/avatar/flap.ts` 驅動，SpriteController 不自己跑迴圈。**
+
+> ⚠️ **2026-09-20 修正。** 原條文要 SpriteController 由 `v` 反推 `charLength`
+> 再自己跑 N 次 flap。三處實查推翻它：
+> 1. 被反推的那條 `0.35 + c/14` 公式**已刪除** —— `src/avatar/flap.ts` 檔頭寫明它
+>    「永遠到不了閉口」，本規格〈跨設計矛盾與裁決〉第 11 條也裁定改走
+>    ADR-004 決策 4 的原意（`charLength` 決定**擺動次數**）。
+> 2. `flap.ts` 現行只吐 `0`、`0.6`（短詞）、`0.95`（長詞）。代進原公式：
+>    `v = 0.6` → `round(0.25 × 14) = 4` → 格 5（大開），
+>    但 `0.6` 的語意正是「短詞、該用格 4」—— **剛好相反**。
+>    `v = 0` 會被 clamp 到 1 而觸發一次 flap，但 0 的語意是閉口。
+> 3. `flap.ts` 的 `boundary()` **已經**在跑 N 次、每次都呼叫 `setMouthOpen`。
+>    SpriteController 再跑一層就是 **N²**。
 （詞與詞之間本來就有停頓）。`setSpeaking(false)` 立即隱藏 mouth 層並把 frame 重置回格 4。
 
 > **為什麼不是固定 220ms 自走**：`.asp-fact-check.md` 記 boundary 間隔 200–1950ms。
@@ -825,7 +851,11 @@ pending 與 alerting 共用 fingerprint，先播 pending 會讓「真的燒起�
 **SP-8.15 【契約異動】**
 `AvatarController` 新增**可選**成員 `setReaction?(kind: 'click' | 'pending' | null): void`，
 比照既有 `setMouthOpen?` 的前例 —— `DiagnosticAvatar` 不實作亦不受影響。
-⚠️ 此為 ADR-004 決策 5 的介面異動，**需人類授權後才可實作**。見 §10。
+✅ **已於 2026-09-18 經人類授權並實作**（commit `9911b00`）：
+`AvatarController.ts` 的 `setReaction?(kind: 'click' | 'pending' | null)`，
+`DiagnosticAvatar` 已實作，`MascotPanel` 已接上 click 回饋。
+同時回覆了 ADR-004〈待驗風險 4〉—— 該條原文寫「需擴充 `Emotion`」，
+實際走相反的路（不擴充，因為 click/pending 不是 severity 的函數）。
 
 **SP-8.16 【表情必須綁到「正在念的那一則」】**
 `MascotPanel` 現行是 `setEmotion(plans[0]!.plan.emotion)` —— **每批只呼叫一次**，
@@ -950,7 +980,8 @@ docs/sprite/SOURCE-PROMPTS.md
 
 ## §11 未驗／未決（技術性，不必然需要人類）
 
-1. **SP-2.6 與 SP-3.3 目前是暫定值** —— SP-5.3 的可讀性實測還沒跑。
+1. ~~SP-2.6 與 SP-3.3 目前是暫定值，SP-5.3 的可讀性實測還沒跑~~
+   **【2026-09-20 作廢】** 三者皆已廢除。見〈可讀性實測：三輪，與它們證偽的東西〉。
    凍結後改不動，這是唯一不能省的前置實測。
 2. **Firefox / WebKit 的跨格滲色未驗**。零滲色結論只對 Chromium 成立
    （本機 playwright 需要的 firefox-1543 / webkit-2359 執行檔未安裝）。
@@ -1088,13 +1119,16 @@ docs/sprite/SOURCE-PROMPTS.md
 - `setEmotion(e)`：calm → expr 層 `display:none`；warning → 格 1；critical → 格 2；resolved → 格 3。直接查表，不做運算。
 - expr 層的顯示優先序為 click(格 0) > 非 calm 情緒(格 1–3) > pending(格 8) > 隱藏；pending 只在 `emotion === 'calm' && !speaking` 時顯示。
 - `setSpeaking(true)` 只把 mouth 層設為可用；**不**自己啟動固定週期循環。`setSpeaking(false)` 立即隱藏 mouth 層並把張口幀重置回格 4。
-- `setMouthOpen(v)` 是唯一的 flap 觸發點：由 `v` 反推 `charLength = clamp(round((v − 0.35) × 14), 1, 14)`，跑 `N = clamp(charLength, 1, 5)` 次 flap（每次 110ms 張 / 110ms 閉），跑完回閉口停住等下一個 `setMouthOpen`。
-- 張口幀選格：`charLength >= 4 → 格 5（大開）`，否則 `格 4（半開）`。門檻 4 來自實測中位數（77 字 / 20 個詞級 boundary，平均 3.85），不是 0.70 這個換算後的值。
+- `setMouthOpen(v)` 是**單純的幀選擇器**（2026-09-20 修正，見 SP-8.9）：
+  `v === 0` → 閉口、`0 < v < 0.8` → 格 4（半開）、`v >= 0.8` → 格 5（大開）。
+  **不要自己跑 flap 迴圈** —— `flap.ts` 已經在跑，再跑一層就是 N²。
+  門檻 0.8 對應 `flap.ts` 的 `flapAmplitude`：短詞 0.6、長詞 0.95。
 - **從未收到 `setMouthOpen` 時**（`enableTTS=false`、`speechSynthesis` 不存在、或引擎不吐 boundary）：`setSpeaking(true)` 期間以格 4 跑週期 220ms 的定速 flap。這是 ADR-004 決策 4 保留的 fallback，不可省 —— 省了格 4 或格 5 其中一格會變成永遠用不到的死格。
 - `setMouthOpen` 的語意在本實作中與 `DiagnosticAvatar` **不同**，必須在檔頭註解寫明：`DiagnosticAvatar` 的實際判準是 `if (open === 0 && this.speaking)`（把 0 當成「沒給值」），本實作把每一次呼叫當成一次 boundary 同步點。照字面寫成 `!== undefined` 會與 `DiagnosticAvatar` 行為不一致。
 - 眨眼由控制器自走：間隔 2.8–6.5 秒隨機，序列為 格 7(半閉, 45ms) → 格 6(全閉, 90ms) → 格 7(45ms)，約 18% 機率於 160ms 後補第二次。
 - 眨眼抑制條件：`prefers-reduced-motion: reduce`、或 click 反應顯示中（blink 層在 expr 之上會蓋掉格 0 的驚訝眼）。**播報中不抑制眨眼。**
-- `setReaction?(kind: 'click' | 'pending' | null)` 為**可選**成員（比照既有 `setMouthOpen?`）。click 顯示 420ms 後自動回復；pending 為持續狀態直到收到 `null` 或非 pending。此成員需人類授權後才可加進 `AvatarController`（見 needs_human）。
+- `setReaction?(kind: 'click' | 'pending' | null)` 為**可選**成員（比照既有 `setMouthOpen?`）。click 顯示 420ms 後自動回復；pending 為持續狀態直到收到 `null` 或非 pending。
+  ✅ **已於 2026-09-18 授權並實作**（`9911b00`），不再是待辦。
 - **不要**抑制播報中的 click 反應。z 序已經解掉衝突：格 0 的小圓開口落在嘴窗 M，而 mouth 層在 expr 之上會蓋掉它，剩下的眉上揚與閃光正是想要的回饋。
 - 呼吸作用在四層的**共同父容器**（stage）上：`transform: translateY()`，振幅 2.0% 邊長，週期 4s，ease-in-out alternate。`prefers-reduced-motion: reduce` 時停用。
 - pending 期間眨眼間隔減半、呼吸振幅 ×1.4 —— pending 可持續數分鐘，靜止的臉讀起來是「卡住了」。
@@ -1153,7 +1187,7 @@ docs/sprite/SOURCE-PROMPTS.md
 
 **衝突**：content 的複驗者代進錨點算出 96px 時虹膜 5.3px、瞳孔位移 2.1px、嘴窗高 10.6px；geometry 的複驗者算出 side 64/dpr1 時垂直瞳孔位移只有 1.15 裝置像素，低於 geometry §5.2 自己用來否決全身構圖的 1.4–1.8px 區間。兩邊的下限都低於自己的可讀性論證。
 
-**裁決**：下限 **128 CSS px**，低於此一律不渲染 sprite（只留既有 chip 與 feed）。上限 `min(256, 512/dpr)`，任何情況下不放大。連帶裁定：`MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數把 `deadZonePx` 改成 `round(side × 0.25)` —— 現行程式碼沒傳 opts，`deadZonePx` 恆為 28，那是為 34px 的 DiagnosticAvatar 訂的；在 224px 的 stage 上 dead zone 只佔直徑 25%，游標停在角色臉頰上時角色會把視線甩開自己，「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
+**裁決**：下限 **128 CSS px**，低於此一律不渲染 sprite（只留既有 chip 與 feed）。上限 `min(256, 512/dpr)`，任何情況下不放大。連帶裁定：`MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數把 `deadZonePx` 改成 `round(side × 0.25)`（**此項已於 `de98011` 實作，下文「現行程式碼」指的是 2026-09-18 之前的狀態**）—— 當時的程式碼沒傳 opts，`deadZonePx` 恆為 28，那是為 34px 的 DiagnosticAvatar 訂的；在 224px 的 stage 上 dead zone 只佔直徑 25%，游標停在角色臉頰上時角色會把視線甩開自己，「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
 
 ### 8. production §C3（tolPx = max(1, floor(cellPx /(maxRenderCssPx × DPR)))）與 §C4/§G3（封頂是驗收前提）× 本規格的疊合架構
 
@@ -1260,12 +1294,21 @@ docs/sprite/SOURCE-PROMPTS.md
 
 以下都**沒有實測支撐**。寫進規格是為了不讓它們被遺忘，不是因為已經確定。
 
-- **可讀性實測尚未跑，故 SP-2.6（虹膜直徑 0.065）與 SP-3.3（瞳孔位移 Δx 0.022 / Δy 0.018）目前是暫定值。** SP-5.3 已把這個實測排在凍結**之前**（成本只有 master frame 的眼部：把 9 個瞳孔位置各出一張，縮到 128/160/224px 讓人盲測猜方向），但它還沒跑。凍結後這兩個值改不動（改 = 18 格全部重畫），所以這是唯一不能省的前置實測。
+- ~~可讀性實測尚未跑，SP-2.6／SP-3.3 是暫定值~~ **✅ 已跑（三輪共 98 題），並據以廢除三條條文。**
+  見〈可讀性實測：三輪，與它們證偽的東西〉。取代它們的是 SP-V.1 的交付驗收。
 - **Firefox / WebKit 的跨格滲色未驗。** geometry 的零滲色結論（dpr∈{1,2}、元素邊長 40–480px、非整數元素座標、縮放比 0.94→0.078 共 24 組條件污染像素全為 0；對照組 `299% 299%` 立即產生 295 個污染像素）只在 Chromium 上成立 —— 本機 playwright 需要的 firefox-1543 / webkit-2359 執行檔未安裝。SP-2.1 的 0.020·S 絕對透明帶即為此保險（S=512 時 10 個來源像素、顯示 224px 時約 4.4 個裝置像素，遠大於任何合理取樣核伸出的約 2 像素）。要補：`npx playwright install firefox webkit` 後重跑。
 - **pngquant 後的實際體積未知。** geometry 實測九格各異的 1536² PNG 為 2006 KB；本架構的 reactions 圖大部分是透明的，directions 圖是 9 張近乎相同的平塗立繪，理論上量化後砍得很兇，但沒有實際數字。SP-6.6 的預算（每張 ≤900 KB、合計 ≤1.2 MB）與 S=384 的退路都還沒被真實素材檢驗過。
 - **SP-7.6 的降採樣對比門檻（眉線在 128px 下 max−min 線性亮度 ≥0.25）是暫定值**，沒有實際素材可以校準。首版應以警告發出，待第一批交付後回填為硬限 —— 用一個沒有實據的數字擋住第一次交付是錯的。同理 SP-7.1 的格內不透明覆蓋率上下限也留白（production 複驗者實測胸上裁切的 cutout 為 54.7%，可作為回填起點；原設計估的 35–45% 會把合規的圖擋掉）。
-- **`tools/*.mjs` 會不會被 eslint 擋，未實測。** 實查根 `eslint.config.mjs` 的 ignores 清單確實沒有 `tools/`，而 `@grafana/eslint-config/flat.js` 未宣告 `files`（設定套到所有被 lint 的檔案，`base.js` 的 `ecmaVersion` 為 2019 → `?.` 與 `??` 會是 parse error，而一支自然寫法的零依賴 PNG 解碼器幾乎一定會用到）。本次唯讀、不能在 repo 內建檔實測。落地時先在 ignores 加 `'tools/**'`，不要賭語法。
+- ~~`tools/*.mjs` 會不會被 eslint 擋，未實測~~ **✅ 已實測（2026-09-20）：不會擋。**
+  `npx eslint --stdin --stdin-filename tools/probe.mjs` 對 `a?.b ?? 2` 回 exit 0、零 parse error。
+  原本從 `ecmaVersion: 2019` 推出的結論是錯的。**不加 ignores**，讓 `tools/` 照常受 lint。
 - **`alertState` 的 pending → alerting → pending 轉換未實測。** ADR-004 決策 2 實測 `alertState` 是黏著的（`alertState != null ? alertState : 上一次`、永不回 `undefined`），所以 pending → alerting 觀察得到，但 alerting → pending 是否可能出現殘留舊值導致 SP-4.9 的臉卡住，尚未驗。需要一條帶 `for` duration 的翻轉規則才驗得到 —— 這正是 ADR-004〈待驗風險 6〉點名未測的那一項，該條已寫明是 P4 硬前置。
-- **跨網域 sheet URL 在 Grafana 下會不會撞 CSP，未查證。** 若被擋，`directionsImgUrl` / `reactionsImgUrl` 對外部 URL 就只是一個永遠失敗的選項，不如只接受相對於 plugin 的路徑。SP-8.7 已要求把 `img.onerror` 當成預期內分支處理（幾何檢查在圖片載入失敗時根本跑不到），但這不能取代查證。
+- ~~跨網域 sheet URL 在 Grafana 下會不會撞 CSP，未查證~~ **✅ 已查證（2026-09-20）：不會擋。**
+  `docker exec augur-grafana grep content_security_policy /usr/share/grafana/conf/defaults.ini`
+  → 第 542 行 `content_security_policy = false`（**預設關閉**）；
+  第 547 行的 template 含 **`img-src * data:`**（即使開啟也不擋任何外部網域的圖片）。
+  → `directionsImgUrl` / `reactionsImgUrl` **接受任意 URL**，這不是 SpriteController 的 blocker。
+  ⚠️ 限制：結論取自設定檔原文，**未做「開啟 CSP」的對照實測**。
+  `img.onerror` 仍必須當成預期內分支處理（SP-8.7）—— 網路失敗與 CORS 是另一回事。
 - **「sandbox 開啟時語音還能不能用」仍未驗**（ADR-004 Accepted 時明文留下的兩處缺口之一，headless chromium 無聲線）。這不影響素材，但影響 SP-8.10「從未收到 setMouthOpen 時用格 4 定速 flap」這條 fallback 路徑實際會不會被走到。
 - **`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定。** 純粹是文件擺放慣例，不影響任何機械檢查，但值得一次講定免得日後兩處各長一半。本規格暫用 `docs/sprite/`。
