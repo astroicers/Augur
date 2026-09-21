@@ -15,6 +15,7 @@ import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import type { AvatarController } from '../avatar/AvatarController';
 import { CENTER_CELL, DEFAULT_GAZE, gazeCell } from '../avatar/gaze';
 import { createFlapDriver, type FlapDriver } from '../avatar/flap';
+import { gazeDeadZonePx, spriteSide } from '../avatar/spriteSheet';
 
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
@@ -58,8 +59,29 @@ const getStyles = () => ({
     border: 1px solid currentColor;
     opacity: 0.75;
   `,
+  body: css`
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    flex: 1 1 auto;
+    min-height: 0;
+  `,
+  bodyStacked: css`
+    flex-direction: column;
+  `,
+  /**
+   * SP-1.8 的方形 stage。寬高由 `MascotPanel` 顯式設定（見下方 `stageSide`），
+   * **契約不新增 `setSize()`** —— SP-8.17 明文要求避免再開一次 ADR-004 決策 5 的介面異動。
+   * `aspect-ratio: 1` 是保險：顯式寬高已經是方的，但若日後有人只改一邊，這裡會把它拉回來。
+   */
+  stage: css`
+    flex: 0 0 auto;
+    aspect-ratio: 1;
+    align-self: flex-start;
+  `,
   feed: css`
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -125,6 +147,29 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [pending, setPending] = useState(0);
   const [scope, setScope] = useState<{ cross: boolean; reason: string }>({ cross: false, reason: '偵測中' });
   const [lastClick, setLastClick] = useState<string | null>(null);
+  const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1));
+
+  /**
+   * SP-1.9：視窗被拖到另一台 dpr 不同的螢幕時，`devicePixelRatio` 會變，
+   * 但 React 不會因此重繪 —— `PanelProps` 的 width/height 是 CSS px，兩邊都沒動。
+   * 不監聽的後果是 stage 停在舊 dpr 算出的邊長，在高 dpr 螢幕上會變成放大取樣
+   * （SP-1.8：放大 1.875× 銳利度掉 56%）。
+   *
+   * `(resolution: Ndppx)` 是**精確比對**，所以每次 dpr 變了都要重建這個 query ——
+   * 這就是 dpr 自己在相依陣列裡的原因，不是漏寫的迴圈。
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const onChange = () => setDpr(window.devicePixelRatio || 1);
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onChange);
+      return () => mq.removeEventListener('change', onChange);
+    }
+    return undefined;
+  }, [dpr]);
 
   const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice } = options;
 
@@ -192,10 +237,11 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         // dead zone 必須跟著 stage 大小走。寫死 28px 是為 DiagnosticAvatar 的 ~34px
         // 訂的，換成 128–256px 的精靈圖 stage 後，游標停在角色臉上時角色會把視線
         // 甩開自己 —— 「中央格＝游標壓在身上」的語意整個反過來。
-        const side = Math.min(r.width, r.height);
         const next = gazeCell(px - (r.left + r.width / 2), py - (r.top + r.height / 2), gazeRef.current, {
           ...DEFAULT_GAZE,
-          deadZonePx: Math.max(12, Math.round(side * 0.25)),
+          // 量測 rect 而不是用算出來的 stageSide：兩者應該相等，但 rect 是畫面上的事實。
+          // 公式只有一份，住在 spriteSheet.ts（SP-1.10）。
+          deadZonePx: gazeDeadZonePx(Math.min(r.width, r.height)),
         });
         if (next !== gazeRef.current) {
           gazeRef.current = next;
@@ -360,12 +406,17 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const chipColor = theme.visualization.getColorByName(
     ({ calm: 'blue', warning: 'orange', critical: 'red', resolved: 'green' } as const)[emotion]
   );
+  // SP-1.8 / SP-1.9。dpr 是狀態而非每次 render 讀 window —— 視窗被拖到另一台螢幕時
+  // React 不會因為 devicePixelRatio 變了而重繪，必須自己監聽。
+  const side = spriteSide({ width, height, devicePixelRatio: dpr });
+  // 「啟用語音」鈕的門檻與 stage 的門檻各自獨立、不共用（SP-1.8 末段明文）。
   const roomy = width >= 320 && height >= 180;
+  // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
+  const sideBySide = width >= 320;
 
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
-        <div ref={hostRef} style={{ color: chipColor, flex: '0 0 auto' }} />
         <span
           className={styles.chip}
           style={{ background: chipColor, color: theme.colors.getContrastText(chipColor) }}
@@ -390,17 +441,31 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
       {lastClick && <div className={styles.when}>最後點擊：{lastClick}</div>}
 
-      <div className={styles.feed}>
-        {feed.length === 0 ? (
-          <span className={styles.empty}>尚無播報。持續 firing 只會念一次 —— 那是 dedup 在生效。</span>
-        ) : (
-          feed.map((l) => (
-            <div key={l.key} className={styles.line}>
-              <span className={styles.when}>{l.when}</span>
-              <span>{l.plan.text}</span>
-            </div>
-          ))
-        )}
+      <div className={`${styles.body} ${sideBySide ? '' : styles.bodyStacked}`}>
+        {/*
+          ⚠️ **`side < 128 不渲染` 這一條刻意還沒做**（留到 B2-4 的 SpriteController）。
+          現在掛在這裡的是 `DiagnosticAvatar`，它的 3×3 格是寫死 10px，放進 128px 的方形
+          stage 不會跟著長大 —— 現在就落地「窄 panel 不渲染」會把目前畫面上**唯一看得見的
+          視線指示器**整個藏掉，等於拿掉 G-ADR004-4 的目視證據。
+        */}
+        <div
+          ref={hostRef}
+          className={styles.stage}
+          style={{ color: chipColor, width: side, height: side }}
+        />
+
+        <div className={styles.feed}>
+          {feed.length === 0 ? (
+            <span className={styles.empty}>尚無播報。持續 firing 只會念一次 —— 那是 dedup 在生效。</span>
+          ) : (
+            feed.map((l) => (
+              <div key={l.key} className={styles.line}>
+                <span className={styles.when}>{l.when}</span>
+                <span>{l.plan.text}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

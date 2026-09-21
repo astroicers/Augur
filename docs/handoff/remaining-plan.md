@@ -451,7 +451,7 @@ SP-1.18（`spec:168-177`）記的是一次 2026-09-18 的量測結果，**harnes
 這個檔正是 ASP hook 唯一會讀的痕跡，寫錯原因比不寫更糟。
 **規模**：小
 
-### A3-3 寫 `src/avatar/spriteSheet.ts` 純計算層
+### A3-3 寫 `src/avatar/spriteSheet.ts` 純計算層 ✅ **已完成（2026-09-21）**
 
 內容：18 格語意常數（directions 沿用 `gaze.ts` row-major 0–8；
 reactions 0=click / 1=warning / 2=critical / 3=resolved / 4=嘴半開 / 5=嘴大開 / 6=眼全閉 / 7=眼半閉 / 8=pending）、
@@ -491,7 +491,7 @@ expr 層優先序（click > 非 calm 情緒 > pending > 隱藏）、
 （它會經 `useStyles2` / `useTheme2` 走到 `@grafana/ui`）。因此 A3-4 必須排在 A1-1 之後。
 **規模**：小
 
-### A3-5 panel stage 版面重排
+### A3-5 panel stage 版面重排 ✅ **已完成（2026-09-21）**
 
 `hostRef` 由 header flex row 裡的 `flex: '0 0 auto'` 小 div 改成獨立方形 stage：
 依 SP-1.8 算 `side = min(min(256, 512/dpr), floor(min(width*0.42, height*0.80)))`、對齊裝置像素；
