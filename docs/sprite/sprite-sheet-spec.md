@@ -930,7 +930,11 @@ pending 與 alerting 共用 fingerprint，先播 pending 會讓「真的燒起�
 實際走相反的路（不擴充，因為 click/pending 不是 severity 的函數）。
 
 **SP-8.16 【表情必須綁到「正在念的那一則」】**
-`MascotPanel` 現行是 `setEmotion(plans[0]!.plan.emotion)` —— **每批只呼叫一次**，
+✅ **已於 `de98011` 實作（2026-09-18）**，並有回歸測試釘住
+（`src/components/__tests__/MascotPanel.test.tsx` 第三條，拿掉就會紅）。
+下面保留為背景說明 —— 它記著這個 bug 長什麼樣子，不要照著再改一次。
+
+~~`MascotPanel` 現行是 `setEmotion(plans[0]!.plan.emotion)`~~ —— **每批只呼叫一次**，
 而 `for (const p of plans) sp.enqueue(p.plan)` 把整批都排進去。
 一個 panel 綁 warning + critical 兩條規則同時燒就是一批兩則：
 臉定在 critical、嘴巴卻在念「嚴重度 warning」，持續 14–28 秒；三則就是 42 秒一張臉。
@@ -1045,12 +1049,12 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 | # | 項目 | 狀態 |
 |---|---|---|
 | 1 | 🔴 **髮色亮度**（SP-0.8，2026-09-21 新增） | 主色 `#C0D0E0` 實測 L = 0.617，超出 SP-6.2 上限 0.61。建議維持色相降 2–3% → `#BCCCDC`。與斗篷那次同級，所以同樣由人裁定 |
-| 2 | 🔴 **master frame 由誰畫、用什麼工具、預算多少**（SP-5.7） | 未答。B2 的解鎖條件 |
-| 3 | 🔴 **panel 版面重排由誰在哪一階段做**（SP-8.17） | 計畫已排入 A3-5，但執行者未定 |
-| 4 | **idle timer / pointerleave**：滑鼠停住或離開視窗時視線凍在最後一格 | 未答。建議 4 秒回 `CENTER_CELL`，讓格 4 真正成為 idle 狀態。追蹤於 `remaining-plan.md` 的 B7-3 |
-| 5 | **分層原始檔是否進版控**（SP-9.11） | 體積要等實際交付才知道 |
-| 6 | **生成服務條款對輸出歸屬的規定**（SP-9.5a） | 仍未查證。⚠️ 注意這**不是**已解決的 A1 問題 —— 那是「舊圖退出版控」，這是「新素材交付時要填的欄」，兩者無關 |
-| 7 | **SP-6.4 的烘進描邊有貼紙感**，是否接受？ | 未答。否決的話走 SP-6.7 的變體 B |
+| 2 | 🔴 **master frame 由誰畫、用什麼工具、預算多少**（SP-5.7） | 未答。B2 的解鎖條件，也是整個 P5 唯一還沒動的東西 |
+
+| 3 | **idle timer / pointerleave**：滑鼠停住或離開視窗時視線凍在最後一格 | 未答。建議 4 秒回 `CENTER_CELL`，讓格 4 真正成為 idle 狀態。追蹤於 `remaining-plan.md` 的 B7-3 |
+| 4 | **分層原始檔是否進版控**（SP-9.11） | 體積要等實際交付才知道 |
+| 5 | **生成服務條款對輸出歸屬的規定**（SP-9.5a） | 仍未查證。⚠️ 注意這**不是**已解決的 A1 問題 —— 那是「舊圖退出版控」，這是「新素材交付時要填的欄」，兩者無關 |
+| 6 | **SP-6.4 的烘進描邊有貼紙感**，是否接受？ | 未答。否決的話走 SP-6.7 的變體 B |
 
 ### 已有答案（保留在此以免重問）
 
@@ -1060,7 +1064,8 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 | 2 | ~~🔴 是否放行 `setReaction?(kind)`~~ | **2026-09-18 經人類授權放行**，且裁定不擴充 `Emotion`（擴了會污染 `severityToEmotion` 的純函式語意）。理由逐字記在 `src/avatar/AvatarController.ts` 的 `setReaction` 註解 |
 | 3 | ~~🔴 深藍斗篷不符亮度夾制~~ | **2026-09-20 裁定：提高明度至 L ≥ 0.10，navy 色相不變。** 見 SP-0.7 |
 | 4 | ~~🔴 齊瀏海 vs 眉窗露出~~ | **2026-09-20 裁定：提高瀏海下緣至 Y ≤ 0.255。** 見 SP-0.7 |
-| 7 | ~~情緒衰減~~ | **已實作**（3 分鐘後回 calm，`MascotPanel.tsx`）。不再是 open question |
+| 7 | ~~情緒衰減~~ | **已實作**（3 分鐘後回 calm，`MascotPanel.tsx`）。⚠️ 2026-09-21 實測發現它與告警翻轉週期的交互作用會讓 pending 表情看不到，見 `docs/measurements.md` M-3 與 `remaining-plan.md` 的 B7-6 |
+| 6 | ~~🔴 panel 版面重排由誰在哪一階段做~~ | **已於 2026-09-21 做完**（A3-5）。方形 stage、SP-1.9 的 dpr 監聽、左圖右 feed 都已落地 |
 | 12 | ~~外部 URL 這個 panel option 要不要留~~ | **留。** 2026-09-20 實查容器內 Grafana 的 `defaults.ini`：`content_security_policy = false`（預設**關閉**），且即使打開，template 的 `img-src` 是 **`* data:`** —— 不擋任何外部網域圖片。所以它不是「一個永遠失敗的選項」。⚠️ 未做「開啟 CSP」的對照實測，結論取自設定檔原文；SP-7.16 的「自訂圖，對齊未驗證」標示仍然必要 |
 
 ---
@@ -1087,7 +1092,10 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
    需要一條帶 `for` duration 的翻轉規則 —— 正是 ADR-004〈待驗風險 6〉點名未測的那一項。
 7. **「sandbox 開啟時語音還能不能用」仍未驗**（ADR-004 Accepted 時留下的兩處缺口之一）。
    這影響 SP-8.10 的 fallback 路徑實際會不會被走到。
-8. **`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定**。不影響任何機械檢查。
+8. ~~**`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定**~~
+   **【2026-09-21 寫定：用 `docs/sprite/`】** 實查 `git ls-files docs` **無 `docs/specs/`** ——
+   git 不追蹤空目錄，它只存在於某一台機器的工作樹上，對任何 clone 的人都不存在。
+   沒有東西需要合併。
 
 ---
 
@@ -1241,7 +1249,13 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 - 幾何驗證為**預期內路徑**不是例外處理：`naturalWidth === naturalHeight` 且能被 3 整除；兩張圖尺寸必須相同；`img.onerror` 需有獨立分支（跨網域 URL 在 Grafana 下可能撞 CSP/CORS，此時 §幾何檢查根本跑不到）。
 - `panelOptions` 的 `directionsImgUrl` / `reactionsImgUrl` 預設值**必須是空字串**，由 `SpriteController` 在空字串時取 `spriteAssets.ts` 的 import 值 —— production 建置的檔名是 `[hash][ext]`，不得寫死路徑字串。
 - **不要**新增 `src/images.d.ts`：`.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`，再加一份會得到 `TS2300: Duplicate identifier 'src'` 並弄紅 `tools/asp-test.sh` 的 typecheck。
-- `MascotPanel` 側必須配合的四件事（不在控制器內，但控制器的行為依賴它們）：(1) 把 `setEmotion` 從 `onStart: () => {}` 改成 `onStart: (plan) => { ...; avatarRef.current?.setEmotion(plan.emotion); }` —— `SpeakerEvents.onStart` 本來就把 plan 傳出來了，現行程式碼把它丟掉，導致一批三則時臉定在 `plans[0]` 的情緒長達 42 秒；(2) enqueue 時那次 `setEmotion` **不能刪**（`enableTTS === false` 時 `speakerRef.current` 是 null、`onStart` 永不觸發）；(3) `gazeCell(dx, dy, gazeRef.current, { ...DEFAULT_GAZE, deadZonePx: Math.round(side * 0.25) })` —— 現行呼叫沒傳第四參數；(4) pending 訊號由 `MascotPanel` 直接讀 `data.alertState.state` 後轉呼叫 `setReaction`，**不繞經 `panelAlerts.evaluate`**（它對 pending 回 `[]` 是正確行為，不可改）。
+- `MascotPanel` 側必須配合的四件事（不在控制器內，但控制器的行為依賴它們）——
+  **四項全部已完成，逐條記狀態免得有人再做一次**：
+  (1) ✅ `onStart: (plan) => { ...; setEmotion(plan.emotion) }`（`de98011`，有測試釘住）；
+  (2) ✅ enqueue 時那次 `setEmotion` 保留著（`enableTTS === false` 時 `onStart` 永不觸發，刪了臉就不會動）；
+  (3) ✅ `deadZonePx` 已傳第四參數，公式住在 `spriteSheet.ts` 的 `gazeDeadZonePx()`（`de98011` + A3-5）；
+  (4) ✅ pending 由 `MascotPanel` 直接讀 `data.alertState.state`，**不繞經 `panelAlerts.evaluate`**
+  （A1-2，2026-09-21；有三條測試釘住，其中一條直接斷言 `fetchRules` 一次都沒被呼叫）。
 
 ---
 
@@ -1414,4 +1428,6 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
   ⚠️ 限制：結論取自設定檔原文，**未做「開啟 CSP」的對照實測**。
   `img.onerror` 仍必須當成預期內分支處理（SP-8.7）—— 網路失敗與 CORS 是另一回事。
 - **「sandbox 開啟時語音還能不能用」仍未驗**（ADR-004 Accepted 時明文留下的兩處缺口之一，headless chromium 無聲線）。這不影響素材，但影響 SP-8.10「從未收到 setMouthOpen 時用格 4 定速 flap」這條 fallback 路徑實際會不會被走到。
-- **`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定。** 純粹是文件擺放慣例，不影響任何機械檢查，但值得一次講定免得日後兩處各長一半。本規格暫用 `docs/sprite/`。
+- ~~**`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定。**~~
+  **【2026-09-21 寫定】** `docs/specs/` 不在版控裡（git 不追蹤空目錄），對 clone 的人不存在。
+  一律用 `docs/sprite/`。

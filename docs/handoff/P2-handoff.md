@@ -1,7 +1,18 @@
 # P2 交接：待人類裁定事項
 
-> 產出日期 2026-09-16 ｜ 對應 commit `d428af1` ｜ ADR-004 狀態 `FIRM`
+> 產出日期 2026-09-16 ｜ 對應 commit `d428af1` ｜ ADR-004 當時狀態 `FIRM`
 > **本檔不改任何程式碼，也不自行修訂 ADR-004。** ADR 狀態與內容變更需人類授權。
+>
+> ## ⚠️ 2026-09-21 逐條校對：**這份文件的大部分內容已經有答案了**
+>
+> ADR-004 已於 **2026-09-18 升 Accepted**（5 個 POC gate 全 PASS）。
+> 下面每一節都補了狀態標記。**照著未標記狀態的舊文字做，會把已經對的東西改壞** ——
+> 例如把 `flap.ts` 拆掉重寫、白砍一次 Grafana volume、或重開一個已經走完的架構三選一。
+>
+> 仍然有效、仍需人類處理的只剩兩件：
+> 1. **`WEBHOOK_SECRET` 輪換**（§三的 🔴，AI 不代處理，至今未做）。
+> 2. **contactpoints / policies 的去留**（ADR-004 決策 7 vs 計畫 P3 的矛盾，
+>    兩造逐字並列在 `docs/ROADMAP.md`〈未解決的衝突〉，追蹤於 `remaining-plan.md` 的 B3）。
 
 P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證。
 以下是 P2 刻意**沒有**做、需要你裁定的事。分三份。
@@ -10,7 +21,9 @@ P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證
 
 ## 一、ADR-004 修訂提案（三處）
 
-P2 期間的實查推翻了 ADR-004 的三處內容。**提案而非逕改**。
+~~P2 期間的實查推翻了 ADR-004 的三處內容。**提案而非逕改**。~~
+✅ **三處皆已於 2026-09-17 併入 ADR-004 正文**（該 ADR 現為 Accepted）。
+下面保留為提案的原文與理由，**不要再提一次**。
 
 ### 1. §1 的 Grafana 版本寫法
 
@@ -60,7 +73,7 @@ P2 期間的實查推翻了 ADR-004 的三處內容。**提案而非逕改**。
 
 ## 三、需要你決定的事
 
-### 🔴 會反向決定 `src/core/` 存廢的架構分叉（最重要）
+### ~~🔴 會反向決定 `src/core/` 存廢的架構分叉（最重要）~~ ✅ **已走 (b)，P4 已完成**
 
 `alertState` 只給 `{id, dashboardUID, panelId, state}`，**不含 alertname、severity、summary**。
 也就是說 `src/core/severity.ts` 與 `format.ts` 在這條路徑上**沒有輸入**。三選一：
@@ -71,13 +84,22 @@ P2 期間的實查推翻了 ADR-004 的三處內容。**提案而非逕改**。
 | (b) | 另呼叫 `getBackendSrv().get('api/prometheus/grafana/api/v1/rules')` 取細節 | core/ 全部留用，但該端點已被 `.asp-fact-check.md` 標為**中高風險**（無官方文件保證） |
 | (c) | 完全退回 `fieldConfig.thresholds` 自算 | core/ 留用，但放棄真 alert 語意（`for` duration 等） |
 
-這題不決定，P4 就沒辦法動工。
+~~這題不決定，P4 就沒辦法動工。~~
 
-### 🟡 破壞性操作，需你授權（P3）
+✅ **已選 (b) 並實作完成**：`src/sources/rulesFetcher.ts`（打端點）+ `panelAlerts.ts`（雙軌：
+`alertState` 當觸發、rules 端點當內容）。`src/core/` **全部留用**，273 行零修改存活。
+端點的「中高風險」標記仍然成立，但降級路徑已實作**並於 2026-09-21 實測四種失敗形狀**
+（見 `docs/measurements.md` M-1）。**這題不要再開一次。**
 
-`monitoring/` 的 Grafana 11.4.0 → 13.2.2 需要 `docker volume rm augur-monitoring_grafana-data`。
-理由充分（零個手建 dashboard、13.0 的 unified storage migration 不可降版），
-但這是破壞性操作，且 admin 密碼會回到 `.env` 初始值。**P2 沒有執行。**
+### ~~🟡 破壞性操作，需你授權（P3）~~ ❌ **這條是錯的，不要照做**
+
+~~`monitoring/` 的 Grafana 11.4.0 → 13.2.2 需要 `docker volume rm augur-monitoring_grafana-data`。~~
+
+❌ **實測推翻（ADR-004:232-233）：升版\*\*不需要\*\*砍 volume，11.4.0 → 13.2.2 乾淨遷移完成。**
+原判定是靜態推理（「13.0 的 unified storage migration 不可降版」）而非實測，不成立。
+
+照舊文字做的後果：白砍一次 volume、admin 密碼回到 `.env` 初始值、
+現有的 provisioned dashboard 與告警歷史全部消失 —— **而且完全沒有必要**。
 
 ### 🔴 敏感資訊，AI 不代處理
 
@@ -87,6 +109,10 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 
 同時 `monitoring/grafana/provisioning/alerting/{contactpoints,policies}.yml` 要不要清，
 **ADR-004 決策 7 寫的是「monitoring/ 全套保留」，與計畫 P3 的刪除指示互相矛盾** —— 需裁定。
+
+⏳ **仍未裁定（2026-09-21）。** 兩造的逐字原文已並列在 `docs/ROADMAP.md`〈未解決的衝突〉，
+附三條可能的解；追蹤於 `docs/handoff/remaining-plan.md` 的 B3。
+`WEBHOOK_SECRET` 的輪換**也仍未做**，且那件事不需要等上面的裁定。
 
 ### ✅ 已處理（2026-09-16 review 後）
 
@@ -141,7 +167,7 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 | 中文 `onboundary` | **會觸發，詞級**：77 字 21 次，`charLength` 1–14，頻率 1.53 次/秒 |
 | 15 秒截斷 | **未重現** —— 連續發聲 90 秒未中斷 |
 
-### ⚠️ 這推翻 ADR-004 決策 4 的一個前提（需你授權修訂 ADR）
+### ~~⚠️ 這推翻 ADR-004 決策 4 的一個前提（需你授權修訂 ADR）~~ ✅ **已併入 ADR-004 並實作**
 
 ADR-004 決策 4 寫「嘴型改用 `onboundary` 做 word-level 開合，**或** speaking 期間循環播固定幾格」，
 而 review 進一步主張 **MVP 砍掉 boundary 模式**，理由是「boundary 模式下 speaking 每秒翻轉 5 次以上，
@@ -151,6 +177,9 @@ ADR-004 決策 4 寫「嘴型改用 `onboundary` 做 word-level 開合，**或**
 在這個節奏下，boundary 驅動嘴型不但可行，還比定速循環好 ——
 `charLength` 直接給出這一組的字數（1–14），可以讓長組多擺幾下、短組只擺一下；
 `charIndex` 另可驅動播報 feed 的逐詞高亮。
+
+✅ **P4 採用了這個建議並已實作**（`src/avatar/flap.ts`，`charLength` 決定**擺動次數**）。
+**不要照 §四「MVP 砍掉 boundary 模式」那一行做** —— 那一行是被本節推翻的舊主張。
 
 **建議的 P4 做法**（取代 review 的「砍掉 boundary」）：以 boundary 事件為**同步點**，
 在兩個事件之間跑一個嘴型循環，循環次數由 `charLength` 決定。
@@ -206,15 +235,24 @@ D2（六態映射）、D4（ruleUID fingerprint）、D8（no_data option）**依
 fingerprint 改用 `alert:panel:${panelId}:${kind}`，不提 ruleUID。
 
 **avatar 層**：
-- **MVP 砍掉 boundary 模式**（ADR-004 決策 4 已明碼標價接受定速循環）
+- ~~**MVP 砍掉 boundary 模式**~~ ❌ **已作廢，不要照做。**
+  本檔 §三點五 的實測推翻了它所依據的假設（假設每秒翻轉 5 次以上，**實測 1.53 次/秒**）。
+  程式走的是 boundary 驅動（`src/avatar/flap.ts`，檔頭寫明理由）。照這一行做會把 `flap.ts` 拆掉重寫。
 - 介面補**可選**成員 `setMouthOpen?(open: number): void` 承接幀級嘴型 ——
   這樣未來若有拿得到 audio buffer 的 TTS，振幅 lip-sync 只要實作這個成員就能回來，
   不必再動一次契約
 - watchdog 觸發路徑必須**先 `synth.cancel()` 再 finish**，否則只是把「卡住且看得出來」
   變成「卡住且看不出來」
 - `chunkText` 依時長 ≤10s 切
+  ⏳ **未實作，且依據已弱化**（§三點五：實測 90 秒連續發聲未截斷）。
+  該節建議改為「本機聲線不切段、`localService === false` 才切段」——
+  **本機聲線那一半等於現況**，遠端那一半未實作也未驗（手上沒有遠端聲線）。
+  追蹤於 `remaining-plan.md` 的 B7-2。
 
-**dedup**：需新增 `forget(fingerprint)`，不要靠副作用達成。
+**dedup**：~~需新增 `forget(fingerprint)`，不要靠副作用達成。~~
+❌ **已作廢。** `shouldSpeak` 對 `resolved` 的處理**本來就是** `lastFiring.delete(key)` 後回 true
+（`src/core/dedup.ts`）—— 那不是「副作用」，那是 resolved 綁狀態的實作本體。
+另開一支 `forget()` 會讓同一件事有兩個入口，而其中一個沒有人呼叫。
 
 **P4 必須 POC 實測、不可推論的四項**：
 `recovering` 的語意（`keep_firing_for` 期間 vs 已恢復觀察期，兩種語意下 flap 行為完全相反）、
@@ -228,6 +266,9 @@ boundary event 對中文 voice 是否觸發及粒度、Chrome「約 15 秒無聲
 並先決定裁切構圖（胸上 vs 全身）。
 另更正一處事實：`assets/layers/` 實際是 **6 張** `part_*.png` + 1 張 `_preview_segmentation.png`（預覽圖），
 不是先前文件寫的「7 張分層」。
+⚠️ **該目錄已於 2026-09-21 整個退出版控**（出處不可考，見 `docs/asset-provenance.md`）。
+比例錨點的要求仍然成立且已落實在 `docs/sprite/sprite-sheet-spec.md` §2，
+風格依據改為 `live2d-template-spec-v1.md` §7 的文字 + SP-6.0 的色票表。
 
 ---
 
@@ -235,5 +276,11 @@ boundary event 對中文 voice 是否觸發及粒度、Chrome「約 15 秒無聲
 
 **G-ADR004-2b（真 Windows 端到端）目前無法執行。** Windows 側實查：
 9182（windows_exporter）、6121（AIRI）、3001（bridge）**皆無 listener**。
+（6121 / 3001 已不相干 —— AIRI 與 bridge 都隨 ADR-004 廢除了。剩下的只有 9182。）
+
+⚠️ **2026-09-21 補：在裝 exporter 之前還有一個硬前置已經做完，但要知道它存在** ——
+`rules-perf.yml` / `rules-security.yml` 那 8 條真規則先前**沒有** `__dashboardUid__` /
+`__panelId__` 註解，`alertState` 到不了任何 panel。A5-4 已補上並在 POC dashboard
+加了 panel 4 / 5 綁它們。所以現在「裝好 exporter 就能驗」才是真的。
 在裝好 `windows_exporter` 之前跑不了 —— 這也是把 always-firing 的 `vector(1)` 規則
 升為 G-ADR004-2 骨幹的正確性佐證。
