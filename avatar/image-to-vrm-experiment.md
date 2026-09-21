@@ -6,7 +6,7 @@
 
 ## 用哪張圖去試
 
-- 銀藍占卜師:`../live2d/_archive/layerwork/_source.png`(= `_archive/.../a1-augur-calm` 那張)
+- 銀藍占卜師（⚠️ 該圖已於 2026-09-21 退出版控，本機仍在；色票見 `docs/sprite/sprite-sheet-spec.md` SP-6.0）
 - 或娜美風:`../live2d/_archive/nami/_preview.png`(組合圖)
 - **要求**:單一角色、正面、乾淨背景、最好全身 A-pose(半身也行,但腿/腳會被 AI 腦補)。
 

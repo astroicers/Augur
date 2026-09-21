@@ -43,7 +43,7 @@
 
 ### A3 — 拆層 + 補遮擋
 - **首選工具:See-through**（`github.com/jtydhr88/ComfyUI-See-through`,本地 ComfyUI、MIT、免費）。唯一同時做到**真語意分層**(19–24 層,自動拆前後髮/左右眼/眼白)+ **真 inpaint 補遮擋**(每層含被帽兜/瀏海遮住的隱藏像素)+ 直出**分層 PSD**。對 Augur 的連帽斗篷遮擋是決定性能力。
-  - **輸入**:用我已做好的去背圖 [`assets/a1-augur-calm-cutout.png`](../assets/a1-augur-calm-cutout.png)。
+  - **輸入**:原為 `assets/a1-augur-calm-cutout.png`，**該檔已於 2026-09-21 退出版控**（本機仍在）。
   - **VRAM 雷**:預設吃 12GB+,768×1376 在 4070 12GB 邊界內、解析度拉高會吃緊(**請實測**)。**跑拆層前先停掉 `llama-server`**,否則與它搶同一張 GPU、重演 WebGPU 餓死(見 runbook 已知雷)。
 - **退路(不想架 ComfyUI)**:雲端 `imagetolayers.com`(no-code、有補遮擋、出 PSD,匯出吃 credits)或 `komiko.app`(出散 PNG 需自拼)。
 - **我已產的對照**:色彩分區 prepass [`assets/layers/`](../assets/layers/) 與 [`live2d/scripts/a3_prepass.py`](scripts/a3_prepass.py)(色塊級,僅供對照,非語意層)。
@@ -116,9 +116,9 @@ VRoid Studio(免費)捏一個銀藍髮/紫眸占卜師 → 匯出 `.vrm` → AIR
 | 檔 | 用途 |
 |---|---|
 | [`live2d-template-spec-v1.md`](live2d-template-spec-v1.md) | 規格(部件/參數/4 表情/prompt/打包);§3 錨點/§7 外觀已錨定 A1 |
-| [`assets/a1-augur-calm.png`](../assets/a1-augur-calm.png) | 核准的 A1 calm 立繪(768×1376) |
-| [`assets/a1-augur-calm-cutout.png`](../assets/a1-augur-calm-cutout.png) | 去背透明圖(餵拆層工具) |
-| [`assets/layers/`](../assets/layers/) | 色彩分區 prepass(對照用) |
+| ~~`assets/a1-augur-calm.png`~~ | A1 calm 立繪(768×1376)。**已於 2026-09-21 退出版控**，色票見 `docs/sprite/sprite-sheet-spec.md` SP-6.0 |
+| ~~`assets/a1-augur-calm-cutout.png`~~ | 去背透明圖。**同上，已退出版控** |
+| ~~`assets/layers/`~~ | 色彩分區 prepass。**同上，已退出版控** |
 | [`scripts/a3_prepass.py`](scripts/a3_prepass.py) | 去背 + 色彩分區 |
 | [`scripts/check_layers.py`](scripts/check_layers.py) | 圖層覆蓋率/破洞驗收 |
 

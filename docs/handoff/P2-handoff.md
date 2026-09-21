@@ -124,7 +124,7 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 |---|---|---|
 | `.env.example`（20 行 AIRI 設定）與 `docs/sample-grafana-firing.json` | **兩個都沒動** | 不在 ADR-004 廢除清單內，但 ADR-004 正文點名 `.env.example` 是「dormant 污染設定面」的反例。刪或留？ |
 | plugin 版本號 | 暫取 `0.1.0` | 腳手架預設 `1.0.0`。它會注入 `dist/plugin.json`，對外可見。5 個 POC gate 全未跑，1.0.0 名實不符 |
-| `src/img/logo.svg` | 維持腳手架預設 | 要不要換成 `assets/a1-augur-calm-cutout.png` 衍生圖（路徑必須落在 `src/` 底下） |
+| `src/img/logo.svg` | 維持腳手架預設 | ~~換成 A1 衍生圖~~ —— A1 已於 2026-09-21 退出版控。改為：等 sprite 交付後由 master frame 裁一張，路徑須落在 `src/` 底下 |
 
 ---
 
@@ -183,19 +183,14 @@ review 要求 `chunkText` 依時長 ≤10s 切。實測 90 秒連續發聲未截
 | 產製路徑 | **先跑可讀性實測再決定**。委外行情 USD 50–150（`live2d/_archive/DEPRECATED.md` 記載），委外須一併取得書面著作權讓與 |
 | 角色設定（capelet 太暗、瀏海蓋住眉窗） | 建議一併改 —— 不論誰畫都要重畫，現在改免費，畫完再改就是重畫 |
 
-### 🔴 硬 blocker：等你回報
+### ✅ ~~硬 blocker：A1 出處~~ —— 已於 2026-09-21 解決
 
-`assets/a1-augur-calm.png` **是 AI 生成的**，而 `docs/asset-provenance.md` 的出處與授權兩欄至今空白。
-那張圖**已經在公開的 Apache-2.0 repo 裡**（`7539cfb` 就進去了）。
+專案主人確認想不起來當初用的生成式服務。依 `docs/asset-provenance.md` 自己的規則
+（出處不明一律不進版控），A1 與其衍生分層共 11 檔（約 7.6 MB）退出版控。
 
-**你要做的**：實際讀該生成式服務的官方條款對「輸出歸屬」的規定，把**結論、一級來源 URL、
-查證日期**逐字寫進 `docs/asset-provenance.md`。
-
-⚠️ **不能只寫「見 `.asp-fact-check.md`」** —— 那個檔被根 `.gitignore` 排除，
-公開 repo 的讀者取不到。這是 ASP 鐵則四的範疇，也是 AI 不該代答的事。
-
-**在你回報之前**：sprite 素材即使畫好也**不得進版控**（依 `asset-provenance.md`
-自己訂的「出處不明一律不進版控」）。規格與程式可以繼續做，交付不行。
+**角色不變** —— 它的定義是 `live2d-template-spec-v1.md` §7 的文字描述加上
+規格 **SP-6.0 的色票表**（刪檔前從各分層量出來的 16 個 hex 值與相對亮度），
+兩者都是本專案自己的產物。
 
 ### ⏳ 進行中：可讀性實測
 

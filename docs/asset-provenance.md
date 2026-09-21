@@ -9,10 +9,29 @@
 
 | 路徑 | 內容 | 出處 | 授權 | 備註 |
 |---|---|---|---|---|
-| `assets/a1-augur-calm.png`<br>`assets/a1-augur-calm-cutout.png` | Augur 角色「銀藍占卜師」立繪，768×1376 | ⚠️ **不可考**（見下方調查） | ⚠️ **待專案主人確認** | 專案自有的原創角色，非第三方既有角色 |
-| `assets/layers/part_*.png`（6 張） | 上述立繪經 l2d-factory 拆出的分層 | 由上一列衍生 | 同上 | `_preview_segmentation.png` 為拆層預覽 |
+
 | `live2d/_archive/nami/layout.json`<br>`live2d/_archive/nami/manifest.json` | 純座標與 z-order，**無美術資料** | 自產（拆層工具輸出） | 隨 repo Apache-2.0 | 對應的 34 張圖已移除，見下 |
 | `src/img/logo.svg` | plugin 圖示 | `@grafana/create-plugin` 7.11.0 腳手架 | Apache-2.0（隨腳手架） | 尚未替換成自有圖示 |
+
+## A1 已退出版控（2026-09-21）
+
+專案主人確認**想不起來當初用的是哪個生成式服務**，依本文件自己的規則
+（出處不明一律不進版控）裁定把 A1 與其衍生分層退出版控。
+
+**退出的 11 個檔案**（約 7.6 MB）：`assets/a1-augur-calm.png`、
+`assets/a1-augur-calm-cutout.png`、`assets/layers/` 的 6 張 `part_*.png` 與
+`_preview_segmentation.png`、`live2d/_archive/layerwork/_source.png`（與 A1 位元組相同）、
+`live2d/_archive/layerwork/_cutout.png`。原檔仍在本機，只是不進版控。
+
+**角色沒有消失。** 它的定義是兩份本專案自己的產物：
+`live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述，
+以及 `docs/sprite/sprite-sheet-spec.md` **SP-6.0 的色票表**
+（刪檔前從各分層量測出來的 16 個 hex 值與相對亮度）。
+畫師拿的本來就是文字與色票，不是拿 A1 去描。
+
+**為什麼不是「留著並接受風險」**：這個 repo 是公開的 Apache-2.0。
+「大概沒問題」不是可以寫進出處欄的東西，而出處欄寫不出來的資產不該在裡面 ——
+那條規則是這份文件自己訂的，`live2d/_archive/nami/` 那 36 檔就是沒守它的代價。
 
 ## A1 出處調查（2026-09-20）
 

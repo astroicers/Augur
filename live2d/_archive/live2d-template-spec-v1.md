@@ -27,7 +27,10 @@
 
 ---
 
-## §3 比例錨點（基準 = `assets/a1-augur-calm.png` · 估值待校正）
+## §3 比例錨點（基準 = ~~`assets/a1-augur-calm.png`~~ · 估值待校正）
+
+> ⚠️ 基準圖已於 2026-09-21 退出版控。本節的絕對像素錨點對新 sprite **已作廢**
+> （見 `docs/sprite/sprite-sheet-spec.md` SP-0.3），僅存歷史。
 
 所有角色(Phase B)都會被正規化對齊到這組錨點(SOP 的 B2);因此**先用核准的 A1 calm 基準圖量一次、凍結**。
 
@@ -151,7 +154,11 @@ Live2D rigging. Plain solid background / transparent. High resolution, vertical.
 
 > `[CHARACTER_APPEARANCE]` 由核准的 A1 圖反推(髮型/髮色/眼睛/服裝/配件等),填實後凍結,確保 Phase B 產出同一角色族系。
 
-### 已凍結角色外觀（v1 · A1 = `assets/a1-augur-calm.png`）
+### 已凍結角色外觀（v1）
+
+> **這一段就是角色的定義。** 原基準圖 `assets/a1-augur-calm.png` 已於 2026-09-21
+> 退出版控，但下面這段文字是本專案自己的產物、不受影響；
+> 對應的色票已量測並記在 `docs/sprite/sprite-sheet-spec.md` SP-6.0。
 
 把下面這段填入上方 prompt 的 `[CHARACTER_APPEARANCE]`(已核准):
 
