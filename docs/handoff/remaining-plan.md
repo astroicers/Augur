@@ -225,7 +225,7 @@ git 不追蹤空目錄——它只存在於這台機器的工作樹，對任何 
 
 **前置**：無。
 
-### A1-1 建 MascotPanel 測試骨架
+### A1-1 建 MascotPanel 測試骨架 ✅ **已完成（2026-09-21）**
 
 全專案 43 個測試**沒有一個碰 `MascotPanel.tsx`**——`tools/asp-test.sh:23-25` 的註解自己承認
 「panel 本體沒有任何測試，typecheck 與 lint 是它們唯一的機械保護」。
@@ -472,7 +472,7 @@ expr 層優先序（click > 非 calm 情緒 > pending > 隱藏）、
 **不**寫 `spriteAssets.ts`（兩行 png import 會讓 webpack build 失敗，等素材）。
 **MIN_TESTS 同步。規模**：中
 
-### A3-4 jest png moduleNameMapper
+### A3-4 jest png moduleNameMapper ✅ **已完成（2026-09-21）**
 
 **前置**：A1-1（理由見驗收）。
 

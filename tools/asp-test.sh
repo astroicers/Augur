@@ -20,9 +20,10 @@ cd "$(dirname "$0")/.." || exit 1
 
 command -v jq >/dev/null 2>&1 || { echo 'asp-test: jq 不存在，無法產生測試痕跡'; exit 1; }
 
-# 閘門不能只看 jest —— jest 只覆蓋 src/core/，panel 本體（module.ts /
-# SimplePanel.tsx / panelOptions.ts）沒有任何測試。typecheck 與 lint 是它們
-# 唯一的機械保護，必須一起進閘，否則一個壞掉的 PanelPlugin 註冊可以完整通過 commit。
+# 閘門不能只看 jest —— jest 覆蓋不到 module.ts 與 panelOptions.ts
+# （`SimplePanel.tsx` 是腳手架的檔，早就不存在了，原註解寫錯）。
+# MascotPanel 自 2026-09-21 起有三條接線測試，但 PanelPlugin 的註冊本身仍然只有
+# typecheck 與 lint 在擋 —— 一個壞掉的 setPanelOptions 不會讓任何測試紅。
 # 逐項各自記錄，不共用一個旗標 —— .asp-test-result.json 的 summary 是 ASP hook
 # 唯一會讀的痕跡，把 sprite 的失敗寫成「typecheck 未過」比不寫更糟。
 GATE_OK=true
@@ -59,9 +60,9 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 13 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6）。
+# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 13 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 + components/MascotPanel 3）。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=49
+MIN_TESTS=52
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
