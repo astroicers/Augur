@@ -33,6 +33,36 @@
 「大概沒問題」不是可以寫進出處欄的東西，而出處欄寫不出來的資產不該在裡面 ——
 那條規則是這份文件自己訂的，`live2d/_archive/nami/` 那 36 檔就是沒守它的代價。
 
+### 做到哪裡（2026-09-21，誠實記）
+
+**已做**：一次普通的 `git rm --cached` commit 把 11 個檔移出索引，並在 `.gitignore`
+釘住五條路徑防止再度加入。原檔留在本機磁碟（已 gitignore），另有一份離線備份。
+
+**沒做**：歷史沒有改寫。這 11 個 blob 在 `14a481d` 起算的 24 個 commit 的 tree 裡仍然存在，
+clone 下來的人用 `git log --all -- assets/` 挖得到，而 `feat/grafana-mascot-panel`
+已經推上 GitHub。所以現況精確的說法是「**不再提供**」而不是「**拿掉**」。
+
+**要做到「拿掉」需要什麼**：`git filter-branch --index-filter` 覆寫分支上全部 24 個 commit，
+再 `--force-with-lease` 推蓋 `origin/feat/grafana-mascot-panel`。代價有三：
+
+1. 24 個 commit 的 SHA 全變。本 repo 文件目前引用了其中 5 個
+   (`fbd81f4` / `de98011` / `9911b00` / `596f9db` / `dabb3f3`，散在 ADR-001、
+   `sprite-sheet-spec.md`、`remaining-plan.md`)，全數失效 —— 可機械重映，但要一起改。
+2. 屬 CLAUDE.md 鐵則明文列名的毀滅性操作（`git push` / `rebase`），需人類逐次授權；
+   本機 auto mode 分類器亦直接擋下 `filter-branch`。
+3. GitHub 端 force-push **不保證真的刪掉** —— 被覆寫的 commit 仍可用 SHA 取回，
+   要徹底清除得另外請 GitHub Support 處理。換句話說這一步買到的是
+   「一般 clone 拿不到」，不是「世界上不存在」。
+
+**建議（仍待裁定）**：值得做，而且**趁分支 land 進 `main` 之前做**。
+理由是時間窗：現在清只影響一支未合併的 feature 分支；併進 `main` 之後再清，
+對象就變成 `main`，成本量級不同。與 nami 那次是同一個邏輯。
+
+**與 nami 那次的差別**在風險性質而非規則寬嚴：nami 是可辨識的**第三方角色**，
+風險是著作權侵害，且當時分支尚未推送、改寫成本近乎零；A1 是本專案的**原創角色**，
+風險僅在於「產生它的服務其條款如何規定輸出歸屬」—— 那是條款問題不是侵權問題。
+兩者都該清，但急迫性不同。
+
 ## A1 出處調查（2026-09-20）
 
 `assets/a1-augur-calm.png` 是整個角色設定的根，值得把查過什麼寫下來，

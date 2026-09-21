@@ -24,6 +24,16 @@ live2d/_archive/nami/*.png
 live2d/_archive/nami/library/
 live2d/_archive/nami/parts/
 
+# A1 生成式素材 —— 產生它的服務、以及該服務對輸出歸屬的條款，已查不可考
+# （調查全文見 docs/asset-provenance.md）。角色本身是本專案原創，風險不在侵權而在條款未知；
+# 已於 sprite-sheet-spec SP-6.0 把色票萃取成資料，角色設定不再依附這些圖檔。
+# 本機保留供參考，但**不要再進版控**，除非出處補得回來。
+assets/a1-augur-calm.png
+assets/a1-augur-calm-cutout.png
+assets/layers/
+live2d/_archive/layerwork/_source.png
+live2d/_archive/layerwork/_cutout.png
+
 # ---- 以下由 @grafana/create-plugin 7.11.0 腳手架帶入（P2 合併）----
 # yarn / pnp
 .pnp.*
