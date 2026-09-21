@@ -4,8 +4,16 @@
   "name": "Mascot",
   "id": "augur-mascot-panel",
   "info": {
-    "keywords": ["panel"],
-    "description": "",
+    "keywords": [
+      "panel",
+      "mascot",
+      "alert",
+      "speech",
+      "tts",
+      "avatar",
+      "accessibility"
+    ],
+    "description": "Puts a 2D sprite mascot on your dashboard that watches the cursor, reacts to clicks, and reads the panel alert state out loud using the browser Web Speech API. No backend required.",
     "author": {
       "name": "Augur"
     },
