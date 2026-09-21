@@ -15,7 +15,9 @@
     "test:unit": "jest --maxWorkers=2",
     "server:down": "docker compose -f monitoring/docker-compose.yml down",
     "server:logs": "docker compose -f monitoring/docker-compose.yml logs -f grafana",
-    "check:jssuffix": "bash tools/check-js-suffix.sh"
+    "check:jssuffix": "bash tools/check-js-suffix.sh",
+    "check:sprites": "node tools/check-sprite-sheets.mjs",
+    "check:sprites:selftest": "node tools/check-sprite-sheets.selftest.mjs"
   },
   "author": "Augur",
   "license": "Apache-2.0",

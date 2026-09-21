@@ -23,13 +23,35 @@ command -v jq >/dev/null 2>&1 || { echo 'asp-test: jq 不存在，無法產生�
 # 閘門不能只看 jest —— jest 只覆蓋 src/core/，panel 本體（module.ts /
 # SimplePanel.tsx / panelOptions.ts）沒有任何測試。typecheck 與 lint 是它們
 # 唯一的機械保護，必須一起進閘，否則一個壞掉的 PanelPlugin 註冊可以完整通過 commit。
+# 逐項各自記錄，不共用一個旗標 —— .asp-test-result.json 的 summary 是 ASP hook
+# 唯一會讀的痕跡，把 sprite 的失敗寫成「typecheck 未過」比不寫更糟。
 GATE_OK=true
+FAILED=''
 echo '--- typecheck ---'
-npm run --silent typecheck || GATE_OK=false
+npm run --silent typecheck || { GATE_OK=false; FAILED="$FAILED typecheck"; }
 echo '--- lint ---'
-npm run --silent lint || GATE_OK=false
+npm run --silent lint || { GATE_OK=false; FAILED="$FAILED lint"; }
 echo '--- .js 副檔名守門 ---'
-bash tools/check-js-suffix.sh || GATE_OK=false
+bash tools/check-js-suffix.sh || { GATE_OK=false; FAILED="$FAILED js-suffix"; }
+
+# sprite 素材驗收（SP-7.13）。素材未交付時這一步印 sentinel 並回 0，成本近乎零。
+echo '--- sprite 素材 ---'
+SPRITE_OUT=$(node tools/check-sprite-sheets.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprites"; }
+echo "$SPRITE_OUT" | tail -3
+# 四種結局各自有字，不要用「已驗」概括 —— 「manifest 壞掉」與「素材通過」
+# 寫成同一句，等於把 SP-7.11 特地分出來的退出碼分級在痕跡裡抹掉。
+case "$SPRITE_OUT" in
+  *'SPRITE-CHECK: NOT-DELIVERED'*) SPRITE_SUM='sprites: 未交付' ;;
+  *'SPRITE-CHECK: PASS'*)          SPRITE_SUM='sprites: 通過' ;;
+  *'SPRITE-CHECK: TOOL-ERROR'*)    SPRITE_SUM='sprites: 工具或格式錯誤' ;;
+  *)                               SPRITE_SUM='sprites: 素材違規' ;;
+esac
+
+# sprite 工具自身的回歸測試。它驗的交付物還不存在，在素材進來之前，
+# 這是唯一在維持那十幾條檢查誠實的東西（合成基準全綠 + 逐條變異體紅在該紅的地方）。
+# 約 16 秒；若日後覺得太貴，搬去 CI 是可接受的取捨，但不要靜默拿掉。
+echo '--- sprite 工具自測 ---'
+node tools/check-sprite-sheets.selftest.mjs | tail -2 || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 
 echo '--- jest ---'
 # 先刪：jest 沒起來時不會寫這個檔，殘留的舊檔會被誤當成本輪結果。
@@ -57,11 +79,12 @@ if [ "$GATE_OK" = true ] && [ "$JEST_OK" = true ]; then
   PASSED=true
 else
   PASSED=false
-  [ "$GATE_OK" = true ] || SUM="typecheck/lint/js-suffix 未過；$SUM"
+  [ "$GATE_OK" = true ] || SUM="未過：${FAILED# }；$SUM"
 fi
+SUM="$SUM；$SPRITE_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-sprite-sheets + sprite-selftest + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1

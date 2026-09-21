@@ -62,3 +62,5 @@ live2d/_archive/layerwork/_cutout.png
 .eslintcache
 # ---- P2 新增：jest --json 的中繼輸出（tools/asp-test.sh 用）----
 .jest-result.json
+# ---- A3 新增：sprite 檢查的診斷產出（SP-7.10 明文要求不得寫進 src/）----
+.sprite-check/
