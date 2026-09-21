@@ -9,6 +9,9 @@
  * 斷言**紅的正好是那一條**。只驗「壞素材會紅」是不夠的 ——
  * 那連「每一條都恆紅」這種壞掉的檢查都分辨不出來。
  *
+ * 本檔也順帶涵蓋 SP-V.1 盲測頁的出題與計分（第 7 節）。放在一起而不是另開一支，
+ * 是為了不在 commit 閘門上多加一個步驟 —— 兩者都是「sprite 交付工具自身的回歸測試」。
+ *
  * 其中「行列顛倒」那一組是規格 SP-7.3 自己點名的失敗模式：
  * 身體相同、格 4 中性、兩兩相異全部滿足，A/B/D 全綠，但吉祥物看反方向。
  * 它是這支腳本存在的主要理由，所以額外斷言另外三條**維持綠**。
@@ -22,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 import { decodePng, encodePng, encodeNonConformingPng, PngFormatError } from './lib/png.mjs';
 import { buildManifest, buildSheets, S, SHEET } from './lib/syntheticSheet.mjs';
+import { CENTER_CELL, buildQuestions, score, verdict } from './blind-test/scoring.mjs';
 import * as C from './lib/spriteChecks.mjs';
 import { runCheck, SENTINEL, ToolError } from './check-sprite-sheets.mjs';
 
@@ -356,6 +360,50 @@ console.log('\n[6] SP-7.12 / SP-7.13 的負向要求');
   // process.argv 只允許用於「是否被當成進入點執行」的判定，不得用來解析旗標
   const argvUses = (code.match(/process\.argv/g) || []).length;
   ok('process.argv 只被用在進入點判定（2 處）', argvUses <= 2, `實際 ${argvUses} 處`);
+}
+
+// ===========================================================================
+console.log('\n[7] SP-V.1 盲測的出題與計分');
+// ---------------------------------------------------------------------------
+{
+  let seed = 1;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const q = buildQuestions(rnd);
+  const per = {};
+  q.forEach((c) => (per[c] = (per[c] || 0) + 1));
+  ok('每個非中央格 4 題、共 32 題', q.length === 32 && Object.values(per).every((n) => n === 4));
+  ok('中央格不出題（它沒有正確答案）', !(CENTER_CELL in per));
+  ok('題序被洗過（不是逐格連排）', q.slice(0, 8).some((c, i) => i > 0 && c !== q[i - 1]));
+
+  ok('全對 → 通過', score(q, q.slice()).passed);
+
+  const withNulls = q.map((c, i) => (i % 2 === 0 ? null : c));
+  const rNull = score(q, withNulls);
+  ok('「不確定」計為答錯（SP-V.1 明文）', rNull.overallPct === 50 && !rNull.passed);
+  ok('誤判去向記錄「不確定」', rNull.confusion.some((c) => c.gotLabel === '不確定'));
+
+  // 第二條門檻存在的理由：七個方向全對、一個全錯 → 整體 87.5% 仍須未通過
+  const oneBad = q.map((c) => (c === 6 ? 7 : c));
+  const rBad = score(q, oneBad);
+  ok('整體 87.5% 但單一方向 0% → 未通過', rBad.overallOk && !rBad.perDirectionOk && !rBad.passed,
+    `整體 ${rBad.overallPct}% / 最弱 ${rBad.worst.pct}%`);
+  ok('回饋說得出「被誤判成什麼」', rBad.confusion[0].wantLabel === '左下' && rBad.confusion[0].gotLabel === '正下');
+
+  // 門檻邊界：規格寫的是「≥85%」與「低於 60%」，所以 85.0 與 60.0 都是通過
+  const w = (pct) => ({ pct, label: 'x' });
+  ok('整體 85.0 過 / 84.9 不過', verdict(85.0, w(100)).overallOk && !verdict(84.9, w(100)).overallOk);
+  ok('單方向 60.0 過 / 59.9 不過', verdict(100, w(60.0)).perDirectionOk && !verdict(100, w(59.9)).perDirectionOk);
+
+  let threw = false;
+  try {
+    score(q, q.slice(0, 5));
+  } catch {
+    threw = true;
+  }
+  ok('題數與答案數不符時丟錯而非靜默計分', threw);
 }
 
 console.log(`\n${passed} 通過 / ${failed} 失敗`);

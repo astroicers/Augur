@@ -17,7 +17,9 @@
     "server:logs": "docker compose -f monitoring/docker-compose.yml logs -f grafana",
     "check:jssuffix": "bash tools/check-js-suffix.sh",
     "check:sprites": "node tools/check-sprite-sheets.mjs",
-    "check:sprites:selftest": "node tools/check-sprite-sheets.selftest.mjs"
+    "check:sprites:selftest": "node tools/check-sprite-sheets.selftest.mjs",
+    "blindtest": "node tools/blind-test/serve.mjs",
+    "blindtest:fixture": "node tools/blind-test/make-fixture.mjs"
   },
   "author": "Augur",
   "license": "Apache-2.0",
