@@ -7,7 +7,7 @@ import type { BroadcastPlan, Emotion } from '../core/types';
 import { meetsMin } from '../core/severity';
 import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
-import { createPanelAlertSource, type PanelAlertSource } from '../sources/panelAlerts';
+import { createPanelAlertSource, type AlertStateLike, type PanelAlertSource } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
 import { createSpeaker, type Speaker } from '../speech/speaker';
 import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
@@ -148,6 +148,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [scope, setScope] = useState<{ cross: boolean; reason: string }>({ cross: false, reason: '偵測中' });
   const [lastClick, setLastClick] = useState<string | null>(null);
   const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1));
+  // ⚠️ speaking 先前**只經 avatarRef.setSpeaking 送出去，React 側沒留** ——
+  // 而 pending 的顯示條件含「未播報」，沒有這個 state 就判不出來。
+  const [speaking, setSpeaking] = useState(false);
+  const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
+  const pendingShownRef = useRef(false);
+  const lastRawStateRef = useRef<string | null>(null);
 
   /**
    * SP-1.9：視窗被拖到另一台 dpr 不同的螢幕時，`devicePixelRatio` 會變，
@@ -173,6 +179,29 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
   const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice } = options;
 
+  /**
+   * `alertState.state` 的原值。
+   *
+   * ⚠️ **不繞經 `panelAlerts.evaluate`** —— 它對 pending 回 `[]` 是**正確行為**
+   * （pending 與 alerting 共用 fingerprint，先播 pending 會讓真的燒起來那一刻被 dedup
+   * 吞掉，把最重要的事件降級成「可能要燒」）。pending 是**表情**不是**播報**，
+   * 兩者走不同的路，這是刻意的分岔不是重複讀取。
+   */
+  const rawAlertState = (data as unknown as { alertState?: AlertStateLike }).alertState?.state ?? null;
+
+  /**
+   * 觀測出口（A2 唯一的量測管道）。記下 `alertState.state` 每次**變動**的時戳。
+   * 永久顯示而非藏在 panel option 後面，理由與 scope chip 相同 ——
+   * 看不見的降級等於沒有降級，看不見的狀態等於量不到。
+   */
+  useEffect(() => {
+    if (rawAlertState === lastRawStateRef.current) {
+      return;
+    }
+    lastRawStateRef.current = rawAlertState;
+    setStateSeenAt(new Date().toLocaleTimeString());
+  }, [rawAlertState]);
+
   // ---- avatar ----
   useEffect(() => {
     const host = hostRef.current;
@@ -190,6 +219,34 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       avatarRef.current = null;
     };
   }, []);
+
+  /**
+   * pending 反應。三個條件缺一不可：
+   *  - `state === 'pending'`：alert rule 的 `for` duration 期間
+   *  - `emotion === 'calm'`：它不該跟 critical 搶同一張臉
+   *  - `!speaking`：播報當下嘴與眉都在動，再疊一張緊繃臉只會互相打架
+   *
+   * **只在轉換時呼叫 `setReaction`**（`pendingShownRef`）。每次依賴變動都無條件
+   * 呼叫 `setReaction(null)` 會把正在顯示的 click 反應（420ms）掃掉。
+   *
+   * ⚠️ **這個 effect 必須宣告在上面的 avatar mount effect 之後。** React 依宣告順序
+   * 跑 effect，放在前面的話第一次 mount 時 `avatarRef.current` 還是 null 而提早 return，
+   * 之後依賴沒再變就**永遠不會補跑** —— 症狀是 pending 表情整個功能靜默失效。
+   * 這是實作時真的犯過的錯，由 MascotPanel.test.tsx 的第一條 pending 測試抓到。
+   */
+  useEffect(() => {
+    const a = avatarRef.current;
+    if (!a?.setReaction) {
+      return;
+    }
+    const show = rawAlertState === 'pending' && emotion === 'calm' && !speaking;
+    if (show === pendingShownRef.current) {
+      return;
+    }
+    pendingShownRef.current = show;
+    a.setReaction(show ? 'pending' : null);
+  }, [rawAlertState, emotion, speaking]);
+
 
   // 情緒衰減。沒有這個，一則 resolved 播完後臉會頂著閃光停到下一次告警。
   useEffect(() => {
@@ -315,6 +372,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           setEmotion(plan.emotion);
           avatarRef.current?.setEmotion(plan.emotion);
           avatarRef.current?.setSpeaking(true);
+          setSpeaking(true);
           // 引擎不吐 boundary 時的 fallback（ADR-004 決策 4 保留）。
           // 收到第一個 boundary 就會被 boundary() 接管。
           flapRef.current?.idle();
@@ -322,6 +380,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         onEnd: () => {
           flapRef.current?.stop();
           avatarRef.current?.setSpeaking(false);
+          setSpeaking(false);
           setPending(speakerRef.current?.pending() ?? 0);
         },
         // 實測中文為詞級 boundary。charLength 決定**擺動次數**而非振幅
@@ -336,6 +395,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           setSpeechErr(e);
           flapRef.current?.stop();
           avatarRef.current?.setSpeaking(false);
+          setSpeaking(false);
         },
       },
     });
@@ -360,7 +420,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     }
     busyRef.current = true;
 
-    const alertState = (data as unknown as { alertState?: { dashboardUID?: string } }).alertState;
+    const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
 
     void source
       .evaluate(alertState, alertState?.dashboardUID)
@@ -426,6 +486,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         {pending > 0 && <span className={styles.chip}>佇列 {pending}</span>}
         <span className={styles.scopeChip} title={scope.reason || '看得到其他 panel'}>
           {scope.cross ? '全頁追蹤' : '限本 panel'}
+        </span>
+        <span
+          className={styles.scopeChip}
+          title="props.data.alertState.state 的原值（@internal）。實測可達的只有 alerting / pending / ok；它是黏著的，永不回 undefined。"
+          data-testid="alert-state-chip"
+        >
+          alertState: {rawAlertState ?? '—'}
+          {stateSeenAt ? ` @${stateSeenAt}` : ''}
         </span>
         {roomy && (
           <button className={styles.btn} onClick={unlock} type="button">

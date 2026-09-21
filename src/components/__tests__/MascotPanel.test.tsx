@@ -75,6 +75,7 @@ function props(over: {
 }
 
 const ALERTING = { state: 'alerting', panelId: 7, dashboardUID: 'dash-1' };
+const PENDING = { state: 'pending', panelId: 7, dashboardUID: 'dash-1' };
 const OK = { state: 'ok', panelId: 7, dashboardUID: 'dash-1' };
 
 beforeEach(() => {
@@ -160,4 +161,79 @@ test('(c) onStart 用的是正在念的那一則的 emotion，不是 plans[0]', 
   });
   expect(setEmotion).toHaveBeenLastCalledWith('warning');
   setEmotion.mockRestore();
+});
+
+// ---------------------------------------------------------------------------
+// A1-2：pending 反應與觀測出口
+// ---------------------------------------------------------------------------
+
+test('pending：calm 且未播報時顯示，播報中不顯示，離開即清除', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+
+  const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+  await settle();
+  // ⚠️ 這條**不得**繞經 panelAlerts.evaluate —— 它對 pending 回 [] 是正確行為，
+  // pending 是表情不是播報。所以 fetchRules 一次都不該被呼叫。
+  expect(mockedFetch).not.toHaveBeenCalled();
+  expect(setReaction).toHaveBeenLastCalledWith('pending');
+
+  // 播報中不顯示：情緒仍是 calm，變的只有 speaking —— 刻意用 calm 的 plan 隔離出這一個條件
+  setReaction.mockClear();
+  act(() => {
+    capturedEvents?.onStart?.({ text: '測試', emotion: 'calm' } as BroadcastPlan);
+  });
+  expect(setReaction).toHaveBeenLastCalledWith(null);
+
+  // 播完回來
+  setReaction.mockClear();
+  act(() => {
+    capturedEvents?.onEnd?.({ text: '測試', emotion: 'calm' } as BroadcastPlan);
+  });
+  expect(setReaction).toHaveBeenLastCalledWith('pending');
+
+  // 離開 pending 即清除
+  setReaction.mockClear();
+  view.rerender(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  expect(setReaction).toHaveBeenLastCalledWith(null);
+  setReaction.mockRestore();
+});
+
+test('pending：依賴變了但顯示條件沒變時不碰 setReaction —— 否則會掃掉 click 反應', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+
+  render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  setReaction.mockClear();
+
+  // ⚠️ 這條測試的第一版是「同樣的 alertState 再 rerender 三次」，**那沒有分辨力** ——
+  // `rawAlertState` 還是同一個字串，effect 的依賴根本沒變，有沒有轉換守門都不會被呼叫。
+  // 真正會出事的是「依賴變了、但顯示條件從頭到尾都是 false」：
+  // 情緒與 speaking 都動了，而 pending 一直不該顯示。沒有守門的話這裡會吐一次
+  // `setReaction(null)`，正好把使用者剛點下去、還在 420ms 內的 click 反應掃掉。
+  act(() => {
+    capturedEvents?.onStart?.({ text: 'x', emotion: 'critical' } as BroadcastPlan);
+  });
+  await settle();
+  expect(setReaction).not.toHaveBeenCalled();
+  setReaction.mockRestore();
+});
+
+test('觀測出口：chip 顯示 alertState.state 的原值', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+  await settle();
+  expect(view.getByTestId('alert-state-chip').textContent).toContain('pending');
+
+  view.rerender(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  expect(view.getByTestId('alert-state-chip').textContent).toContain('ok');
+
+  // alertState 不存在時顯示 — 而不是消失。它是黏著的、永不回 undefined，
+  // 所以「看到 —」本身就是「這個 dashboard 的四個前置條件沒滿足」的訊號。
+  view.rerender(<MascotPanel {...props({})} />);
+  await settle();
+  expect(view.getByTestId('alert-state-chip').textContent).toContain('—');
 });

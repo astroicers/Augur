@@ -255,7 +255,7 @@ P2 當初拒補這條測試的理由逐字是「production 端對 `src/core/` �
 七個 suite 相加（dedup 7 + emotion 3 + format-plan 4 + severity 4 + panelAlerts 13 + gaze 5 + flap 7）也是 43，兩者同步。
 它是**每一個新增測試的步驟裡都必須順手做的一件事**，已寫進各該步驟的驗收條件。
 
-### A1-2 接 pending 反應（同時就是 A2 需要的觀測出口）
+### A1-2 接 pending 反應（同時就是 A2 需要的觀測出口）✅ **已完成（2026-09-21）**
 
 在 `MascotPanel` 加一個直接讀 `data.alertState.state` 的 effect：
 值為 `'pending'` 且 `emotion === 'calm' && !speaking` 時呼叫 `avatarRef.current?.setReaction?.('pending')`，
