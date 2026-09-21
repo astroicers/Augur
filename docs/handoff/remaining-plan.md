@@ -314,7 +314,7 @@ panel 3 設 `repeatFiringMin: 1`。
 **註**：實查兩個 mascot panel 都已有 1 個 query target、dashboard 時間範圍是 `now-15m → now`，
 ADR-004 決策 2 的四個硬前提在 POC dashboard 上已滿足，這一步不會動到它們。
 
-### A2-2 pending 轉換逐秒觀察
+### A2-2 pending 轉換逐秒觀察 ⚠️ **部分完成（2026-09-21）** → `docs/measurements.md` M-3（(a) 已答、(b) 情境未被跑到、(c) headless 無語音量不到）
 
 `npm run build && docker compose -f monitoring/docker-compose.yml up -d`，
 用 headless chromium 對 `augur-poc` 的 panel 3 逐秒記錄 **A1-2 的 debug chip 值**與 feed 播報時點。
@@ -336,7 +336,7 @@ ADR-004 決策 2 的四個硬前提在 POC dashboard 上已滿足，這一步不
 **下游**：結論回填 ADR-004〈待驗風險 6〉（**需 B4 授權**）；
 若 (a) 證偽，見第四部分「pending 到不了 panel 怎麼辦」——**那個判斷必須在 B2 發包之前做完**。
 
-### A2-3 rules 端點降級實測
+### A2-3 rules 端點降級實測 ✅ **已完成（2026-09-21）** → `docs/measurements.md` M-1
 
 用 chrome-devtools 對 live Grafana 攔截 `/api/prometheus/grafana/api/v1/rules`，
 分別回 404 / 401 / 空 body / HTML 登入頁各一次。
@@ -349,7 +349,7 @@ ADR-004 決策 2 的四個硬前提在 POC dashboard 上已滿足，這一步不
 結論補進 ADR-004〈查不到〉第 6 項（**需 B4 授權**），先寫進 `.asp-fact-check.md` 並同步一份到版控文件。
 **規模**：小
 
-### A2-4 Firefox / WebKit 跨格滲色量測
+### A2-4 Firefox / WebKit 跨格滲色量測 ⚠️ **Firefox 已完成、WebKit 卡系統相依（2026-09-21）** → `docs/measurements.md` M-2
 
 ⚠️ **這是「新寫」不是原計畫寫的「重跑」**：實查 repo 無 `tests/`、`tools/` 只有
 `asp-test.sh` 與 `check-js-suffix.sh` 兩支 shell、全樹無任何 playwright 測試檔。
@@ -1101,7 +1101,7 @@ SP-7.9 的四張合成聯絡表產出且人工複核過；A–I **九類**全綠
 
 ---
 
-## B7 — 五個一句話裁定的小事【卡在人，但兩種執行路徑都已備好】
+## B7 — 六個一句話裁定的小事【卡在人，但兩種執行路徑都已備好】
 
 單獨列成一條的理由：這幾件事各自只要一句話就能執行，但混進其他 track 會讓它們繼續被忽略
 （`P2-handoff.md` 已經記了它們一輪，至今未動）。
@@ -1185,6 +1185,16 @@ ADR-004 決策 4 原文是「使用本機聲線時不切段；**偵測到遠端�
 若由工具自行決定，下一次就會變成「工具說的算」。
 **解鎖後第一步**：更新 SP-6.0 表、`docs/sprite/sprite-manifest.example.json` 的 `colours.hair`、
 `live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述。全文見規格 **SP-0.8**。
+
+### B7-6 情緒衰減 3 分鐘 vs 告警翻轉週期（新增，2026-09-21 由 A2-2 浮出）
+
+`EMOTION_DECAY_MS` 是 3 分鐘，而 pending 反應的顯示條件是 `emotion === 'calm'`。
+在週期短於 3 分鐘的翻轉告警上，emotion 永遠回不到 calm，**pending 表情只會出現一次**。
+逐秒證據與三條處置選項見 `docs/measurements.md` 的 M-3。
+
+**建議：接受現況**（需要 <3 分鐘的翻轉週期才會出現，而那種規則本身就該被修），
+但若 B2 的素材做好之後 pending 那一格幾乎看不到，回來看這一項。
+**這不是程式錯誤** —— 程式完全照契約做，是兩個各自合理的數字放在一起的後果。
 
 ### B7-4 `.config/AGENTS/` 四個檔的去留（新增，原計畫零提及）
 
