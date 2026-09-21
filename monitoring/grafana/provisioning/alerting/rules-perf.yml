@@ -19,6 +19,11 @@ groups:
           severity: warning
         annotations:
           summary: Windows host CPU usage is high (above 85 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
         data:
           - refId: A
             relativeTimeRange: { from: 600, to: 0 }
@@ -51,6 +56,11 @@ groups:
           severity: warning
         annotations:
           summary: Windows host available memory is low (below 10 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
         data:
           - refId: A
             relativeTimeRange: { from: 600, to: 0 }
@@ -83,6 +93,11 @@ groups:
           severity: warning
         annotations:
           summary: Windows host disk free space is low (below 10 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
         data:
           - refId: A
             relativeTimeRange: { from: 600, to: 0 }

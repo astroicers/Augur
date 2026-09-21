@@ -105,8 +105,34 @@ powershell -ExecutionPolicy Bypass -File .\windows_exporter-install.ps1
 powershell -ExecutionPolicy Bypass -File .\alloy-install.ps1
 ```
 
-> 兩個都需系統管理員（裝服務 + 改防火牆）。Alloy 以 LocalSystem 執行才讀得到 Security 事件。
-> **效能模式只需第 1 支**;Alloy 留到你要安全那半時再裝。
+> 兩個都需系統管理員。**它們各自會做什麼、以及怎麼移除，寫在腳本檔頭。**
+> 摘要：`windows_exporter-install.ps1` 裝 MSI + 註冊 Windows 服務 + 新增一條 inbound 防火牆規則（TCP 9182）；
+> `alloy-install.ps1` 裝 exe + 註冊 Windows 服務（**以 LocalSystem 執行** —— 那是它讀得到
+> Security 事件日誌的原因，也代表它的權限很高），不碰防火牆。
+> **效能模式只需第 1 支**；Alloy 留到你要安全那半時再裝。
+
+### 版本與雜湊（釘住的，不是每次抓最新）
+
+兩支腳本都**釘住版本**並在安裝前比對 SHA256，不符就刪檔並 `throw`。
+`releases/latest` 會讓「今天裝的」與「上週裝的」是不同的二進位，而兩者都自稱通過了同一份驗收。
+
+| 元件 | 釘住的版本 | 資產 | SHA256 來源 | 查證日 |
+|---|---|---|---|---|
+| windows_exporter | `v0.31.8`（release 發布於 2026-07-22） | `windows_exporter-0.31.8-amd64.msi` | 該 release 的 `sha256sums.txt`：<br>`https://github.com/prometheus-community/windows_exporter/releases/download/v0.31.8/sha256sums.txt` | 2026-09-21 |
+| Grafana Alloy | `v1.19.2`（release 發布於 2026-08-26） | `alloy-installer-windows-amd64.exe` | 該 release 的 `SHA256SUMS`：<br>`https://github.com/grafana/alloy/releases/download/v1.19.2/SHA256SUMS` | 2026-09-21 |
+
+**升版的作法**：改腳本裡的 `$version`，去上表的 URL 取新的雜湊填進 `$expectedSha256`，
+並把本表的查證日更新。**不要**改回自動抓最新版。
+
+### 防火牆規則限縮了來源
+
+`windows_exporter` 的那條 inbound 規則帶 `-RemoteAddress 172.16.0.0/12, 192.168.65.0/24, 127.0.0.1`
+（Docker Desktop 的 host-gateway 網段）。Prometheus 是從容器經 `host.docker.internal` 抓的，
+不需要讓網段上任何機器都讀得到 —— `/metrics` 含服務清單、磁碟與網路介面資訊，那是主機的側寫資料。
+
+若你的 Docker 用的網段不在清單內，Prometheus 會抓不到。
+用 `docker network inspect bridge` 查出實際網段後補進腳本的 `$allowedRemote`。
+腳本對**既有規則**會就地收斂（舊版建立的可能是對全部來源開放），不會當作已經好了就跳過。
 
 ## ⚠️ contactpoints / policies：待裁定，目前不通往任何地方
 

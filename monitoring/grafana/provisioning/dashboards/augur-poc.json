@@ -44,9 +44,12 @@
         }
       ],
       "options": {
-        "text": "alertState 探測中",
-        "showSeriesCount": true,
-        "seriesCountSize": "md"
+        "minSeverity": "",
+        "repeatFiringMin": 0,
+        "fallbackSeverity": "critical",
+        "alertLang": "zh",
+        "enableTTS": true,
+        "ttsVoice": ""
       },
       "fieldConfig": {
         "defaults": {
@@ -141,12 +144,125 @@
         }
       ],
       "options": {
-        "text": "flapping",
-        "showSeriesCount": true,
-        "seriesCountSize": "sm"
+        "minSeverity": "",
+        "repeatFiringMin": 0,
+        "fallbackSeverity": "critical",
+        "alertLang": "zh",
+        "enableTTS": true,
+        "ttsVoice": ""
       },
       "fieldConfig": {
         "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "augur-mascot-panel",
+      "title": "Mascot — Windows 效能（rules-perf.yml 3 條）",
+      "description": "panel id 必須是 4 —— rules-perf.yml 的 __panelId__ 綁的是這個數字。query 只為滿足「至少一個 target」這個硬前提；alertState 來自規則綁定而非 query 結果。⚠️ 先載入 dashboard 再建規則的話，hasAlertRules latch 不會更新，必須整頁重新載入。",
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(1)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "keepalive"
+        }
+      ],
+      "options": {
+        "minSeverity": "",
+        "repeatFiringMin": 0,
+        "fallbackSeverity": "critical",
+        "alertLang": "zh",
+        "enableTTS": true,
+        "ttsVoice": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "augur-mascot-panel",
+      "title": "Mascot — Windows 安全（rules-security.yml 5 條）",
+      "description": "panel id 必須是 5 —— rules-security.yml 的 __panelId__ 綁的是這個數字。這五條需要 Loki（docker compose --profile security）與 Windows 端的 Alloy；沒起的話規則停在 No Data 並以 OK 處理，不會誤報。",
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(1)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "keepalive"
+        }
+      ],
+      "options": {
+        "minSeverity": "warning",
+        "repeatFiringMin": 0,
+        "fallbackSeverity": "critical",
+        "alertLang": "zh",
+        "enableTTS": true,
+        "ttsVoice": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
         "overrides": []
       }
     }

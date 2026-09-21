@@ -294,7 +294,7 @@ live Grafana 上 debug chip 如實顯示 `pending` / `alerting` / `normal` 的�
 
 **前置**：A1-2（沒有觀測出口就量不到）。
 
-### A2-1 換掉 POC dashboard 的腳手架殘留 options
+### A2-1 換掉 POC dashboard 的腳手架殘留 options ✅ **已完成（2026-09-21）**
 
 實查 `monitoring/grafana/provisioning/dashboards/augur-poc.json`：
 panel id=1 的 options 是 `{"text": "alertState 探測中", "showSeriesCount": true, "seriesCountSize": "md"}`、
@@ -687,7 +687,7 @@ A5-4 與 B5-2 都會踩到。同時複述第二個硬前提：`plugin.json` **�
 `/home/ubuntu/.claude/asp/hooks/pretooluse-ship-gate.sh` 的 PreToolUse hook，
 而它讀的 `.asp-test-result.json` 被 `.gitignore` 排除——**任何 fork 或 PR 零檢查**。
 
-### A5-1 playwright baseURL 與 `tests/`
+### A5-1 playwright baseURL 與 `tests/` ✅ **已完成（2026-09-21）**
 
 ⚠️ 原計畫寫「補上 baseURL」——實查 `.config/playwright.config.ts:30` **已經是**
 `baseURL: process.env.GRAFANA_URL || 'http://localhost:3000'`。
@@ -715,7 +715,7 @@ A5-4 與 B5-2 都會踩到。同時複述第二個硬前提：`plugin.json` **�
 **對 `tests/` 是零覆蓋**。A2-4 新增的 harness 同理。要補的話是另一件事（擴 tsconfig 或 eslint files），不在本步驟。
 **規模**：中
 
-### A5-2 加 `.github/workflows/ci.yml`
+### A5-2 加 `.github/workflows/ci.yml` ✅ **已完成（2026-09-21）**
 
 內容：`npm ci && npm run typecheck && npm run lint && bash tools/check-js-suffix.sh &&
 node tools/check-sprite-sheets.mjs && npm run test:unit && **npm run build**`
@@ -733,7 +733,7 @@ node 版本三處對齊：實查 `.nvmrc` 寫 24、本機實跑 v22.13、`packag
 **CI 無法設為 required**，所以這一步買到的是「**事後偵測**」而非「阻擋」。驗收文字不要宣稱它是門檻。
 **規模**：中
 
-### A5-3 Grafana 版本變更觸發器
+### A5-3 Grafana 版本變更觸發器 ✅ **已完成（2026-09-21）**
 
 新增 `monitoring/VERIFIED-GRAFANA.txt`（單行記最後通過 G-ADR004-4 的 image tag，目前 `13.2.2`），
 在 `tools/asp-test.sh` 加第五道檢查——grep `docker-compose.yml` 的 `grafana/grafana:` tag 與該檔比對，
@@ -752,7 +752,7 @@ node 版本三處對齊：實查 `.nvmrc` 寫 24、本機實跑 v22.13、`packag
 「180 天後變警告」實際上不會發生。
 **規模**：小
 
-### A5-4 8 條真實 Windows 規則補 annotations（B5-2 的硬前置）
+### A5-4 8 條真實 Windows 規則補 annotations（B5-2 的硬前置）✅ **已完成（2026-09-21）**
 
 實查 `grep -c "__dashboardUid__"`：`rules-poc.yml` 命中 **2**，
 `rules-perf.yml` 命中 **0**（3 條規則）、`rules-security.yml` 命中 **0**（5 條規則）。
@@ -772,7 +772,7 @@ node 版本三處對齊：實查 `.nvmrc` 寫 24、本機實跑 v22.13、`packag
 最後一哩（真的讓 CPU 燒起來）在 B5-2，**但本步驟做完之前 B5-2 做了也沒用**。
 **規模**：中
 
-### A5-5 兩支 PowerShell 加固（B5-2 的前置）
+### A5-5 兩支 PowerShell 加固（B5-2 的前置）✅ **已完成（2026-09-21）**
 
 - (a) 版本由 `releases/latest` 改成 pin 的具體 tag
 - (b) 下載後 `Get-FileHash -Algorithm SHA256` 比對寫死在腳本裡的值，不符就 `throw`

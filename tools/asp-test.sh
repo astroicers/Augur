@@ -51,6 +51,35 @@ esac
 # sprite 工具自身的回歸測試。它驗的交付物還不存在，在素材進來之前，
 # 這是唯一在維持那十幾條檢查誠實的東西（合成基準全綠 + 逐條變異體紅在該紅的地方）。
 # 約 16 秒；若日後覺得太貴，搬去 CI 是可接受的取捨，但不要靜默拿掉。
+# Grafana 版本變更觸發器。跨 panel DOM 是本專案唯一 unsupported 的部分，
+# 而「每次 minor 升版重跑 G-ADR004-4」這條規則原本只活在 ARCHITECTURE.md 的散文裡 ——
+# 升版的人不會去讀那一行。這道檢查把它變成機械的。
+echo '--- Grafana 版本 ---'
+COMPOSE_TAG=$(grep -oE 'grafana/grafana:[0-9.]+' monitoring/docker-compose.yml | head -1 | cut -d: -f2)
+VERIFIED_TAG=$(head -1 monitoring/VERIFIED-GRAFANA.txt 2>/dev/null | tr -d '[:space:]')
+if [ -z "$COMPOSE_TAG" ] || [ -z "$VERIFIED_TAG" ]; then
+  echo "grafana-version: 讀不到 tag（compose='$COMPOSE_TAG' verified='$VERIFIED_TAG'）"
+  GATE_OK=false; FAILED="$FAILED grafana-version"
+  GRAFANA_SUM='grafana: 版本讀不到'
+elif [ "$COMPOSE_TAG" != "$VERIFIED_TAG" ]; then
+  echo "grafana-version: compose 是 $COMPOSE_TAG，最後通過 G-ADR004-4 的是 $VERIFIED_TAG"
+  echo "  → Grafana 版本已變更，需重跑 **G-ADR004-4**（漸進降級）並把新 tag 寫進 monitoring/VERIFIED-GRAFANA.txt"
+  GATE_OK=false; FAILED="$FAILED grafana-version"
+  GRAFANA_SUM="grafana: $COMPOSE_TAG 未驗（上次 $VERIFIED_TAG），需重跑 G-ADR004-4"
+else
+  echo "grafana-version: $COMPOSE_TAG（與 G-ADR004-4 通過時相同）"
+  GRAFANA_SUM="grafana: $COMPOSE_TAG 已驗"
+fi
+
+# ASP 鐵則四的「逾 180 天提醒複查」在本 repo 沒有任何機械承接（無 .asp/）。
+# 這一段只提醒、不擋 —— 外部事實過期是風險不是錯誤。
+FACT_CHECK_DATE='2026-09-16'
+FACT_AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -d "$FACT_CHECK_DATE" +%s) ) / 86400 ))
+if [ "$FACT_AGE_DAYS" -gt 180 ]; then
+  echo "fact-check: ADR-004 的外部事實查證距今 $FACT_AGE_DAYS 天（> 180），建議複查"
+  GRAFANA_SUM="$GRAFANA_SUM；外部事實查證逾 $FACT_AGE_DAYS 天"
+fi
+
 echo '--- sprite 工具自測 ---'
 node tools/check-sprite-sheets.selftest.mjs | tail -2 || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 
@@ -82,10 +111,10 @@ else
   PASSED=false
   [ "$GATE_OK" = true ] || SUM="未過：${FAILED# }；$SUM"
 fi
-SUM="$SUM；$SPRITE_SUM"
+SUM="$SUM；$SPRITE_SUM；$GRAFANA_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-sprite-sheets + sprite-selftest + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1

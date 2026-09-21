@@ -20,6 +20,11 @@ groups:
           severity: warning
         annotations:
           summary: Multiple failed Windows logon attempts detected (possible brute force)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "5"
         data:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
@@ -52,6 +57,11 @@ groups:
           severity: critical
         annotations:
           summary: A Windows user account was locked out
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "5"
         data:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
@@ -84,6 +94,11 @@ groups:
           severity: critical
         annotations:
           summary: The Windows security audit log was cleared
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "5"
         data:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
@@ -116,6 +131,11 @@ groups:
           severity: warning
         annotations:
           summary: A new service was installed on the Windows host
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "5"
         data:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
@@ -148,6 +168,11 @@ groups:
           severity: critical
         annotations:
           summary: Windows Defender detected a malware threat
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "5"
         data:
           - refId: A
             relativeTimeRange: { from: 300, to: 0 }
