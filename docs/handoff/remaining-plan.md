@@ -562,7 +562,7 @@ build 輸出逐字是 `asset README.md 3.23 KiB [from: README.md] [copied]`—�
 （**逐項對照，不接受抽樣**）。
 **規模**：小
 
-### A4-2 刪掉根 README 的 P3 但書、對齊數字
+### A4-2 刪掉根 README 的 P3 但書、對齊數字 ✅ **已完成（2026-09-21）**
 
 實查 `monitoring/docker-compose.yml`：`:43` 已是 `grafana/grafana:13.2.2`、
 `:55` 有 `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=augur-mascot-panel`、
@@ -586,7 +586,7 @@ build 輸出逐字是 `asset README.md 3.23 KiB [from: README.md] [copied]`—�
 `ARCHITECTURE.md` 的測試數等於 `asp-test.sh` 的 `MIN_TESTS`。
 **規模**：小
 
-### A4-3 補 `src/plugin.json` metadata 與 CHANGELOG
+### A4-3 補 `src/plugin.json` metadata 與 CHANGELOG ✅ **已完成（2026-09-21）**
 
 - `src/plugin.json` 第 7–17 行：補 `info.description`（`package.json` 已有現成一句中文）、
   `keywords` 由 `["panel"]` 補上 mascot / alerting / tts / speech、`links` 指向 repo
@@ -598,7 +598,7 @@ build 輸出逐字是 `asset README.md 3.23 KiB [from: README.md] [copied]`—�
 logo 替換不在本步驟（卡在 B1）。
 **規模**：小
 
-### A4-4 寫一則 npm audit 裁決進版控
+### A4-4 寫一則 npm audit 裁決進版控 ✅ **已完成（2026-09-21）** → `docs/dependency-audit.md`
 
 **⚠️ 原計畫要寫進版控的裁決文字，四個技術前提有三個是錯的。**實查逐條：
 
@@ -632,7 +632,7 @@ logo 替換不在本步驟（卡在 B1）。
 降為選做；做的話驗收是 `npm run build && npm run typecheck` 全綠且 `dist/module.js` 大小 **±0 bytes**。
 **規模**：小
 
-### A4-5 把 P5／P6 的剩餘範圍與 P3 的原文指示寫進版控
+### A4-5 把 P5／P6 的剩餘範圍與 P3 的原文指示寫進版控 ✅ **已完成（2026-09-21）** → `docs/ROADMAP.md`
 
 實查 `git ls-files docs` 無任何計畫檔，原文只在未追蹤的 `/home/ubuntu/.claude/plans/markdown-jolly-bird.md`——
 **所有 handoff 文件都在引用一份讀者拿不到的計畫**，而那份計畫裡有一條與已 Accepted 的 ADR 正面衝突（見 B3）。
@@ -644,7 +644,7 @@ logo 替換不在本步驟（卡在 B1）。
 的兩造在 repo 內並列可讀**。
 **規模**：小
 
-### A4-6 重寫 `monitoring/README.md` 為 panel plugin 版
+### A4-6 重寫 `monitoring/README.md` 為 panel plugin 版 ✅ **已完成（2026-09-21）**
 
 實查現況：架構圖、〈接 bridge〉、〈驗證〉、〈疑難排解〉四段都指 `:3001` / `host.docker.internal:3001` / AIRI / contactpoints；
 檔頭自己標了失效警告並說「整份重寫排在 P3」。
@@ -665,7 +665,7 @@ A5-4 與 B5-2 都會踩到。同時複述第二個硬前提：`plugin.json` **�
 照著新的驗證段從零起一次環境能成功看到 panel 念出 `PocAlwaysFiring`。
 **規模**：中
 
-### A4-7 審 `.config/AGENTS/` 四個進版控的 agent 指令檔（原計畫完全沒盤到）
+### A4-7 審 `.config/AGENTS/` 四個進版控的 agent 指令檔（原計畫完全沒盤到）✅ **已完成（2026-09-21）** → 報告在 B7-4
 
 `P2-handoff.md:119` 自承「`.config/AGENTS/` 這批會直接指揮下一個 agent 的指令檔，review 未實質審過內容」。
 實查 `git ls-files .config/AGENTS` 確認四個檔在版控裡：
@@ -1188,7 +1188,48 @@ ADR-004 決策 4 原文是「使用本機聲線時不切段；**偵測到遠端�
 
 ### B7-4 `.config/AGENTS/` 四個檔的去留（新增，原計畫零提及）
 
-依 A4-7 的報告，裁定四個檔留／改／移出版控。與 B7-1 是同一類「什麼該公開」的問題。
+**A4-7 的報告已完成（2026-09-21）。** 四個檔都讀過，逐項如下。
+需要裁定的只有第 2 項 —— 其餘三項的建議都是「留著不動」。
+
+**掃描結果：無本機絕對路徑、無憑證。** `grep` 命中的兩處 `secret` / `credentials`
+都是**關於**機密的建議（「用 `secureJsonData` 存憑證」「不要把憑證 commit 進 repo」），
+不是機密本身。repo 公開這件事不構成問題。
+
+| 檔 | 行數 | 是什麼 | 建議 |
+|---|---|---|---|
+| `instructions.md` | 34 | Grafana plugin 的通用指引：叫 agent 去 grafana.com 抓最新文件（明講「你的訓練資料過期了」）、禁改 `.config/`、禁改 plugin id 與 type、必須用 webpack。 | **留**。與本 repo 根 README 的「禁止手改 `.config/`」一致。唯一的雜訊是「backend 必須用 mage」——本 plugin 沒有 backend（無 `Magefile.go`、無 `pkg/`），那條不適用但無害。 |
+| `e2e-testing.md` | 173 | `@grafana/plugin-e2e` 的寫法指引與跑法。 | **🔴 要改，見下。** |
+| `skills/build-plugin.md` | 53 | 偵測 npm / pnpm / yarn 後建置。 | **留**。本 repo 有 `package-lock.json`，偵測會落在 npm，正確。 |
+| `skills/validate-plugin.md` | 64 | 用 `npx`（優先）或 `docker` 跑官方 plugin validator。 | **留**。注意它會 `docker run --pull=always` 拉映像檔，離線環境會失敗，但它自己有處理 `RUN_ENGINE=none` 的情況。 |
+
+#### 🔴 `e2e-testing.md` 的一個會讓人誤信的指示
+
+第 159 與 169 行逐字教 agent：
+
+```
+GRAFANA_VERSION=<min-supported-version> npm run server
+GRAFANA_IMAGE=grafana-dev GRAFANA_VERSION=<latest-dev-tag> npm run server
+```
+
+**這兩個環境變數在本 repo 沒有作用。** 實查：
+
+- `monitoring/docker-compose.yml:43` 是**寫死**的 `image: grafana/grafana:13.2.2`。
+- `GRAFANA_IMAGE` / `GRAFANA_VERSION` 只對 `.config/docker-compose-base.yaml:9-10` 有效，
+  而那個檔是**刻意閒置**的託管檔（根 README 有記，三個理由）。
+- `npm run server` 指向 `monitoring/docker-compose.yml`。
+
+所以照著做會**靜默跑在 13.2.2 上**，而執行者會相信自己驗過了最低支援版本。
+這比「指令報錯」糟 —— 它產生的是一個假的通過。
+
+**建議處置**：在該檔那兩行旁邊加一段本 repo 專屬的覆寫說明，
+指向 `monitoring/docker-compose.yml` 並說明要改版本得直接改那一行。
+⚠️ 但 `.config/` 是腳手架託管目錄，`create-plugin update` 會覆寫 ——
+所以正確的作法是**不改那個檔**，而是在根 README 或 `docs/` 記一句，
+並在 A5-1 真的寫 e2e 測試時把它寫進註解。
+
+**這一項不需要人類裁定**（它不是「什麼該公開」的問題），已直接排進 A5-1 的驗收條件。
+需要裁定的仍然是原本那題：這四個檔**要不要留在公開版控裡**。
+四個檔都是腳手架帶入、內容是公開文件的摘要，**建議留**。
 **驗收**：一句裁定，四個檔各有著落。**規模**：小
 
 ---
