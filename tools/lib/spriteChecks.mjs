@@ -351,6 +351,76 @@ export function irisCentroid(directions, cell, manifest) {
   return n === 0 ? { n: 0, cx: NaN, cy: NaN } : { n, cx: sx / n, cy: sy / n };
 }
 
+
+/**
+ * 眼窗 E 內虹膜遮罩的連通元件（4-連通），依面積由大到小排序。
+ * 每塊回 `{ area, aspect }`，`aspect` 是 bbox 的長邊 ÷ 短邊。
+ *
+ * ⚠️ **這是 SP-7.3 防偽造的主力，遮罩大小比率做不到這件事。**
+ * 虹膜是兩塊近圓的盤（實測乾淨素材：2 塊、各 454 px、長寬比 1.0）；
+ * 而「在眼窗邊緣塗一條同色像素把質心拉回來」的污染是第三塊長條
+ * （實測 183 px、長寬比 9.4）。兩者在**面積比率**上分不開，在**形狀**上分得很開。
+ */
+function irisComponents(directions, cell, manifest) {
+  const geom = manifest.sheet;
+  const { cellPx } = geom;
+  const E = windowRect(manifest.windows.E, cellPx);
+  const iris = hexToRgb(manifest.colours.iris);
+  const tol = manifest.colours.irisToleranceRgb;
+  const v = cellView(directions, cell, geom);
+  const W = E.x1 - E.x0;
+  const H = E.y1 - E.y0;
+  const mask = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const [r, g, b, a] = v.px(E.x0 + x, E.y0 + y);
+      if (a >= 128 && colourNear(r, g, b, iris, tol)) {
+        mask[y * W + x] = 1;
+      }
+    }
+  }
+  const seen = new Uint8Array(W * H);
+  const comps = [];
+  for (let i = 0; i < W * H; i++) {
+    if (!mask[i] || seen[i]) {
+      continue;
+    }
+    const stack = [i];
+    seen[i] = 1;
+    let area = 0;
+    let x0 = W;
+    let x1 = -1;
+    let y0 = H;
+    let y1 = -1;
+    while (stack.length) {
+      const j = stack.pop();
+      area++;
+      const jx = j % W;
+      const jy = (j / W) | 0;
+      if (jx < x0) { x0 = jx; }
+      if (jx > x1) { x1 = jx; }
+      if (jy < y0) { y0 = jy; }
+      if (jy > y1) { y1 = jy; }
+      const nb = [];
+      if (jx > 0) { nb.push(j - 1); }
+      if (jx < W - 1) { nb.push(j + 1); }
+      if (jy > 0) { nb.push(j - W); }
+      if (jy < H - 1) { nb.push(j + W); }
+      for (const k of nb) {
+        if (mask[k] && !seen[k]) {
+          seen[k] = 1;
+          stack.push(k);
+        }
+      }
+    }
+    const bw = x1 - x0 + 1;
+    const bh = y1 - y0 + 1;
+    comps.push({ area, aspect: Math.max(bw, bh) / Math.min(bw, bh) });
+  }
+  comps.sort((a, b) => b.area - a.area);
+  return comps;
+}
+
 export function checkGazeBinding(directions, manifest) {
   /** @type {Finding[]} */
   const out = [];
@@ -421,13 +491,65 @@ export function checkGazeBinding(directions, manifest) {
       if (ratio < maskLo || ratio > maskHi) {
         out.push({
           id: 'SP-7.3/虹膜遮罩大小',
-          severity: 'error',
+          severity: 'warn',
           sheet: 'directions',
           cell: c,
-          message: `虹膜遮罩 ${centroids[c].n} px 是 master frame（${baseN} px）的 ${ratio.toFixed(2)} 倍，落在 [${maskLo}, ${maskHi}] 之外 —— 眼窗內混進了非虹膜的同色像素，或虹膜被畫成不同大小`,
+          message: `虹膜遮罩 ${centroids[c].n} px 是 master frame（${baseN} px）的 ${ratio.toFixed(2)} 倍，落在 [${maskLo}, ${maskHi}] 之外（這兩個門檻**未經真素材校準**，首版僅記錄）`,
           measured: ratio,
           limit: ratio < maskLo ? maskLo : maskHi,
         });
+      }
+
+      /**
+       * **形狀才是防偽造的主力，面積比率不是。**
+       *
+       * 2026-09-22 複審 + 本機重現：把格 3 換成「看右」的內容，再於眼窗最左端塗
+       * 8 欄（183 px）容差內的虹膜色，質心 Δx 由 +12.00 被拉到 −7.99、遮罩比率 1.202
+       * —— **A–H 全部綠燈**，一格畫反方向的交付就這樣通過了。
+       * 而 SP-7.15 接著要人把診斷表的質心抄進 `irisCentroids` 當回歸基準，
+       * 於是受污染的交付**重新定義了「正確」**。
+       *
+       * ⚠️ 規格原本宣稱「要翻 sign 需要 ≥36% 膨脹，而檢查在 ≥25% 觸發，中間有餘裕」。
+       * **那個數字是錯的**：本機量到 20.2% 就夠（複審在他們的 fixture 上是 10.8%），
+       * 而 1.202 < maskRatioMax 1.25，攻擊窗正好開在兩者之間。
+       *
+       * 更關鍵的是這兩件事**耦合**，面積比率一個數字做不到兩件事：
+       *   要擋住攻擊 → 上限必須 < 1.20
+       *   往下看時虹膜從眼瞼下滑出來、面積合法變大 → 實測 1.35
+       * 調低就誤紅整個下排，調高就放大攻擊窗。所以比率降為 warn，改用形狀。
+       *
+       * 虹膜是兩塊近圓的盤（乾淨素材實測：2 塊、各 454 px、長寬比 1.0），
+       * 而污染是眼窗邊緣的一條長條（183 px、長寬比 9.4）。
+       * 兩者在面積上分不開，在形狀上分得很開 —— 而且形狀對「合法的面積變化」免疫。
+       */
+      const comps = irisComponents(directions, c, manifest);
+      const eyes = comps.slice(0, 2);
+      const strays = comps.slice(2);
+      const strayPx = strays.reduce((a, k) => a + k.area, 0);
+      const smallestEye = eyes.length === 2 ? eyes[1].area : 0;
+      if (strayPx > 0 && smallestEye > 0 && strayPx / smallestEye > 0.1) {
+        out.push({
+          id: 'SP-7.3/眼窗雜塊',
+          severity: 'error',
+          sheet: 'directions',
+          cell: c,
+          message: `眼窗 E 內除了兩隻眼睛之外還有 ${strays.length} 塊虹膜色區域共 ${strayPx} px（較小的那隻眼睛 ${smallestEye} px）—— 眼窗內混進了非虹膜的同色像素`,
+          measured: strayPx / smallestEye,
+          limit: 0.1,
+        });
+      }
+      for (const eye of eyes) {
+        if (eye.aspect > 3) {
+          out.push({
+            id: 'SP-7.3/虹膜不成形',
+            severity: 'error',
+            sheet: 'directions',
+            cell: c,
+            message: `眼窗 E 內有一塊 ${eye.area} px 的虹膜色區域長寬比 ${eye.aspect.toFixed(1)}（上限 3）—— 虹膜應該是近圓的盤，長條代表混進了非虹膜的同色像素`,
+            measured: eye.aspect,
+            limit: 3,
+          });
+        }
       }
     }
   }

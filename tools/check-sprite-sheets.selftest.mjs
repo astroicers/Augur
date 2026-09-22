@@ -700,8 +700,11 @@ const mutants = [
     },
   },
   {
-    name: 'SP-7.3 內容看反方向 + 眼窗污染掩蓋（sign 檢查被騙過，靠遮罩大小擋下）',
-    expect: 'SP-7.3/虹膜遮罩大小',
+    // 改由**形狀**承接。遮罩大小比率擋不住這個 —— 本機重現：塗 8 欄（183 px）時
+    // 質心由 +12.00 被拉到 −7.99、比率 1.202 < 上限 1.25，A–H **全部綠燈**。
+    // 規格原本宣稱「要翻 sign 需要 ≥36% 膨脹」，實測 20.2% 就夠（複審是 10.8%）。
+    name: 'SP-7.3 內容看反方向 + 眼窗污染掩蓋（sign 檢查被騙過，靠形狀擋下）',
+    expect: 'SP-7.3/眼窗雜塊',
     sheets: () => {
       // 格 3 應看左(-12)，畫成看右(+12)，再於眼窗左側畫一片容差內的同色像素
       // 把質心拉回負值 —— 第 3 點的 sign 檢查會被騙過去。
@@ -817,8 +820,63 @@ function occludeIrisTop(s, frac) {
   }
 }
 
+
+/**
+ * 把「非下排」格子的虹膜頂端 frac 塗成眼瞼色 —— 也就是 master frame 自己就被遮著，
+ * 而下排（看下）的虹膜從眼瞼下滑出來、可見面積**合法地變大**。這是動畫的常態畫法。
+ */
+function occludeExceptBottomRow(s, frac) {
+  const IRIS = [0x6a, 0x4f, 0xd0];
+  const LID = [0xe2, 0xc8, 0xb1];
+  for (let cell = 0; cell < 6; cell++) {
+    const ox = (cell % 3) * S;
+    const oy = Math.floor(cell / 3) * S;
+    const d = s.directions.data;
+    const hit = [];
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const o = ((oy + y) * SHEET + (ox + x)) * 4;
+        if (Math.abs(d[o] - IRIS[0]) <= 40 && Math.abs(d[o + 1] - IRIS[1]) <= 40 && Math.abs(d[o + 2] - IRIS[2]) <= 40) {
+          hit.push([y, o]);
+        }
+      }
+    }
+    if (!hit.length) {
+      continue;
+    }
+    const ys = hit.map(([y]) => y);
+    const cut = Math.min(...ys) + (Math.max(...ys) - Math.min(...ys) + 1) * frac;
+    for (const [y, o] of hit) {
+      if (y < cut) {
+        d[o] = LID[0];
+        d[o + 1] = LID[1];
+        d[o + 2] = LID[2];
+      }
+    }
+  }
+}
+
 /** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
 const NON_MUTANTS = [
+  {
+    // ⚠️ 遮罩大小比率的**前提是錯的**。程式註解原本寫「可見面積只會被眼瞼遮掉（變小），
+    // 沒有任何合法的理由讓它比 master frame 變大」—— 那在 master frame 的虹膜
+    // 本身就被上眼瞼遮著時不成立，而那是動畫的常態。往下看時虹膜從眼瞼下滑出來，
+    // 可見面積**合法地變大**：複審實測整個下排 1.35 對上限 1.25，全部硬失敗。
+    //
+    // 更關鍵的是這與防偽造**耦合**，一個數字做不到兩件事：
+    //   要擋住污染攻擊 → 上限必須 < 1.20
+    //   往下看的合法成長 → 1.35（本機模擬 30% 遮擋時是 1.45）
+    // 所以比率降為 warn，硬失敗改由形狀（眼窗雜塊 / 虹膜不成形）承接。
+    name: '往下看時虹膜從眼瞼下滑出、面積合法變大，不得硬失敗',
+    forbid: 'SP-7.3/眼窗雜塊',
+    apply: (s) => occludeExceptBottomRow(s, 0.3),
+  },
+  {
+    name: '同上，也不得被判成虹膜不成形',
+    forbid: 'SP-7.3/虹膜不成形',
+    apply: (s) => occludeExceptBottomRow(s, 0.3),
+  },
   {
     // ⚠️ **這是複審 anchors 面向的兩個 blocker。**
     // SP-2.4 把眼線定義為「左右**瞳心**連線」，而動畫畫法裡上眼瞼一定蓋住虹膜頂端，
@@ -1014,6 +1072,63 @@ function materialise(dir, sheets, patch = {}) {
     code = e instanceof ToolError ? 2 : -1;
   }
   ok('manifest 壞掉 → ToolError（CLI 對應 exit 2）', code === 2);
+}
+
+// ---------------------------------------------------------------------------
+// SP-7.3：能被偽造的量不該當硬失敗，不能被偽造的量才該當。
+//
+// 本機重現的攻擊：把格 3（應看左）的眼窗內容換成格 5（看右），再於眼窗最左端塗
+// N 欄容差內的虹膜色把質心拉回來。塗 8 欄（183 px）時質心由 +12.00 → −7.99、
+// 遮罩比率 1.202（< 舊上限 1.25）—— **A–H 全部綠燈**，一格畫反方向的交付就這樣過了。
+// 而 SP-7.15 接著要人把診斷表的質心抄進 irisCentroids 當回歸基準，
+// 於是受污染的交付重新定義了「正確」。
+//
+// 規格原本宣稱「要翻 sign 需要 ≥36% 膨脹，而檢查在 ≥25% 觸發，中間有餘裕」——
+// 錯的，20.2% 就夠（複審在他們的 fixture 上是 10.8%），攻擊窗正好開在兩者之間。
+// ---------------------------------------------------------------------------
+{
+  const E = C.windowRect(manifest.windows.E, S);
+  const iris = C.hexToRgb(manifest.colours.iris);
+  const paint = (cols) => {
+    const sh = clone(base);
+    const o = (c, x, y) => ((Math.floor(c / 3) * S + y) * SHEET + ((c % 3) * S + x)) * 4;
+    for (let y = E.y0; y < E.y1; y++) {
+      for (let x = E.x0; x < E.x1; x++) {
+        const src = o(5, x, y);
+        const dst = o(3, x, y);
+        for (let k = 0; k < 4; k++) {
+          sh.directions.data[dst + k] = sh.directions.data[src + k];
+        }
+      }
+    }
+    for (let x = E.x0; x < E.x0 + cols; x++) {
+      for (let y = E.y0; y < E.y1; y++) {
+        const p = o(3, x, y);
+        if (sh.directions.data[p + 3] !== 255) {
+          continue;
+        }
+        sh.directions.data[p] = iris[0];
+        sh.directions.data[p + 1] = iris[1];
+        sh.directions.data[p + 2] = iris[2];
+      }
+    }
+    return ids(runAll(sh, manifest));
+  };
+  // 掃過整個攻擊區間 —— 只測 8 欄那一個點的話，下一次調參數時攻擊窗會靜悄悄地
+  // 挪到隔壁欄數而斷言照樣綠。
+  let allCaught = true;
+  const holes = [];
+  for (const cols of [6, 7, 8, 9, 10, 12, 14, 16, 20, 24]) {
+    const got = paint(cols);
+    if (!got.length) {
+      allCaught = false;
+      holes.push(cols);
+    }
+  }
+  ok('SP-7.3 眼窗污染在整個攻擊區間（6–24 欄）都擋得下來', allCaught,
+    `這些欄數全綠：${holes.join(', ')}`);
+  ok('SP-7.3 攻擊的關鍵點（8 欄、比率 1.202、舊碼全綠）紅在形狀而非大小',
+    paint(8).includes('SP-7.3/眼窗雜塊'));
 }
 
 // ---------------------------------------------------------------------------
