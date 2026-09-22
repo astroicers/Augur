@@ -94,7 +94,8 @@ esac
 
 # sprite 工具自身的回歸測試。它驗的交付物還不存在，在素材進來之前，
 # 這是唯一在維持那十幾條檢查誠實的東西（合成基準全綠 + 逐條變異體紅在該紅的地方）。
-# 約 16 秒；若日後覺得太貴，搬去 CI 是可接受的取捨，但不要靜默拿掉。
+# 約 30 秒（2026-09-22 實測；先前註解寫「約 16 秒」已過期）。若日後覺得太貴，
+# 搬去 CI 是可接受的取捨，但不要靜默拿掉。
 # Grafana 版本變更觸發器。跨 panel DOM 是本專案唯一 unsupported 的部分，
 # 而「每次 minor 升版重跑 G-ADR004-4」這條規則原本只活在 ARCHITECTURE.md 的散文裡 ——
 # 升版的人不會去讀那一行。這道檢查把它變成機械的。
@@ -151,7 +152,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=100
+MIN_SELFTEST=103
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)

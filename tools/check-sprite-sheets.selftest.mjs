@@ -201,6 +201,29 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
     };
     ok('IDAT 比 IHDR 宣告的短 → 擋下', threw(tooShort));
     ok('IDAT 比 IHDR 宣告的長 → 擋下（原本靜默截斷接受）', threw(tooLong));
+
+    // ⚠️ **上面那條對 `raw.length !== expected` 這個守衛零鑑別力**，實測：
+    // 把它整條改成 `if (false)` 之後 selftest 仍然 100% 全綠。
+    // 原因是 `+66 bytes` 會先被 `inflateSync` 的 `maxOutputLength`（= expectedRaw + 1）
+    // 擋掉，丟的是別的錯。這個守衛**唯一**獨力承接的溢出量正好是 **+1 byte** ——
+    // 而那個量之前沒有任何測試。
+    ok('IDAT 恰好比宣告的多 1 byte → 仍然擋下（這是長度守衛唯一獨力承接的量）',
+      threw(rebuild(Buffer.alloc(stride * h + 1))));
+
+    // ⚠️ **zlib bomb 守衛（`maxOutputLength`）刻意沒有斷言，理由記在這裡。**
+    //
+    // 它的價值不是「會不會丟錯」—— 拿掉之後照樣丟 PngFormatError（解壓完才發現長度不符）。
+    // 契約是**配置量由 IHDR 宣告的尺寸決定，不由壓縮資料決定**，所以要量的是記憶體。
+    // 獨立腳本量得到（256 MB bomb，檔案只有 255 KB）：
+    //     有守衛 → external +0.3 MB、2 ms、「Cannot create a Buffer larger than 19 bytes」
+    //     沒守衛 → external +255.8 MB、212 ms                      ← 850 倍放大
+    // 但**在本檔裡量不到**：`threw()` 返回時例外已經解開堆疊、緩衝變成不可達，
+    // external 會計在讀取前就歸零，兩側都讀到 ~0。改用 256 MB 也一樣，
+    // 而且讓 selftest 由 16 秒變成 34 秒。
+    //
+    // 一個花 18 秒又沒有鑑別力的斷言不該留，所以這裡只留證據不留斷言。
+    // 要複驗就照上面的數字重跑獨立腳本（`zlib.deflateSync(Buffer.alloc(256<<20))`
+    // 塞進宣告 2×2 的 IDAT，量 `process.memoryUsage().external` 前後差）。
   }
 
   // IEND
@@ -232,6 +255,71 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
       err = e;
     }
     ok('宣告 2147483647×2147483647 → PngFormatError（不是 RangeError）', err instanceof PngFormatError, String(err).slice(0, 80));
+
+    // ⚠️ **上面那條走的是 CRC 檢查，不是尺寸守衛** —— 改了 IHDR 卻沒補 CRC，
+    // 所以 CRC 先丟錯，`width * height * 4 > MAX_RGBA_BYTES` 那條從來沒被執行過。
+    // 實測：把尺寸守衛整條改成 `if (false)` 之後 selftest 仍然 100% 全綠，
+    // 而真正的超大 PNG（CRC 合法）會走到 `new Uint8Array(w*h*4)` 丟裸 RangeError，
+    // CLI 再把它當成未捕捉的堆疊吐出來 —— 正好是那個守衛存在要避免的事。
+    // 這裡把 IHDR 的 CRC 補正確，讓它真的走到尺寸守衛。
+    {
+      const fixed = Buffer.from(png);
+      fixed.writeUInt32BE(0x7fffffff, 16);
+      fixed.writeUInt32BE(0x7fffffff, 20);
+      // IHDR chunk 的版面：簽章 8 bytes(0–7)、length(8–11)、type(12–15)、
+      // data 13 bytes(16–28)、CRC(29–32)。CRC 涵蓋 **type + data** 也就是 12..28。
+      // ⚠️ 這裡第一版寫成 12..24 並把 CRC 寫到 25 —— 位移錯了，於是這條斷言
+      // 仍然走 CRC 檢查而不是尺寸守衛，**因為錯的理由通過**。
+      // 正好是它自己要修的那個毛病；下面那個 mutation 檢查才把它抓出來。
+      const tbl = [];
+      for (let n = 0; n < 256; n++) {
+        let cc = n;
+        for (let k = 0; k < 8; k++) {
+          cc = cc & 1 ? 0xedb88320 ^ (cc >>> 1) : cc >>> 1;
+        }
+        tbl[n] = cc;
+      }
+      let cv = -1;
+      for (let i = 12; i < 29; i++) {
+        cv = tbl[(cv ^ fixed[i]) & 0xff] ^ (cv >>> 8);
+      }
+      fixed.writeUInt32BE((cv ^ -1) >>> 0, 29);
+      let e2 = null;
+      try {
+        decodePng(fixed);
+      } catch (e) {
+        e2 = e;
+      }
+      ok('CRC 合法的超大 IHDR → PngFormatError（不是裸 RangeError）',
+        e2 instanceof PngFormatError, String(e2).slice(0, 90));
+
+      // ⚠️ 上面那條**仍然不是**在測尺寸守衛：2147483647² 會讓 `maxOutputLength`
+      // 的值本身超出 Node 的合法範圍，inflateSync 先丟錯（實測訊息是
+      // 「options.maxOutputLength is out of range」），也被包成 PngFormatError。
+      // 尺寸守衛真正獨力承接的是**中間區段** —— RGBA 超過 256 MiB 上限、
+      // 但 maxOutputLength 仍在合法範圍內。沒有它的話會先配置幾百 MB 才失敗。
+      // 所以這裡比對**訊息**：那是這個守衛的對外契約，也是分辨「哪一條擋下來的」
+      // 唯一可靠的訊號。
+      {
+        const mid = Buffer.from(png);
+        mid.writeUInt32BE(10000, 16);
+        mid.writeUInt32BE(10000, 20); // 10000×10000×4 = 400 MB > 256 MiB
+        let cv2 = -1;
+        for (let i = 12; i < 29; i++) {
+          cv2 = tbl[(cv2 ^ mid[i]) & 0xff] ^ (cv2 >>> 8);
+        }
+        mid.writeUInt32BE((cv2 ^ -1) >>> 0, 29);
+        let e3 = null;
+        try {
+          decodePng(mid);
+        } catch (e) {
+          e3 = e;
+        }
+        ok('10000×10000（400 MB）→ 由尺寸守衛擋下，訊息指名上限',
+          e3 instanceof PngFormatError && /超過上限/.test(String(e3.message)),
+          String(e3 && e3.message).slice(0, 90));
+      }
+    }
   }
 
   const rejects = (opts) => {
@@ -1390,9 +1478,19 @@ console.log('\n[7] SP-V.1 盲測的出題與計分');
   }
 
   // 格號→background-position：頁面與計分共用同一支，頁面不自己抄
-  ok('cellToBackgroundPosition 語意正確（row-major）',
-    cellToBackgroundPosition(0) === '0% 0%' && cellToBackgroundPosition(4) === '50% 50%' && cellToBackgroundPosition(8) === '100% 100%',
-    [0, 4, 8].map(cellToBackgroundPosition).join(' / '));
+  {
+    // ⚠️ **這條原本只測 0 / 4 / 8，而那正好是對角線** —— 轉置下不變的那三格。
+    // 把算式的兩項對調（`${Math.trunc(c/3)*50}% ${(c%3)*50}%`，也就是函式自己的
+    // docstring 點名警告的那個一 token 錯誤），九格裡有六格會變，
+    // 而舊斷言測的三格一格都不在其中：selftest 照樣 100% 全綠、閘門照樣放行，
+    // 而盲測頁每一個非中央方向都會顯示錯的格，完美的交付會得 3/80。
+    // 逐格比對整張表，不要只挑幾格。
+    const WANT = ['0% 0%', '50% 0%', '100% 0%', '0% 50%', '50% 50%', '100% 50%', '0% 100%', '50% 100%', '100% 100%'];
+    const got = Array.from({ length: 9 }, (_, c) => cellToBackgroundPosition(c));
+    const bad = got.map((g, c) => (g === WANT[c] ? null : `格${c}: ${g} ≠ ${WANT[c]}`)).filter(Boolean);
+    ok('cellToBackgroundPosition 九格全部正確（row-major，含六個非對角格）',
+      bad.length === 0, bad.join('; '));
+  }
   {
     const html = fs.readFileSync(path.join(ROOT, 'tools/blind-test/index.html'), 'utf8');
     ok('index.html 不自己抄一份格號算式', !/\(cell % 3\)\s*\*\s*50/.test(html));
