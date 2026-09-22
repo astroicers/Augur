@@ -23,7 +23,17 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { decodePng, encodePng, encodeNonConformingPng, PngFormatError } from './lib/png.mjs';
+import {
+  average,
+  AVERAGE_SPEC_VECTORS,
+  decodePng,
+  encodePng,
+  encodeNonConformingPng,
+  paeth,
+  PAETH_SPEC_VECTORS,
+  PngFormatError,
+} from './lib/png.mjs';
+import { encodeGif } from './lib/gif.mjs';
 import { buildManifest, buildSheets, S, SHEET } from './lib/syntheticSheet.mjs';
 import { CENTER_CELL, buildQuestions, score, verdict } from './blind-test/scoring.mjs';
 import * as C from './lib/spriteChecks.mjs';
@@ -90,6 +100,129 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
   }
   ok('五種 filter type × 四種尺寸（含奇數寬）來回逐位元組相同', allSame);
 
+  // ⚠️ **這一段是 round trip 測不到的部分。**
+  // `paeth()` 同一支函式同時供 encoder 與 decoder，encode→decode 對任何確定性
+  // predictor 都是 identity，所以上面那條「五種 filter type 來回相同」對 predictor
+  // 本身的錯誤 100% 隱形。實證：把 tie-break 的 `<=` 改成 `<`（違反 PNG spec §6.6）
+  // 或把 Average 改成四捨五入，上面那條都照樣全綠，而外部產生的 PNG 會錯十幾個像素。
+  // 下面比對的是**照 spec 虛擬碼手算**的值，不是從本檔實作產生的。
+  const bad = PAETH_SPEC_VECTORS.filter(([a, b, c, want]) => paeth(a, b, c) !== want);
+  ok(
+    `Paeth 對 PNG spec §6.6 的 ${PAETH_SPEC_VECTORS.length} 組手算向量全部相符`,
+    bad.length === 0,
+    bad.map(([a, b, c, w]) => `paeth(${a},${b},${c}) 應為 ${w} 實得 ${paeth(a, b, c)}`).join('; ')
+  );
+
+  const badAvg = AVERAGE_SPEC_VECTORS.filter(([a, b, want]) => average(a, b) !== want);
+  ok(
+    `Average 對 PNG spec §6.5 的 ${AVERAGE_SPEC_VECTORS.length} 組手算向量全部相符（floor 不是四捨五入）`,
+    badAvg.length === 0,
+    badAvg.map(([a, b, w]) => `average(${a},${b}) 應為 ${w} 實得 ${average(a, b)}`).join('; ')
+  );
+
+  // 端到端合成 sheet 一律用 filterType 0，所以被 filter 過的資料列從未走過完整管線。
+  // PIL / libpng / Photoshop 會自適應輸出 1/2/3/4，真實交付物一定含這些列。
+  {
+    let allOk = true;
+    const w = 61;
+    const h = 37;
+    const rgba = new Uint8Array(w * h * 4);
+    for (let i = 0; i < rgba.length; i++) {
+      rgba[i] = (i * 53 + ((i / 4) | 0) * 7) & 0xff;
+    }
+    for (let ft = 1; ft <= 4; ft++) {
+      const back = decodePng(encodePng(w, h, rgba, ft));
+      if (!Buffer.from(back.data).equals(Buffer.from(rgba))) {
+        allOk = false;
+      }
+    }
+    ok('filter type 1–4（非零）的資料列走完整解碼路徑', allOk);
+  }
+
+  // 長度：短要擋、**長也要擋**。原本只擋短，於是 IDAT 比 IHDR 多兩列會被靜默截斷接受。
+  {
+    const w = 8;
+    const h = 8;
+    const png = encodePng(w, h, new Uint8Array(w * h * 4));
+    const chunks = [];
+    let off = 8;
+    while (off + 8 <= png.length) {
+      const len = png.readUInt32BE(off);
+      const type = png.toString('latin1', off + 4, off + 8);
+      chunks.push({ type, start: off, end: off + 12 + len });
+      off += 12 + len;
+    }
+    const idat = chunks.find((c) => c.type === 'IDAT');
+    const zlib = await import('node:zlib');
+    const rebuild = (rawBytes) => {
+      const body = zlib.deflateSync(rawBytes);
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(body.length, 0);
+      head.write('IDAT', 4, 'latin1');
+      // CRC 用本檔 encoder 的同一套（chunk() 不 export，這裡就地算）
+      const table = [];
+      for (let n = 0; n < 256; n++) {
+        let cc = n;
+        for (let k = 0; k < 8; k++) {
+          cc = cc & 1 ? 0xedb88320 ^ (cc >>> 1) : cc >>> 1;
+        }
+        table[n] = cc;
+      }
+      let crcv = -1;
+      const crcBuf = Buffer.concat([head.subarray(4), body]);
+      for (let i = 0; i < crcBuf.length; i++) {
+        crcv = table[(crcv ^ crcBuf[i]) & 0xff] ^ (crcv >>> 8);
+      }
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE((crcv ^ -1) >>> 0, 0);
+      return Buffer.concat([png.subarray(0, idat.start), head, body, crc, png.subarray(idat.end)]);
+    };
+    const stride = w * 4 + 1;
+    const tooLong = rebuild(Buffer.alloc(stride * (h + 2)));
+    const tooShort = rebuild(Buffer.alloc(stride * (h - 1)));
+    const threw = (b) => {
+      try {
+        decodePng(b);
+        return false;
+      } catch (e) {
+        return e instanceof PngFormatError;
+      }
+    };
+    ok('IDAT 比 IHDR 宣告的短 → 擋下', threw(tooShort));
+    ok('IDAT 比 IHDR 宣告的長 → 擋下（原本靜默截斷接受）', threw(tooLong));
+  }
+
+  // IEND
+  {
+    const png = encodePng(8, 8, new Uint8Array(8 * 8 * 4));
+    const threw = (b) => {
+      try {
+        decodePng(b);
+        return false;
+      } catch (e) {
+        return e instanceof PngFormatError;
+      }
+    };
+    ok('IEND 被截掉 → 擋下', threw(png.subarray(0, png.length - 12)));
+    ok('IEND 之後有垃圾 → 擋下', threw(Buffer.concat([png, Buffer.from([1, 2, 3, 4, 5, 6, 7])])));
+  }
+
+  // IHDR 尺寸上界：不得丟 RangeError（呼叫端只認 PngFormatError）
+  {
+    const png = encodePng(2, 2, new Uint8Array(2 * 2 * 4));
+    const huge = Buffer.from(png);
+    huge.writeUInt32BE(0x7fffffff, 16); // IHDR width
+    huge.writeUInt32BE(0x7fffffff, 20); // IHDR height
+    // CRC 會不符 —— 先驗 CRC 擋得下來，再驗 CRC 修好之後尺寸也擋得下來
+    let err = null;
+    try {
+      decodePng(huge);
+    } catch (e) {
+      err = e;
+    }
+    ok('宣告 2147483647×2147483647 → PngFormatError（不是 RangeError）', err instanceof PngFormatError, String(err).slice(0, 80));
+  }
+
   const rejects = (opts) => {
     try {
       decodePng(encodeNonConformingPng(opts));
@@ -101,6 +234,252 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
   ok('colour type 2 被擋下', rejects({ width: 8, height: 8, colourType: 2 }));
   ok('interlace = 1 被擋下', rejects({ width: 8, height: 8, colourType: 6, interlace: 1 }));
   ok('bit depth 16 被擋下', rejects({ width: 8, height: 8, colourType: 6, bitDepth: 16 }));
+}
+
+// ===========================================================================
+console.log('\n[1b] GIF 寫出器（先前是零覆蓋 —— 唯一的斷言是「有四個檔且其中一個是 .gif」）');
+// ---------------------------------------------------------------------------
+/**
+ * 獨立寫的 GIF 讀取器，當 `gif.mjs` 的 oracle。
+ *
+ * **為什麼要自己寫一個**：先前唯一的 GIF 斷言是
+ * `produced.length === 4 && produced.some(f => f.endsWith('.gif'))` ——
+ * 不開檔、不數格、不讀像素。實測兩個突變都讓 selftest 維持全綠而產出任何解碼器
+ * 都打不開的檔：(a) `CLEAR_EVERY` 254→255；(b) `Buffer.from([8])` 改成
+ * `Buffer.from([bits])`（看起來像 cleanup，而且因為出貨呼叫點的調色盤剛好是 8-bit，
+ * **依構造不可能被舊測試看見**）。
+ *
+ * 這裡實作的是**真正的 LZW 解碼**（含字典成長），不是針對「未壓縮」寫法的特例判讀 ——
+ * 特例判讀會跟著編碼器一起錯。
+ */
+function readGif(buf) {
+  if (buf.toString('latin1', 0, 6) !== 'GIF89a') {
+    throw new Error('magic 不是 GIF89a：' + buf.toString('latin1', 0, 6));
+  }
+  const width = buf.readUInt16LE(6);
+  const height = buf.readUInt16LE(8);
+  const packed = buf[10];
+  const hasGct = (packed & 0x80) !== 0;
+  const gctBits = (packed & 0x07) + 1;
+  const gctSize = 1 << gctBits;
+  let off = 13;
+  const gct = [];
+  if (hasGct) {
+    for (let i = 0; i < gctSize; i++) {
+      gct.push([buf[off + i * 3], buf[off + i * 3 + 1], buf[off + i * 3 + 2]]);
+    }
+    off += gctSize * 3;
+  }
+  const frames = [];
+  let loop = null;
+  let pendingDelay = 0;
+  const subBlocks = () => {
+    const parts = [];
+    for (;;) {
+      const n = buf[off++];
+      if (n === 0) {
+        break;
+      }
+      parts.push(buf.subarray(off, off + n));
+      off += n;
+    }
+    return Buffer.concat(parts);
+  };
+  while (off < buf.length) {
+    const b = buf[off];
+    if (b === 0x3b) {
+      off++;
+      break;
+    }
+    if (b === 0x21) {
+      const label = buf[off + 1];
+      off += 2;
+      if (label === 0xf9) {
+        const n = buf[off];
+        pendingDelay = buf.readUInt16LE(off + 2);
+        off += n + 1;
+        if (buf[off] === 0) {
+          off++;
+        }
+      } else if (label === 0xff) {
+        const n = buf[off];
+        const app = buf.toString('latin1', off + 1, off + 1 + 11);
+        off += n + 1;
+        const data = subBlocks();
+        if (app === 'NETSCAPE2.0' && data.length >= 3) {
+          loop = data.readUInt16LE(1);
+        }
+      } else {
+        off += buf[off] + 1;
+        subBlocks();
+      }
+      continue;
+    }
+    if (b !== 0x2c) {
+      throw new Error('未預期的 block 0x' + b.toString(16) + ' @ ' + off);
+    }
+    const fw = buf.readUInt16LE(off + 5);
+    const fh = buf.readUInt16LE(off + 7);
+    const lctFlag = (buf[off + 9] & 0x80) !== 0;
+    off += 10;
+    if (lctFlag) {
+      throw new Error('本編碼器不該產出 local colour table');
+    }
+    const minCodeSize = buf[off++];
+    const data = subBlocks();
+
+    // --- LZW 解碼 ---
+    const clear = 1 << minCodeSize;
+    const end = clear + 1;
+    let codeSize = minCodeSize + 1;
+    let dict = [];
+    const reset = () => {
+      dict = [];
+      for (let i = 0; i < clear; i++) {
+        dict.push([i]);
+      }
+      dict.push(null, null);
+      codeSize = minCodeSize + 1;
+    };
+    reset();
+    let prev = null;
+    const out = [];
+    const clearGaps = [];
+    let sinceClear = 0;
+    let bitPos = 0;
+    const readCode = () => {
+      let v = 0;
+      for (let i = 0; i < codeSize; i++) {
+        const byte = data[bitPos >> 3];
+        if (byte === undefined) {
+          return null;
+        }
+        v |= ((byte >> (bitPos & 7)) & 1) << i;
+        bitPos++;
+      }
+      return v;
+    };
+    for (;;) {
+      const code = readCode();
+      if (code === null || code === end) {
+        break;
+      }
+      if (code === clear) {
+        if (prev !== null) {
+          clearGaps.push(sinceClear);
+        }
+        sinceClear = 0;
+        reset();
+        prev = null;
+        continue;
+      }
+      let entry;
+      if (code < dict.length && dict[code]) {
+        entry = dict[code];
+      } else if (prev) {
+        entry = prev.concat(prev[0]);
+      } else {
+        throw new Error(`INVALID CODE ${code}（已解出 ${out.length} 個索引）`);
+      }
+      out.push(...entry);
+      sinceClear++;
+      if (prev) {
+        dict.push(prev.concat(entry[0]));
+        if (dict.length === 1 << codeSize && codeSize < 12) {
+          codeSize++;
+        }
+      }
+      prev = entry;
+    }
+    frames.push({ width: fw, height: fh, minCodeSize, indices: out, delayCs: pendingDelay, clearGaps });
+  }
+  return { width, height, gct, gctBits, frames, loop };
+}
+
+{
+  const W = 37;
+  const H = 23;
+  const mk = (seed) => {
+    const a = new Uint8Array(W * H * 4);
+    for (let p = 0; p < W * H; p++) {
+      const c = [[24, 27, 31], [240, 224, 208], [64, 80, 128], [200, 40, 40]][(p * seed) % 4];
+      a[p * 4] = c[0];
+      a[p * 4 + 1] = c[1];
+      a[p * 4 + 2] = c[2];
+      a[p * 4 + 3] = 255;
+    }
+    return a;
+  };
+  const frames = [mk(1), mk(3)];
+  const gif = encodeGif({ width: W, height: H, frames, delayCs: 40 });
+  let g = null;
+  let err = null;
+  try {
+    g = readGif(gif);
+  } catch (e) {
+    err = e;
+  }
+  ok('GIF 解得開（獨立 LZW 解碼器）', g !== null, String(err));
+
+  if (g) {
+    ok('尺寸與格數正確', g.width === W && g.height === H && g.frames.length === 2,
+      `${g.width}x${g.height} / ${g.frames.length} 格`);
+    ok('NETSCAPE2.0 無限循環', g.loop === 0, String(g.loop));
+    ok('每格延遲正確', g.frames.every((f) => f.delayCs === 40), g.frames.map((f) => f.delayCs).join(','));
+
+    // LZW min code size：出貨呼叫點的調色盤剛好是 8-bit，所以寫成 `bits` 也會過 ——
+    // 這裡用一個**只有 4 色**的輸入，bits 會是 2，把兩者分開。
+    ok('LZW min code size 恆為 8（不是跟著調色盤大小走）',
+      g.frames.every((f) => f.minCodeSize === 8),
+      'minCodeSize=' + g.frames.map((f) => f.minCodeSize).join(',') + ' / gctBits=' + g.gctBits);
+
+    // 逐像素：解出的索引經全域調色盤還原，必須與輸入的 RGB 逐位元組相同
+    let mismatch = 0;
+    g.frames.forEach((f, fi) => {
+      const src = frames[fi];
+      for (let p = 0; p < W * H; p++) {
+        const c = g.gct[f.indices[p]] || [-1, -1, -1];
+        if (c[0] !== src[p * 4] || c[1] !== src[p * 4 + 1] || c[2] !== src[p * 4 + 2]) {
+          mismatch++;
+        }
+      }
+    });
+    ok('逐像素還原與輸入相同', mismatch === 0, `${mismatch} 個像素不符`);
+
+    // clear code 節奏：解碼端字典每個碼長一格，254 是讓它永遠碰不到 512 的上限
+    const gaps = g.frames.flatMap((f) => f.clearGaps);
+    ok('clear code 每 254 個碼出現一次', gaps.length > 0 && gaps.every((n) => n === 254),
+      '實際間隔：' + [...new Set(gaps)].join(','));
+  }
+
+  // 大圖：跨越數百次 clear。先前的測試只驗過一格 851 像素，碰不到字典成長的邊界。
+  {
+    const N = 400;
+    const big = new Uint8Array(N * N * 4);
+    for (let p = 0; p < N * N; p++) {
+      const v = (p * 7) % 251;
+      big[p * 4] = v;
+      big[p * 4 + 1] = (v * 3) % 251;
+      big[p * 4 + 2] = (v * 5) % 251;
+      big[p * 4 + 3] = 255;
+    }
+    const gif = encodeGif({ width: N, height: N, frames: [big], delayCs: 10 });
+    let bad = -1;
+    try {
+      const g2 = readGif(gif);
+      bad = 0;
+      const f = g2.frames[0];
+      if (f.indices.length !== N * N) {
+        bad = Math.abs(f.indices.length - N * N);
+      }
+    } catch (e) {
+      bad = -1;
+      ok('400×400（約 630 次 clear）解得開', false, String(e).slice(0, 90));
+    }
+    if (bad >= 0) {
+      ok(`400×400（${Math.floor((N * N) / 254)} 次 clear）解出的索引數正確`, bad === 0, `差 ${bad} 個`);
+    }
+  }
 }
 
 // ===========================================================================

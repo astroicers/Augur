@@ -73,6 +73,182 @@ const REQUIRED_MANIFEST_KEYS = [
 
 class ToolError extends Error {}
 
+/**
+ * manifest 的完整驗證表。**每一個會被 deref 的值都必須在這裡有一列。**
+ *
+ * ⚠️ **這張表是 SP-7.12「不提供旁路」唯一的機械承接，而它先前不存在。**
+ * 原本的 `readManifest` 只驗頂層鍵在不在，不看內容。後果不是「錯誤訊息比較差」，
+ * 是**刪掉或拼錯一個欄位等於把那條檢查關掉，而且仍然印 PASS**：
+ *
+ *   - `margins.opaqueFree` 拼成 `opaque_free` → `band = NaN` → 四個邊界比較全 false
+ *     → SP-7.1 的透明帶檢查永不觸發。實測：同一組位元組相同的 PNG，
+ *     正確 manifest 是 `FAIL（9 項素材違規）` exit 1，拼錯之後是 `PASS` exit 0。
+ *   - 刪掉 `luminance.min` / `luminance.max` / `stroke.width` → `NaN > tol` 與
+ *     `L < undefined` 都是 false → 10 個真實違規變成 PASS。實測確認。
+ *
+ * **刪欄位比放寬門檻更強大**：放寬是一筆看得見的 diff，刪掉是整條關閉。
+ * 而 `manifest.sha256` 只涵蓋兩張 PNG、**不涵蓋 manifest 自身**，所以這種編輯是
+ * sha256-clean 的 —— 工具檔頭原本宣稱「改門檻會被 sha256 連帶影響」，那句話是錯的。
+ *
+ * 驗證失敗一律 `ToolError` → exit 2（SP-7.11 的「工具或格式錯誤」），
+ * 而且**一次回報全部**，不是撞一個修一個 —— 填這個檔的人通常是畫師不是工程師。
+ */
+const HEX = /^#?[0-9a-fA-F]{6}$/;
+const SHA256 = /^[0-9a-fA-F]{64}$/;
+
+function validateManifest(m) {
+  const errs = [];
+  const get = (path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), m);
+  const num = (path, { min = -Infinity, max = Infinity, integer = false, optional = false } = {}) => {
+    const v = get(path);
+    if (v === undefined && optional) {
+      return;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      errs.push(`${path} 必須是有限數字，實際是 ${JSON.stringify(v)}`);
+      return;
+    }
+    if (integer && !Number.isInteger(v)) {
+      errs.push(`${path} 必須是整數，實際是 ${v}`);
+    }
+    if (v < min || v > max) {
+      errs.push(`${path} 必須落在 [${min}, ${max}]，實際是 ${v}`);
+    }
+  };
+  const hex = (path, { optional = false } = {}) => {
+    const v = get(path);
+    if (v === undefined && optional) {
+      return;
+    }
+    if (typeof v !== 'string' || !HEX.test(v)) {
+      errs.push(`${path} 必須是 #RRGGBB 色值，實際是 ${JSON.stringify(v)}${String(v).includes('TBD') ? '（還沒填？樣板在 docs/sprite/sprite-manifest.example.json）' : ''}`);
+    }
+  };
+
+  // --- sheet 幾何 ---
+  for (const k of ['width', 'height', 'cellPx', 'cols', 'rows']) {
+    num(`sheet.${k}`, { min: 1, integer: true });
+  }
+  const g = m.sheet || {};
+  if (g.cols !== 3 || g.rows !== 3) {
+    // CELL_COUNT 是寫死的 9，而 cellView 只用 cols 算格位；非 3×3 會讓格 4–8 讀到影像外。
+    errs.push(`sheet.cols/rows 必須是 3/3（CELL_COUNT 寫死 9），實際是 ${g.cols}/${g.rows}`);
+  }
+  if (Number.isFinite(g.cols * g.cellPx) && (g.cols * g.cellPx !== g.width || g.rows * g.cellPx !== g.height)) {
+    errs.push(`sheet 幾何自相矛盾：${g.cols}×${g.cellPx} ≠ ${g.width} 或 ${g.rows}×${g.cellPx} ≠ ${g.height}`);
+  }
+
+  // --- 錨點（§2，全部是 0–1 的比例） ---
+  for (const k of ['faceAxisX', 'crownY', 'chinY', 'eyeLineY', 'pupilLeftX', 'pupilRightX', 'mouthCentreY', 'shoulderY', 'headWidth']) {
+    num(`anchors.${k}`, { min: 0, max: 1 });
+  }
+  num('anchorToleranceS', { min: 0, max: 1 });
+
+  // --- 三個視窗（SP-2.11） ---
+  for (const w of ['E', 'B', 'M']) {
+    for (const k of ['x0', 'x1', 'y0', 'y1']) {
+      num(`windows.${w}.${k}`, { min: 0, max: 1 });
+    }
+    const r = (m.windows || {})[w] || {};
+    if (Number.isFinite(r.x0) && Number.isFinite(r.x1) && r.x0 >= r.x1) {
+      errs.push(`windows.${w}.x0 必須小於 x1`);
+    }
+    if (Number.isFinite(r.y0) && Number.isFinite(r.y1) && r.y0 >= r.y1) {
+      errs.push(`windows.${w}.y0 必須小於 y1`);
+    }
+  }
+
+  // --- 三層留白（SP-2.1） ---
+  num('margins.opaqueFree', { min: 0, max: 0.5 });
+  num('margins.featherOuter', { min: 0, max: 0.5 });
+  const box = (m.margins || {}).silhouetteBox;
+  if (!Array.isArray(box) || box.length !== 2 || !box.every((v) => typeof v === 'number' && Number.isFinite(v)) || box[0] >= box[1]) {
+    errs.push(`margins.silhouetteBox 必須是 [lo, hi] 兩個有限數字且 lo < hi，實際是 ${JSON.stringify(box)}`);
+  }
+
+  // --- 色票（SP-6.0 / SP-6.1） ---
+  for (const k of ['lineart', 'iris', 'skin', 'hair']) {
+    hex(`colours.${k}`);
+  }
+  for (const k of ['irisToleranceRgb', 'skinToleranceRgb', 'hairToleranceRgb', 'exemptToleranceRgb']) {
+    num(`colours.${k}`, { min: 0, max: 255 });
+  }
+  const exempt = m.luminanceExemptColours;
+  if (exempt !== undefined && (!Array.isArray(exempt) || !exempt.every((v) => typeof v === 'string' && HEX.test(v)))) {
+    errs.push('luminanceExemptColours 必須是色值陣列');
+  }
+
+  // --- 門檻（SP-6.2 / SP-6.4 / SP-7.6） ---
+  num('luminance.min', { min: 0, max: 1 });
+  num('luminance.max', { min: 0, max: 1 });
+  num('luminance.minAreaFraction', { min: 0, max: 1 });
+  const L = m.luminance || {};
+  if (Number.isFinite(L.min) && Number.isFinite(L.max) && L.min >= L.max) {
+    errs.push('luminance.min 必須小於 luminance.max');
+  }
+  num('stroke.width', { min: 0, max: 1 });
+  num('stroke.tolerance', { min: 0, max: 1 });
+  num('stroke.luminanceMin', { min: 0, max: 1 });
+  num('stroke.luminanceMax', { min: 0, max: 1 });
+  num('stroke.luminanceSlack', { min: 0, max: 1, optional: true });
+  num('gaze.zeroAxisRatio', { min: 0, max: 10, optional: true });
+  num('blink.opaqueFraction', { min: 0, max: 1, optional: true });
+  num('readability.targetPx', { min: 1, integer: true, optional: true });
+  num('readability.minBrowContrast', { min: 0, max: 1, optional: true });
+  num('budget.perSheetBytes', { min: 1, integer: true });
+  num('budget.totalBytes', { min: 1, integer: true });
+
+  // --- 格號語意與產權 ---
+  for (const k of ['directions', 'reactions']) {
+    const arr = (m.cells || {})[k];
+    if (!Array.isArray(arr) || arr.length !== CELL_COUNT) {
+      errs.push(`cells.${k} 必須是 ${CELL_COUNT} 個元素的陣列`);
+    }
+  }
+  if (!Array.isArray(m.reactionOwnership) || m.reactionOwnership.length !== CELL_COUNT) {
+    errs.push(`reactionOwnership 必須是 ${CELL_COUNT} 個元素的陣列`);
+  } else {
+    m.reactionOwnership.forEach((code, i) => {
+      if (typeof code !== 'string' || code.length === 0 || !/^[EBMK]+$/.test(code)) {
+        errs.push(`reactionOwnership[${i}] 必須是由 E/B/M/K 組成的字串，實際是 ${JSON.stringify(code)}`);
+      }
+    });
+  }
+
+  // --- sha256（SP-7.15）---
+  for (const name of Object.keys(SHEET_FILES)) {
+    const v = (m.sha256 || {})[name];
+    if (typeof v !== 'string' || !SHA256.test(v)) {
+      errs.push(`sha256.${name} 必須是 64 位十六進位字串，實際是 ${JSON.stringify(v)}${String(v).includes('TBD') ? '（用 sha256sum 算出來填進去）' : ''}`);
+    }
+  }
+
+  // --- intentionally_empty：規格與工具訊息都用底線寫法，程式卻只讀駝峰 ---
+  const empties = intentionallyEmpty(m);
+  if (empties !== null && !empties.every((e) => e && typeof e.sheet === 'string' && Number.isInteger(e.cell))) {
+    errs.push('intentionally_empty 的每一項必須是 { sheet, cell }');
+  }
+
+  return errs;
+}
+
+/**
+ * 讀 `intentionally_empty`。
+ *
+ * ⚠️ **兩種拼法都收。** SP-7.15、SP-7.1、SP-4 與工具自己印的錯誤訊息
+ * （「未宣告 intentionally_empty」）用的都是**底線**寫法，而程式只讀駝峰的
+ * `intentionallyEmpty`。後果是：畫師照規格的字填了 `intentionally_empty`，
+ * 一個**合規**的空格仍然被判 FAIL，而錯誤訊息叫他去宣告一個他已經宣告了的東西。
+ * 這是最惡劣的一種 —— 訊息本身把人推向錯誤的方向。
+ */
+function intentionallyEmpty(m) {
+  const v = m.intentionallyEmpty ?? m.intentionally_empty;
+  if (v === undefined) {
+    return null;
+  }
+  return Array.isArray(v) ? v : [];
+}
+
 function readManifest(manifestPath) {
   let text;
   try {
@@ -90,18 +266,12 @@ function readManifest(manifestPath) {
   if (missing.length) {
     throw new ToolError(`manifest 缺少必要欄位：${missing.join(', ')}`);
   }
-  const g = manifest.sheet;
-  if (g.cols * g.cellPx !== g.width || g.rows * g.cellPx !== g.height) {
-    throw new ToolError(`manifest 的 sheet 幾何自相矛盾：${g.cols}×${g.cellPx} ≠ ${g.width} 或 ${g.rows}×${g.cellPx} ≠ ${g.height}`);
+  const errs = validateManifest(manifest);
+  if (errs.length) {
+    throw new ToolError(`manifest 有 ${errs.length} 處不合法：\n` + errs.map((e) => `    - ${e}`).join('\n'));
   }
-  for (const name of Object.keys(SHEET_FILES)) {
-    if (typeof manifest.sha256?.[name] !== 'string') {
-      throw new ToolError(`manifest.sha256.${name} 缺少或不是字串`);
-    }
-  }
-  if (!Array.isArray(manifest.reactionOwnership) || manifest.reactionOwnership.length !== CELL_COUNT) {
-    throw new ToolError('manifest.reactionOwnership 必須是 9 個元素的陣列');
-  }
+  // 兩種拼法正規化成一種，讓下游只需要認一個名字。
+  manifest.intentionallyEmpty = intentionallyEmpty(manifest) ?? [];
   return manifest;
 }
 
@@ -482,7 +652,17 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   try {
     process.exit(main());
   } catch (err) {
-    console.error(err instanceof ToolError ? `SPRITE-CHECK: TOOL-ERROR  ${err.message}` : err);
+    // ⚠️ **每一條路徑都必須印一個 `SPRITE-CHECK:` 開頭的字串。**
+    // 原本非 ToolError 的例外直接印裸 stack，沒有前綴 —— 而 `tools/asp-test.sh` 是
+    // **純靠這些字串分類**的（case 有四個 arm）。結果是每一個這類 crash 都落進
+    // 「其他」那一臂，被記成「sprites: 素材違規」，也就是把一個 exit 2 的工具錯誤
+    // 寫成 exit 1 的素材問題 —— 操作者會去找畫師，而問題在工具。
+    if (err instanceof ToolError) {
+      console.error(`SPRITE-CHECK: TOOL-ERROR  ${err.message}`);
+    } else {
+      console.error('SPRITE-CHECK: CRASH  工具自己壞了，不是素材的問題。堆疊如下：');
+      console.error(err);
+    }
     process.exit(2);
   }
 }

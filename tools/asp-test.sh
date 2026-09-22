@@ -45,7 +45,11 @@ case "$SPRITE_OUT" in
   *'SPRITE-CHECK: NOT-DELIVERED'*) SPRITE_SUM='sprites: 未交付' ;;
   *'SPRITE-CHECK: PASS'*)          SPRITE_SUM='sprites: 通過' ;;
   *'SPRITE-CHECK: TOOL-ERROR'*)    SPRITE_SUM='sprites: 工具或格式錯誤' ;;
-  *)                               SPRITE_SUM='sprites: 素材違規' ;;
+  *'SPRITE-CHECK: CRASH'*)         SPRITE_SUM='sprites: 工具自己壞了（見輸出的堆疊）' ;;
+  *'SPRITE-CHECK: FAIL'*)          SPRITE_SUM='sprites: 素材違規' ;;
+  # 落到這裡代表 CLI 印了一個沒有 arm 認得的字串 —— 那本身就是要修的東西，
+  # 不要把它猜成「素材違規」。先前正是這個 arm 把所有工具 crash 記成素材問題。
+  *)                               SPRITE_SUM='sprites: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
 esac
 
 # sprite 工具自身的回歸測試。它驗的交付物還不存在，在素材進來之前，
