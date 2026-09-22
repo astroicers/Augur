@@ -339,6 +339,63 @@ export function checkGazeBinding(directions, manifest) {
 
   const zeroAxisRatio = manifest.gaze?.zeroAxisRatio ?? 0.2;
 
+  /**
+   * ⚠️ **虹膜遮罩只看顏色，對大小、位置、形狀毫無約束** —— 所以它可以被偽造。
+   *
+   * 實測：把某一格換成「瞳孔往反方向偏」的內容，再於眼窗 E 內畫一片容差內的
+   * 假睫毛色（630 px），質心 Δx 由 +12 翻成 −29.58，而 **A–H 全綠**。
+   * E 正是 SP-7.2 唯一豁免逐像素比對的區域，也正是 SP-3.5 要求逐格變化的區域 ——
+   * 兩個豁免疊在一起，這裡就是整套檢查最薄的一塊。
+   *
+   * 加重情節：SP-7.15 要求人工把診斷表的質心抄進 `irisCentroids.directions` 當日後的
+   * 回歸基準。一次受污染的交付不只會過，還會**重新定義「正確」**。
+   *
+   * 兩道約束：
+   * (a) 各格的遮罩大小相對 master frame 必須落在一個比率區間內。門檻放寬是刻意的 ——
+   *     SP-3.5 允許向下看的格子被眼瞼遮住部分虹膜，那是**合法**的大小變化。
+   *     **下界鬆、上界緊**是有理由的：虹膜是固定大小的圓盤在眼眶內移動，
+   *     可見面積只會被眼瞼**遮掉**（變小），沒有任何合法的理由讓它比 master frame **變大**。
+   *     所以污染（把非虹膜的同色像素框進來）只會往上跑，而合法變化只會往下跑。
+   *     ⚠️ 兩個值仍是**未經真素材校準的**，第一批到貨後必須重新量（見 SP-7.3）。
+   * (b) manifest 宣告的其他色值都不得落在虹膜色的容差內 —— 色盤相撞應該是
+   *     「規則排除的」而不是「碰巧沒發生」。
+   */
+  const maskLo = manifest.gaze?.maskRatioMin ?? 0.35;
+  const maskHi = manifest.gaze?.maskRatioMax ?? 1.25;
+  const irisTol = manifest.colours.irisToleranceRgb;
+  const irisRgb = hexToRgb(manifest.colours.iris);
+  for (const key of ['lineart', 'skin', 'hair']) {
+    const other = manifest.colours[key];
+    if (other && colourNear(...hexToRgb(other), irisRgb, irisTol)) {
+      out.push({
+        id: 'SP-7.3/色盤相撞',
+        severity: 'error',
+        sheet: 'directions',
+        message: `colours.${key} = ${other} 落在虹膜色 ${manifest.colours.iris} 的容差 ±${irisTol} 內 —— 虹膜遮罩會把它一起框進來，視線質心不可信`,
+      });
+    }
+  }
+  const baseN = centroids[4].n;
+  if (baseN > 0) {
+    for (let c = 0; c < CELL_COUNT; c++) {
+      if (c === 4 || centroids[c].n === 0) {
+        continue;
+      }
+      const ratio = centroids[c].n / baseN;
+      if (ratio < maskLo || ratio > maskHi) {
+        out.push({
+          id: 'SP-7.3/虹膜遮罩大小',
+          severity: 'error',
+          sheet: 'directions',
+          cell: c,
+          message: `虹膜遮罩 ${centroids[c].n} px 是 master frame（${baseN} px）的 ${ratio.toFixed(2)} 倍，落在 [${maskLo}, ${maskHi}] 之外 —— 眼窗內混進了非虹膜的同色像素，或虹膜被畫成不同大小`,
+          measured: ratio,
+          limit: ratio < maskLo ? maskLo : maskHi,
+        });
+      }
+    }
+  }
+
   for (let c = 0; c < CELL_COUNT; c++) {
     if (c === 4 || centroids[c].n === 0) {
       continue;

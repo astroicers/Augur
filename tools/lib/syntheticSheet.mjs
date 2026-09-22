@@ -69,7 +69,9 @@ export function buildManifest(overrides = {}) {
     luminanceExemptColours: [],
     luminance: { min: 0.047, max: 0.61, minAreaFraction: 0.01 },
     stroke: { width: 0.016, tolerance: 0.002, luminanceMin: 0.18, luminanceMax: 0.24, luminanceSlack: 0.03 },
-    gaze: { zeroAxisRatio: 0.2 },
+    // maskRatio 的上下界不對稱是有理由的：虹膜是固定大小的圓盤在眼眶內移動，
+    // 可見面積只會被眼瞼遮掉（變小），沒有合法的理由變大。所以污染只會往上跑。
+    gaze: { zeroAxisRatio: 0.2, maskRatioMin: 0.35, maskRatioMax: 1.25 },
     blink: { opaqueFraction: 0.9 },
     readability: { targetPx: 128, minBrowContrast: 0.25 },
     cells: {

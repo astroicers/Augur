@@ -194,6 +194,8 @@ function validateManifest(m) {
   num('stroke.luminanceMax', { min: 0, max: 1 });
   num('stroke.luminanceSlack', { min: 0, max: 1, optional: true });
   num('gaze.zeroAxisRatio', { min: 0, max: 10, optional: true });
+  num('gaze.maskRatioMin', { min: 0, max: 1, optional: true });
+  num('gaze.maskRatioMax', { min: 1, max: 10, optional: true });
   num('blink.opaqueFraction', { min: 0, max: 1, optional: true });
   num('readability.targetPx', { min: 1, integer: true, optional: true });
   num('readability.minBrowContrast', { min: 0, max: 1, optional: true });
@@ -541,9 +543,13 @@ function report(findings, centroids, manifest, log = console.log) {
     rows.push({
       格: c,
       語意: `${manifest.cells.directions[c]} / ${manifest.cells.reactions[c]}`,
-      覆蓋率: cov ? `${(cov.measured * 100).toFixed(1)}%` : '—',
-      虹膜質心: ctr && ctr.n > 0 ? `${ctr.cx.toFixed(1)},${ctr.cy.toFixed(1)}` : '—',
-      失敗: mine.filter((f) => f.severity === 'error').map((f) => f.id).join(' ') || '—',
+      覆蓋率: cov ? `${(cov.measured * 100).toFixed(1)}%` : '-',
+      虹膜質心: ctr && ctr.n > 0 ? `${ctr.cx.toFixed(1)},${ctr.cy.toFixed(1)}` : '-',
+      // ⚠️ 遮罩像素數必須印出來。SP-7.15 要人工把質心抄進 manifest 當日後的回歸基準，
+      // 而只看質心分辨不出「虹膜移動」與「眼窗裡混進同色像素」—— 一次受污染的交付
+      // 會重新定義「正確」。n 是分辨它們的唯一線索。
+      遮罩px: ctr && ctr.n > 0 ? String(ctr.n) : '-',
+      失敗: mine.filter((f) => f.severity === 'error').map((f) => f.id).join(' ') || '-',
     });
   }
   log('\n--- 逐格診斷（SP-7.10）---');

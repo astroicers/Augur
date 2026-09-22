@@ -697,6 +697,23 @@ const mutants = [
     },
   },
   {
+    name: 'SP-7.3 內容看反方向 + 眼窗污染掩蓋（sign 檢查被騙過，靠遮罩大小擋下）',
+    expect: 'SP-7.3/虹膜遮罩大小',
+    sheets: () => {
+      // 格 3 應看左(-12)，畫成看右(+12)，再於眼窗左側畫一片容差內的同色像素
+      // 把質心拉回負值 —— 第 3 點的 sign 檢查會被騙過去。
+      const s = buildSheets({
+        perCellGaze: [[-12, -8], [0, -8], [12, -8], [12, 0], [0, 0], [12, 0], [-12, 8], [0, 8], [12, 8]],
+      });
+      for (let y = Math.round(0.345 * S); y < Math.round(0.362 * S); y++) {
+        for (let x = Math.round(0.29 * S); x < Math.round(0.41 * S); x++) {
+          put(s.directions, 3, x, y, [0x8a, 0x6f, 0xd0, 255]);
+        }
+      }
+      return s;
+    },
+  },
+  {
     name: 'SP-7.6 眉窗整個透明（量測失敗，不是對比差）',
     expect: 'SP-7.6/眉窗為空',
     apply: (s) => {
