@@ -34,7 +34,7 @@ import {
   PngFormatError,
 } from './lib/png.mjs';
 import { encodeGif } from './lib/gif.mjs';
-import { buildManifest, buildSheets, S, SHEET } from './lib/syntheticSheet.mjs';
+import { buildManifest, buildSheets, S, SHEET, SP_2_12_MARKS } from './lib/syntheticSheet.mjs';
 import {
   CENTER_CELL,
   MIN_QUESTIONS_PER_CELL,
@@ -957,6 +957,61 @@ function materialise(dir, sheets, patch = {}) {
     code = e instanceof ToolError ? 2 : -1;
   }
   ok('manifest 壞掉 → ToolError（CLI 對應 exit 2）', code === 2);
+}
+
+// ---------------------------------------------------------------------------
+// SP-2.12 的建議記號位置必須真的畫得出來。
+//
+// ⚠️ 規格原本建議汗滴 (0.70, 0.26)、怒紋 (0.74, 0.17)。對皮膚遮罩實測，
+// 前者只有 14.9% 落在遮罩內、後者是 **0%**（x = 0.740 超出 SP-2.9 顱骨最寬的 0.700 本身，
+// 而 y = 0.17 在 SP-2.10 瀏海下緣之上 —— 實測 y <= 0.24 整列沒有任何臉部皮膚）。
+// 而 SP-6.6 的上限是 0 個越界像素，所以照規格畫的交付一律硬失敗。
+// 這條斷言把「規格建議的位置畫得出來」變成機械的 —— 先前它只是散文，
+// 於是 fixture 默默改用別的座標通過，規格繼續建議一組畫不出來的位置。
+// ---------------------------------------------------------------------------
+{
+  const geom = manifest.sheet;
+  const cp = geom.cellPx;
+  const mask = C.skinMask(base.directions, manifest);
+  const inside = (pred) => {
+    let total = 0;
+    let hit = 0;
+    for (let y = 0; y < cp; y++) {
+      for (let x = 0; x < cp; x++) {
+        if (!pred(x, y)) {
+          continue;
+        }
+        total++;
+        if (mask[y * cp + x]) {
+          hit++;
+        }
+      }
+    }
+    return { total, hit };
+  };
+  const sw = SP_2_12_MARKS.sweat;
+  const a = inside((x, y) => {
+    const dx = (x - sw.cx * cp) / sw.rx;
+    const dy = (y - sw.cy * cp) / sw.ry;
+    return dx * dx + dy * dy <= 1;
+  });
+  ok(`SP-2.12 建議的汗滴位置完全落在 SP-6.6 皮膚遮罩內（${a.hit}/${a.total}）`,
+    a.total > 0 && a.hit === a.total);
+
+  const an = SP_2_12_MARKS.anger;
+  const b = inside((x, y) =>
+    x >= an.x0 * cp && x < an.x1 * cp && y >= an.y0 * cp && y < an.y1 * cp);
+  ok(`SP-2.12 建議的怒紋位置完全落在 SP-6.6 皮膚遮罩內（${b.hit}/${b.total}）`,
+    b.total > 0 && b.hit === b.total);
+
+  // 原建議位置必須**測得出來是不合格的** —— 否則上面兩條只是在測一個恆真的東西。
+  const old = inside((x, y) => {
+    const dx = (x - 0.74 * cp) / 11;
+    const dy = (y - 0.17 * cp) / 11;
+    return dx * dx + dy * dy <= 1;
+  });
+  ok(`（對照）原建議的怒紋 (0.74, 0.17) 確實無解：${old.hit}/${old.total} 落在遮罩內`,
+    old.total > 0 && old.hit === 0);
 }
 
 // ---------------------------------------------------------------------------

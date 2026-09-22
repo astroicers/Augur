@@ -29,6 +29,22 @@ const PALETTE = {
 
 const hex = (rgb) => '#' + rgb.map((n) => n.toString(16).padStart(2, '0')).join('');
 
+
+/**
+ * SP-2.12 的建議記號位置 —— **與規格同一份數字**。
+ *
+ * ⚠️ 這個常數存在的理由：規格原本建議汗滴 (0.70, 0.26)、怒紋 (0.74, 0.17)，
+ * 而那兩個位置在 SP-2.9 的顱骨與 SP-2.10 的瀏海之下**畫不出來**
+ * （實測落在 SP-6.6 皮膚遮罩內 14.9% 與 0%，而上限是 0 個越界像素）。
+ * 本檔當初是**默默改用別的座標**讓基準通過的 —— 問題被發現過，但修的是 fixture 不是規格，
+ * 於是規格繼續對畫師建議一組畫不出來的位置。收成一份共用常數，
+ * 並由 selftest 斷言它們的皮膚覆蓋率是 100%，讓這種漂移不會再無聲發生。
+ */
+export const SP_2_12_MARKS = {
+  sweat: { cx: 0.645, cy: 0.293, rx: 9, ry: 13 },
+  anger: { x0: 0.629, x1: 0.668, y0: 0.258, y1: 0.266 },
+};
+
 export function buildManifest(overrides = {}) {
   const m = {
     version: 1,
@@ -277,13 +293,13 @@ function drawReactionCell(buf, ox, oy, cell) {
     case 1: // warning：眉略下 + 汗滴
       bar(0.352 * S, 0.469 * S, 0.285 * S, 0.3 * S, PALETTE.lineart);
       bar(0.531 * S, 0.648 * S, 0.285 * S, 0.3 * S, PALETTE.lineart);
-      ellipse(0.645 * S, 0.293 * S, 9, 13, PALETTE.sclera);
+      ellipse(SP_2_12_MARKS.sweat.cx * S, SP_2_12_MARKS.sweat.cy * S, SP_2_12_MARKS.sweat.rx, SP_2_12_MARKS.sweat.ry, PALETTE.sclera);
       bar(0.441 * S, 0.559 * S, 0.523 * S, 0.531 * S, PALETTE.lineart);
       break;
     case 2: // critical：眉下壓 + 怒紋
       bar(0.352 * S, 0.469 * S, 0.297 * S, 0.316 * S, PALETTE.lineart);
       bar(0.531 * S, 0.648 * S, 0.297 * S, 0.316 * S, PALETTE.lineart);
-      bar(0.629 * S, 0.668 * S, 0.258 * S, 0.266 * S, PALETTE.lineart);
+      bar(SP_2_12_MARKS.anger.x0 * S, SP_2_12_MARKS.anger.x1 * S, SP_2_12_MARKS.anger.y0 * S, SP_2_12_MARKS.anger.y1 * S, PALETTE.lineart);
       bar(0.43 * S, 0.57 * S, 0.523 * S, 0.535 * S, PALETTE.lineart);
       break;
     case 3: // resolved：微笑 + 腮紅
