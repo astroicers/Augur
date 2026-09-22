@@ -137,7 +137,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=91
+MIN_SELFTEST=93
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)

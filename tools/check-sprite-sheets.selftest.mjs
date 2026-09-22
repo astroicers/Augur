@@ -667,8 +667,10 @@ const mutants = [
     },
   },
   {
+    // 改由瞳距承接：絕對的單眼 X 同時吃「遮擋」與「移位」、分不開，所以只留 warn；
+    // 瞳距與中點對稱對眼瞼遮擋免疫，卻照樣抓得到移位（8px → 容差的 3.9 倍）。
     name: 'SP-7.5 左瞳心右移 8px（瞳距變窄，合併質心看不出來）',
-    expect: 'SP-7.5/左瞳心',
+    expect: 'SP-7.5/瞳距',
     apply: (s) => {
       const iris = [0x6a, 0x4f, 0xd0];
       for (let c = 0; c < CELL_COUNT; c++) {
@@ -776,8 +778,63 @@ function featherBlinkEdges(s) {
   }
 }
 
+
+/**
+ * 把 master frame 兩眼虹膜的**頂端** `frac` 比例塗成眼瞼色（動畫的常態畫法）。
+ * 這是合規畫稿，不得讓任何硬失敗轉紅 —— 可見虹膜質心會因此下移，
+ * 而那正是 SP-7.5 先前用來當「瞳心」的量。
+ */
+function occludeIrisTop(s, frac) {
+  const IRIS = [0x6a, 0x4f, 0xd0];
+  const LID = [0xe2, 0xc8, 0xb1]; // 膚色眼瞼
+  const cell = 4;
+  const ox = (cell % 3) * S;
+  const oy = Math.floor(cell / 3) * S;
+  const d = s.directions.data;
+  const hit = [];
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const o = ((oy + y) * SHEET + (ox + x)) * 4;
+      if (Math.abs(d[o] - IRIS[0]) <= 40 && Math.abs(d[o + 1] - IRIS[1]) <= 40 && Math.abs(d[o + 2] - IRIS[2]) <= 40) {
+        hit.push([x, y]);
+      }
+    }
+  }
+  if (!hit.length) {
+    return;
+  }
+  const ys = hit.map(([, y]) => y);
+  const top = Math.min(...ys);
+  const bot = Math.max(...ys);
+  const cut = top + (bot - top + 1) * frac;
+  for (const [x, y] of hit) {
+    if (y < cut) {
+      const o = ((oy + y) * SHEET + (ox + x)) * 4;
+      d[o] = LID[0];
+      d[o + 1] = LID[1];
+      d[o + 2] = LID[2];
+    }
+  }
+}
+
 /** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
 const NON_MUTANTS = [
+  {
+    // ⚠️ **這是複審 anchors 面向的兩個 blocker。**
+    // SP-2.4 把眼線定義為「左右**瞳心**連線」，而動畫畫法裡上眼瞼一定蓋住虹膜頂端，
+    // 於是可見虹膜的質心系統性低於瞳心。把瞳心畫在正好 0.380、上眼瞼切掉約 30%
+    // 虹膜高的畫稿，實測質心偏離 0.0201·S＝**容差的 5.0 倍**，八個變體無一例外。
+    // 遮擋深度是畫風選擇不是合規屬性，沒有固定偏移可校正。
+    // 這裡把上眼瞼壓下來遮住虹膜頂端三成，斷言瞳距與對稱性**不因此轉紅**。
+    name: 'SP-2.4 上眼瞼遮住虹膜頂端（動畫的常態畫法）不得誤紅',
+    forbid: 'SP-7.5/瞳距',
+    apply: (s) => occludeIrisTop(s, 0.3),
+  },
+  {
+    name: '上眼瞼遮擋不得被誤判成兩眼不等高',
+    forbid: 'SP-7.5/兩眼不等高',
+    apply: (s) => occludeIrisTop(s, 0.3),
+  },
   {
     // ⚠️ **這一條是 2026-09-22 複審的第二個 blocker。**
     // 先前的門檻是「修補塊輪廓內 90% 的像素恰為 alpha=255」，而 SP-2.14 **強制**

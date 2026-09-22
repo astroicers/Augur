@@ -1102,15 +1102,129 @@ export function checkAnchors(directions, manifest, centroids) {
     }
   }
 
-  if (centroids && centroids[4] && centroids[4].n > 0) {
-    point('SP-7.5/眼線', '眼線 Y', centroids[4].cy, a.eyeLineY);
-  }
-
-  // 瞳距與左右瞳心 X（SP-2.5）。左右眼各自的虹膜質心，用眼窗中線切開。
+  /**
+   * ⚠️ **眼線與瞳心：可見虹膜的質心不是瞳心，而差多少取決於畫風。**
+   *
+   * 這是與上面頭頂／頭寬同一類的問題（檢查與規格量的不是同一個東西），
+   * 2026-09-22 複審實測：
+   *
+   * - SP-2.4 把眼線定義為「左右**瞳心**連線」Y = 0.380。而動畫畫法裡上眼瞼一定蓋住
+   *   虹膜頂端，於是可見虹膜的質心**系統性地低於**瞳心。把瞳心畫在正好 0.380、
+   *   上眼瞼切掉約 30% 虹膜高（對動畫來說還算保守）的畫稿，實測質心 Y = 0.4001·S，
+   *   偏離 0.0201·S＝**容差的 5.0 倍**，八個變體無一例外。
+   * - 側髮蓋住一隻眼（§7 的角色有 long side locks，SP-2.11 的註記也寫著眼窗 E 刻意
+   *   往頭部輪廓外延伸 0.020·S 就是為了那裡）時，剩下的虹膜碎片質心會被當成瞳心：
+   *   瞳心畫在正好 0.410 的畫稿實測 0.4407·S，偏離 **7.6 倍容差**。
+   *   要滿足檢查，畫師得把一個已經正確的瞳孔往旁邊挪 15px。
+   *
+   * 遮擋深度是畫風選擇不是合規屬性，所以**沒有固定偏移可以校正**，
+   * 也就沒有「量得更準」這條路。改成量三件量得到的事：
+   *  (a) 兩眼是否等高 —— 這是真的缺陷（一眼畫高了），而且左右受到的遮擋相同，
+   *      差值對遮擋深度免疫。這條維持硬失敗。
+   *  (b) 絕對的眼線 Y 與瞳心 X —— 降為 warn，訊息寫明量的是可見虹膜質心而非瞳心。
+   *  (c) 左右可見虹膜面積明顯不對稱 → 代表一眼被遮，此時 (b) 的數字不可信，
+   *      改報「量不準」而不是報「位置錯了」。
+   *
+   * 真正的瞳孔位置驗收在 SP-V.1 的人眼盲測 —— 那才是這件事的權威，本條是輔助。
+   */
   const eyes = eyeCentroids(directions, 4, manifest);
-  if (eyes) {
-    point('SP-7.5/左瞳心', '左瞳心 X', eyes.left, a.pupilLeftX);
-    point('SP-7.5/右瞳心', '右瞳心 X', eyes.right, a.pupilRightX);
+  const tolS = tol / cellPx; // :995 的 tol 是像素，這裡要 S 比例
+  const soft = (id, label, measured, want, why) => {
+    if (!Number.isFinite(measured)) {
+      return;
+    }
+    const m = measured / cellPx;
+    if (Math.abs(m - want) > tolS) {
+      out.push({
+        id,
+        severity: 'warn',
+        sheet: 'directions',
+        cell: 4,
+        message: `${label} 實測 ${m.toFixed(4)}·S，宣告 ${want}·S（${why}）—— 本條僅記錄，不判失敗`,
+        measured: m,
+        limit: want,
+      });
+    }
+  };
+
+  if (!Number.isFinite(eyes.left) || !Number.isFinite(eyes.right)) {
+    // 先前這裡回 null 然後整段被靜默略過 —— 一隻眼完全量不到虹膜是真的異常，要說出來。
+    out.push({
+      id: 'SP-7.5/瞳心量不到',
+      severity: 'error',
+      sheet: 'directions',
+      cell: 4,
+      message: `眼窗 E 內左眼 ${eyes.leftN} px、右眼 ${eyes.rightN} px 命中虹膜色，有一側為 0 —— 量不到瞳心`,
+      measured: Math.min(eyes.leftN, eyes.rightN),
+      limit: 1,
+    });
+  } else {
+    // (a) 兩眼等高：硬失敗。左右受到的眼瞼遮擋相同，所以差值對遮擋深度免疫。
+    const dy = Math.abs(eyes.leftY - eyes.rightY) / cellPx;
+    if (dy > tolS) {
+      out.push({
+        id: 'SP-7.5/兩眼不等高',
+        severity: 'error',
+        sheet: 'directions',
+        cell: 4,
+        message: `左右虹膜質心 Y 相差 ${dy.toFixed(4)}·S（左 ${(eyes.leftY / cellPx).toFixed(4)}、右 ${(eyes.rightY / cellPx).toFixed(4)}），超出容差 ${tolS.toFixed(4)}·S`,
+        measured: dy,
+        limit: tolS,
+      });
+    }
+
+    // (c) 左右可見面積明顯不對稱 → 一眼被遮，(b) 的數字不可信。
+    const lo = Math.min(eyes.leftN, eyes.rightN);
+    const hi = Math.max(eyes.leftN, eyes.rightN);
+    const occluded = lo / hi < 0.6;
+    if (occluded) {
+      out.push({
+        id: 'SP-7.5/單眼被遮',
+        severity: 'warn',
+        sheet: 'directions',
+        cell: 4,
+        message: `左右可見虹膜面積 ${eyes.leftN} / ${eyes.rightN} px（比 ${(lo / hi).toFixed(2)}），一側被遮住 —— 瞳心與眼線的絕對值本輪量不準，已略過`,
+        measured: lo / hi,
+        limit: 0.6,
+      });
+    } else {
+      // (b) **瞳距與中點對稱：硬失敗。**
+      //
+      // 這兩個量對眼瞼遮擋免疫 —— 上眼瞼同時切兩隻眼、而且完全不動 x，
+      // 所以「兩個質心的水平距離」與「它們的中點」不受遮擋深度影響，
+      // 卻照樣抓得到瞳孔移位：左瞳右移 8px 會讓瞳距縮 0.0156·S＝容差的 3.9 倍。
+      // 絕對的單眼 X 做不到這件事（它同時吃遮擋與移位，分不開），所以絕對值留給 warn。
+      const span = (eyes.right - eyes.left) / cellPx;
+      const wantSpan = a.pupilRightX - a.pupilLeftX;
+      if (Math.abs(span - wantSpan) > tolS) {
+        out.push({
+          id: 'SP-7.5/瞳距',
+          severity: 'error',
+          sheet: 'directions',
+          cell: 4,
+          message: `瞳距實測 ${span.toFixed(4)}·S，宣告 ${wantSpan.toFixed(4)}·S（SP-2.5 的 ${a.pupilRightX} − ${a.pupilLeftX}），超出容差 ${tolS.toFixed(4)}·S`,
+          measured: span,
+          limit: wantSpan,
+        });
+      }
+      const mid2 = (eyes.left + eyes.right) / 2 / cellPx;
+      if (Math.abs(mid2 - a.faceAxisX) > tolS) {
+        out.push({
+          id: 'SP-7.5/瞳心不對稱',
+          severity: 'error',
+          sheet: 'directions',
+          cell: 4,
+          message: `左右瞳心中點 ${mid2.toFixed(4)}·S 偏離臉中軸 ${a.faceAxisX}·S，超出容差 ${tolS.toFixed(4)}·S —— 兩眼一起偏移或單眼移位`,
+          measured: mid2,
+          limit: a.faceAxisX,
+        });
+      }
+
+      // 絕對值：warn。遮擋深度是畫風選擇，這幾個數字量的是可見虹膜質心不是瞳心。
+      soft('SP-7.5/眼線', '眼線 Y（可見虹膜質心）', (eyes.leftY + eyes.rightY) / 2, a.eyeLineY, '上眼瞼會把質心壓到瞳心之下，偏移量取決於畫風');
+      soft('SP-7.5/左瞳心', '左瞳心 X（可見虹膜質心）', eyes.left, a.pupilLeftX, '遮擋會移動質心');
+      soft('SP-7.5/右瞳心', '右瞳心 X（可見虹膜質心）', eyes.right, a.pupilRightX, '遮擋會移動質心');
+    }
   }
 
   return out;
@@ -1131,8 +1245,10 @@ export function eyeCentroids(directions, cell, manifest) {
   const mid = manifest.anchors.faceAxisX * cellPx;
   const v = cellView(directions, cell, geom);
   let lx = 0;
+  let ly = 0;
   let ln = 0;
   let rx = 0;
+  let ry = 0;
   let rn = 0;
   for (let y = E.y0; y < E.y1; y++) {
     for (let x = E.x0; x < E.x1; x++) {
@@ -1142,14 +1258,18 @@ export function eyeCentroids(directions, cell, manifest) {
       }
       if (x < mid) {
         lx += x;
+        ly += y;
         ln++;
       } else {
         rx += x;
+        ry += y;
         rn++;
       }
     }
   }
-  return ln > 0 && rn > 0 ? { left: lx / ln, right: rx / rn, leftN: ln, rightN: rn } : null;
+  return ln > 0 && rn > 0
+    ? { left: lx / ln, right: rx / rn, leftY: ly / ln, rightY: ry / rn, leftN: ln, rightN: rn }
+    : { left: NaN, right: NaN, leftY: NaN, rightY: NaN, leftN: ln, rightN: rn };
 }
 
 // ---------------------------------------------------------------------------
