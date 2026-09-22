@@ -372,6 +372,7 @@ function readGif(buf) {
   const frames = [];
   let loop = null;
   let pendingDelay = 0;
+  let pendingPacked = 0;
   const subBlocks = () => {
     const parts = [];
     for (;;) {
@@ -395,6 +396,10 @@ function readGif(buf) {
       off += 2;
       if (label === 0xf9) {
         const n = buf[off];
+        // ⚠️ packed byte 先前沒讀，於是「把透明旗標打開」這個突變靜悄悄過去 ——
+        // 而那會讓所有用到調色盤索引 0 的像素在瀏覽器裡變成透明（平塗圖裡那是大面積），
+        // 看診斷圖的人只會看到吉祥物身上破了洞，而且無從得知是編碼器不是畫稿造成的。
+        pendingPacked = buf[off + 1];
         pendingDelay = buf.readUInt16LE(off + 2);
         off += n + 1;
         if (buf[off] === 0) {
@@ -417,6 +422,10 @@ function readGif(buf) {
     if (b !== 0x2c) {
       throw new Error('未預期的 block 0x' + b.toString(16) + ' @ ' + off);
     }
+    // ⚠️ left/top 先前沒讀。把 left 改成 5 之後 PIL 會把畫布開成 42×23 而不是 37×23、
+    // 每一格往右位移 —— 而 selftest 完全沒感覺。
+    const fx = buf.readUInt16LE(off + 1);
+    const fy = buf.readUInt16LE(off + 3);
     const fw = buf.readUInt16LE(off + 5);
     const fh = buf.readUInt16LE(off + 7);
     const lctFlag = (buf[off + 9] & 0x80) !== 0;
@@ -490,7 +499,7 @@ function readGif(buf) {
       }
       prev = entry;
     }
-    frames.push({ width: fw, height: fh, minCodeSize, indices: out, delayCs: pendingDelay, clearGaps });
+    frames.push({ x: fx, y: fy, width: fw, height: fh, minCodeSize, indices: out, delayCs: pendingDelay, packed: pendingPacked, clearGaps });
   }
   return { width, height, gct, gctBits, frames, loop };
 }
@@ -525,6 +534,53 @@ function readGif(buf) {
       `${g.width}x${g.height} / ${g.frames.length} 格`);
     ok('NETSCAPE2.0 無限循環', g.loop === 0, String(g.loop));
     ok('每格延遲正確', g.frames.every((f) => f.delayCs === 40), g.frames.map((f) => f.delayCs).join(','));
+
+    // ⚠️ 以下兩條先前**完全沒有** —— 讀取器根本沒解這些欄位，
+    // 於是把它們寫壞的突變一條都不會紅，而產出的 GIF 在瀏覽器／PIL 裡是明顯壞的。
+    ok('image descriptor 的位置與尺寸正確（left/top = 0，寬高等於畫布）',
+      g.frames.every((f) => f.x === 0 && f.y === 0 && f.width === W && f.height === H),
+      g.frames.map((f) => `${f.x},${f.y} ${f.width}×${f.height}`).join(' | '));
+    ok('GCE 的透明旗標關閉（打開會讓索引 0 的像素整片變透明）',
+      g.frames.every((f) => (f.packed & 0x01) === 0),
+      g.frames.map((f) => '0x' + f.packed.toString(16)).join(','));
+
+    // ⚠️ **超過 256 色的路徑（cubePalette + 6×6×6 量化）先前零覆蓋。**
+    // 而真實交付一定走這條 —— 抗鋸齒的 sheet 有數千個相異色，
+    // 所以 .sprite-check/ 裡那張給人看的診斷 GIF 每一次都經過它。
+    // 實測：把 `table[i*3]` 改成 `table[i*3+2]`（紅通道從不寫入）或把
+    // `r*36 + g*6 + b` 改成 `b*36 + g*6 + r`（RG B 對調），selftest 都照樣全綠。
+    {
+      const N = 40; // 40×40 = 1600 個相異色，穩穩超過 256
+      const rgba = new Uint8Array(N * N * 4);
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const o = (y * N + x) * 4;
+          // 三個通道各自獨立變化 —— 通道寫錯或順序對調都會讓還原色偏掉。
+          rgba[o] = Math.round((x / (N - 1)) * 255);
+          rgba[o + 1] = Math.round((y / (N - 1)) * 255);
+          rgba[o + 2] = Math.round(((x + y) / (2 * N - 2)) * 255);
+          rgba[o + 3] = 255;
+        }
+      }
+      const gif = encodeGif({ width: N, height: N, frames: [rgba], delayCs: 40 });
+      const gg = readGif(gif);
+      ok('超過 256 色 → 走 cubePalette，調色盤是 216 色的 6×6×6 立方',
+        gg.gct.length >= 216 && gg.gct[215] !== undefined,
+        `gct ${gg.gct.length} 色`);
+
+      // 逐像素比對還原色與原色的距離。6×6×6 立方的最大量化誤差是半格 = 25.5/通道，
+      // 所以合格的還原每個通道都該在 26 以內；通道寫錯或順序對調會遠遠超過。
+      let worst = 0;
+      const idx = gg.frames[0].indices;
+      for (let p = 0; p < idx.length; p++) {
+        const c = gg.gct[idx[p]];
+        for (let k = 0; k < 3; k++) {
+          worst = Math.max(worst, Math.abs(c[k] - rgba[p * 4 + k]));
+        }
+      }
+      ok('6×6×6 量化的逐通道誤差 ≤ 26（半格）—— 通道寫錯或 RGB 對調會遠超過',
+        worst <= 26, `最大誤差 ${worst}`);
+    }
 
     // LZW min code size：出貨呼叫點的調色盤剛好是 8-bit，所以寫成 `bits` 也會過 ——
     // 這裡用一個**只有 4 色**的輸入，bits 會是 2，把兩者分開。
@@ -1355,6 +1411,20 @@ function runWith(name, patch) {
   ok('D-1b 駝峰空陣列遮蔽底線畸形值 → 仍然報出形狀錯誤',
     r.code === 2 && r.out.includes('intentionally_empty 必須是 [{ sheet, cell }] 陣列'),
     `code=${r.code} out=${r.out.slice(0, 240)}`);
+}
+
+{
+  // ⚠️ `SP-7.3/色盤相撞` 是一條硬失敗，但**出貨時沒有任何變異體**：
+  // 色值清單寫錯、colourNear 的引數順序顛倒、或 push 被移進一個永遠走不到的分支，
+  // 77 條斷言沒有一條會發現。這裡補上 —— 三個色鍵各驗一次。
+  for (const key of ['lineart', 'skin', 'hair']) {
+    const base2 = buildManifest();
+    const r = runWith('clash-' + key, {
+      colours: { ...base2.colours, [key]: base2.colours.iris },
+    });
+    ok(`SP-7.3 colours.${key} 撞上虹膜色 → 硬失敗`,
+      r.code === 1 && r.out.includes('SP-7.3/色盤相撞'), `code=${r.code}`);
+  }
 }
 
 {

@@ -60,7 +60,9 @@ for (const f of ['windows/windows_exporter-install.ps1', 'windows/alloy-install.
 // --- 2) ENABLED_COLLECTORS 不得含已移除的 collector ---
 {
   const src = read(M('windows/windows_exporter-install.ps1')).toString('utf8');
-  const m = /\$collectors\s*=\s*'([^']+)'/.exec(src);
+  // ⚠️ 單引號、雙引號都要認。PowerShell 裡一旦要內插就得改雙引號，
+  // 而先前只認單引號 → 閘門報「找不到 $collectors 宣告」，而它明明就在那裡。
+  const m = /\$collectors\s*=\s*['"]([^'"]+)['"]/.exec(src);
   if (!m) {
     problems.push('windows_exporter-install.ps1：找不到 $collectors 宣告');
   } else {
@@ -98,12 +100,17 @@ for (const f of RULE_FILES) {
     if (!/__dashboardUid__:/.test(b) || !/__panelId__:/.test(b)) {
       problems.push(`${f}：規則 ${title} 缺少 __dashboardUid__ 或 __panelId__ —— alertState 到不了任何 panel，而且沒有任何錯誤訊息`);
     }
-    const pid = (/__panelId__:\s*"?(\d+)"?/.exec(b) || [])[1];
+    // ⚠️ **單引號也是 YAML 字串。** 先前只認雙引號，而本 repo 的 YAML 到處用單引號
+    // （每個 `expr:` 都是），於是有人照 house style 改寫或被 formatter 重排之後，
+    // 閘門會報「__panelId__ 不是帶引號的字串」—— 一句**對著眼前的檔案顯然不成立**的話。
+    // 訊息看得出來是假的，是閘門被關掉的最短路徑。
+    // 只有**裸數字**才是 YAML 的 int（python3 yaml.safe_load 實查：'1' 與 "1" 都是 str，1 是 int）。
+    const pid = (/__panelId__:\s*['"]?(\d+)['"]?/.exec(b) || [])[1];
     if (pid) {
       boundPanels.add(Number(pid));
     }
-    if (b.includes('__panelId__:') && !/__panelId__:\s*"\d+"/.test(b)) {
-      problems.push(`${f}：規則 ${title} 的 __panelId__ 不是帶引號的字串 —— Grafana 的註解值必須是字串`);
+    if (b.includes('__panelId__:') && !/__panelId__:\s*['"]\d+['"]/.test(b)) {
+      problems.push(`${f}：規則 ${title} 的 __panelId__ 是裸數字而不是字串 —— Grafana 的註解值必須是字串，請加引號`);
     }
   }
 }
@@ -119,7 +126,27 @@ checked.push(`${ruleCount} 條規則都帶了 __dashboardUid__ / __panelId__`);
     console.error(`MONITORING-CHECK: TOOL-ERROR  augur-poc.json 不是合法 JSON：${err.message}`);
     process.exit(2);
   }
-  const ids = new Set((dash.panels || []).map((x) => x.id));
+  // ⚠️ **要展開 row 裡的巢狀 panel。** Grafana 把收合 row 底下的 panel 放進
+  // `row.panels`，而 `__panelId__` 照樣解析得到 —— 也就是說什麼都沒壞。
+  // 先前只看頂層，於是「把兩個 panel 拖進一個 row 再收合起來」這個純 UI 動作
+  // 會讓閘門報「規則綁了不存在的 panel id」並擋下 commit。
+  // 反方向也要顧：`panels` 整個不存在時（schema-v2 匯出）先前會把**每一個**綁定
+  // 都報成缺失 —— 那不是「發現問題」，是工具讀不懂檔案，該報 TOOL-ERROR。
+  if (!Array.isArray(dash.panels)) {
+    console.error('MONITORING-CHECK: TOOL-ERROR  augur-poc.json 沒有頂層 panels 陣列（dashboard schema 變了？）');
+    process.exit(2);
+  }
+  const flatPanels = [];
+  const walk = (list) => {
+    for (const x of list || []) {
+      flatPanels.push(x);
+      if (Array.isArray(x.panels)) {
+        walk(x.panels);
+      }
+    }
+  };
+  walk(dash.panels);
+  const ids = new Set(flatPanels.map((x) => x.id));
   const missing = [...boundPanels].filter((id) => !ids.has(id));
   if (missing.length) {
     problems.push(`augur-poc.json：規則綁了不存在的 panel id ${missing.join(', ')}（dashboard 裡有 ${[...ids].join(', ')}）`);
@@ -127,7 +154,7 @@ checked.push(`${ruleCount} 條規則都帶了 __dashboardUid__ / __panelId__`);
     checked.push(`規則綁的 panel id ${[...boundPanels].sort().join(', ')} 都存在於 dashboard`);
   }
   // 被綁的 panel 必須至少有一個 query target（alertState 的四個硬前提之一）
-  for (const pn of dash.panels || []) {
+  for (const pn of flatPanels) {
     if (boundPanels.has(pn.id) && !(pn.targets || []).length) {
       problems.push(`augur-poc.json：panel ${pn.id} 被規則綁著卻沒有任何 query target —— alertState 恆為 undefined`);
     }
