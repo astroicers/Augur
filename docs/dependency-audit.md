@@ -42,14 +42,43 @@
 /^@grafana\/data/i
 ```
 
-量測佐證 —— **看 AMD 的相依宣告，不要 grep 套件名**：
+量測佐證 —— **看 sourcemap 列出的模組來源**：
 
 ```bash
 npm run build
-head -c 400 dist/module.js | grep -oE 'define\(\[[^]]*\]'
+node tools/check-bundle-deps.mjs
 ```
 
-輸出應該**只有**三個 `@grafana/*` 加上 React 那幾個，沒有別的。
+乾淨 build 的輸出是
+`BUNDLE-DEPS: PASS  bundle 裡的 node_modules 模組只有 grafana-public-path.js`。
+
+> **【2026-09-22 訂正：先前這裡寫的兩種方法都驗不出東西】**
+>
+> 這一段原本寫「看 AMD 的 `define([...])` 清單，輸出應該只有三個 `@grafana/*` 加 React」。
+> **兩件事都錯：**
+>
+> 1. **通過條件在乾淨 build 上就不成立。** 實際輸出是
+>    `define(["@emotion/css","@grafana/data","@grafana/runtime","@grafana/ui","module","react"])`
+>    —— `@emotion/css` 與 `module` 本來就在 `.config/` 託管的 externals 清單裡。
+>    照文件判定的人會認定「多出兩項 → 整份 audit 失效」，然後去追一個不存在的問題。
+>
+> 2. **方向剛好反了，所以它偵測不到它宣稱要偵測的東西。** 被 **externalise** 的東西才會
+>    出現在 define 清單裡，被**打包進去**的不會 —— 而稽核要防的正是「打包進去」那一種。
+>    實測：在 `src/module.ts` 加一行 `import Cookies from 'js-cookie'`，
+>    bundle 由 **25,558 → 27,299 bytes**（js-cookie 整包編了進去），
+>    而 define 清單**與基準逐字相同**，複驗者會結論「沒有多出東西，裁決仍成立」。
+>    更早的那版 `grep -c 'js-cookie' dist/module.js` 同樣讀 **0**（壓縮後套件名不留字面字串）。
+>
+> 真正量得到的是 **sourcemap 的 `sources`** —— webpack 逐筆列出編進 bundle 的每個模組
+> 與路徑。同一個實驗裡 js-cookie 指名道姓出現在
+> `webpack://augur-mascot-panel/../node_modules/js-cookie/src/js.cookie.js`。
+> 清單是離散的（多一個少一個看得出來），不像位元組數會逐版漂移。
+>
+> 已做成機械檢查 `tools/check-bundle-deps.mjs` 並納入 commit 閘 ——
+> 散文形式的複驗指令沒人會跑，而且這份文件的兩個版本都示範了它會怎麼寫錯。
+> 該檢查稽核的是**磁碟上現有的 dist**，所以要權威的結論就先 `npm run build`。
+> （一度想加「dist 比 src 舊就失敗」，但那是誤紅：webpack 對未變動的輸出不重寫檔案，
+> 所以正確的 build 也會被判過期。內容相同本來就表示 bundle 是對的。）
 
 > ⚠️ **原本這裡寫的是 `grep -c 'js-cookie|react-router|react-use' dist/module.js` 必須為 0，
 > 那條驗不出東西。** 打包後的程式碼是壓縮過的 —— 套件名不會以字面字串出現在 bundle 裡。
@@ -103,9 +132,12 @@ npm warn peer react@">=19" from @grafana/runtime@13.2.2
 ```bash
 npm audit --json | jq '.metadata.vulnerabilities'
 npm run build
-head -c 400 dist/module.js | grep -oE 'define\(\[[^]]*\]'
+node tools/check-bundle-deps.mjs
 ```
 
-**第三條是這份裁決的核心**：AMD 相依清單一旦多出 `@grafana/*` 與 React 以外的東西，
-上面整套推論就不成立 —— 表示有人 import 了本來不會進 bundle 的東西，
-或 `externals.ts` 被改動了。清單是離散的，多一個少一個看得出來；位元組數不是。
+**第三條是這份裁決的核心**：出貨的 `dist/module.js` 裡一旦出現 `grafana-public-path.js`
+以外的 `node_modules` 模組，上面整套推論就不成立 —— 表示有人 import 了會被打包進去的
+第三方程式碼。清單是離散的，多一個少一個看得出來；位元組數不是。
+
+⚠️ 這條**不要**改回看 AMD `define([...])` 清單或 grep 套件名 —— 兩種都實測驗不出東西，
+理由見上方〈量測佐證〉的訂正框。

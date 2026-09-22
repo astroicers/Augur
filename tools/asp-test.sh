@@ -50,6 +50,20 @@ bash tools/check-js-suffix.sh || { GATE_OK=false; FAILED="$FAILED js-suffix"; }
 echo '--- monitoring 設定 ---'
 node tools/check-monitoring.mjs || { GATE_OK=false; FAILED="$FAILED monitoring"; }
 
+# 出貨 bundle 裡有沒有未稽核的第三方程式碼。稽核的是**磁碟上現有的 dist**，
+# 沒 build 過會印 NOT-BUILT 回 0 —— 摘要會照實寫，不會把「沒稽核」記成「稽核過了」。
+# ⚠️ 不要在這裡加「dist 比 src 舊就失敗」：webpack 對未變動的輸出不重寫檔案
+# （`[compared for emit]`），所以那個判定會在正確的 build 上誤紅。實測過。
+echo '--- bundle 相依 ---'
+BUNDLE_OUT=$(node tools/check-bundle-deps.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED bundle-deps"; }
+printf '%s\n' "$BUNDLE_OUT"
+case "$BUNDLE_OUT" in
+  *'BUNDLE-DEPS: NOT-BUILT'*) BUNDLE_SUM='bundle: 未建置' ;;
+  *'BUNDLE-DEPS: PASS'*)      BUNDLE_SUM='bundle: 相依乾淨' ;;
+  *'BUNDLE-DEPS: FAIL'*)      BUNDLE_SUM='bundle: 含未稽核的第三方模組' ;;
+  *)                          BUNDLE_SUM='bundle: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
+esac
+
 echo '--- sprite 素材 ---'
 SPRITE_OUT=$(node tools/check-sprite-sheets.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprites"; }
 # ⚠️ 非零退出時**印完整輸出**。原本無條件 `tail -3` 會把最有用的部分吃掉：
@@ -193,10 +207,10 @@ else
   PASSED=false
   [ "$GATE_OK" = true ] || SUM="未過：${FAILED# }；$SUM"
 fi
-SUM="$SUM；$SPRITE_SUM；$GRAFANA_SUM"
+SUM="$SUM；$BUNDLE_SUM；$SPRITE_SUM；$GRAFANA_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-bundle-deps + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1
