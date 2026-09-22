@@ -114,9 +114,18 @@ echo '--- Grafana 版本 ---'
 # 原本是 `grep -oE 'grafana/grafana:[0-9.]+' | head -1`，抓的是**整個檔案裡第一個文字命中**，
 # 包含註解。於是「升版時把舊行註解起來留參考」這個再普通不過的動作就會讓檢查讀到舊版號、
 # 與 VERIFIED 相符、整個閘門綠燈放行一個沒驗過的 Grafana。
-GRAFANA_LINES=$(grep -nE '^[[:space:]]*image:[[:space:]]*"?grafana/grafana:' monitoring/docker-compose.yml || true)
+# ⚠️ 也要認**單引號**與**registry 前綴**。先前的樣式是 `"?grafana/grafana:`，
+# 於是 `image: 'grafana/grafana:13.2.2'`（本 repo 的 YAML house style）或
+# `image: docker.io/grafana/grafana:13.2.2`（走 registry mirror 的人）都會零命中，
+# 閘門報「讀不到 tag」而檔案明明就在那裡。更糟的是零命中同時讓下面那條
+# 「有歧義就拒絕」的防繞過守衛一起失效（0 不大於 1）。
+GRAFANA_LINES=$(grep -nE "^[[:space:]]*image:[[:space:]]*[\"']?([a-z0-9.:-]+/)*grafana/grafana:" monitoring/docker-compose.yml || true)
 GRAFANA_COUNT=$(printf '%s' "$GRAFANA_LINES" | grep -c . || true)
-COMPOSE_TAG=$(printf '%s' "$GRAFANA_LINES" | head -1 | sed -E 's/.*grafana\/grafana:([0-9][0-9.]*).*/\1/')
+# ⚠️ sed 沒有 no-match 保護：比對失敗時它原樣輸出整行（含行號），
+# 於是 `grafana/grafana:latest` 會讓「版本號」變成 `12:    image: grafana/grafana:latest`，
+# 而下面那條 `[ -z "$COMPOSE_TAG" ]` 的診斷分支**永遠不會觸發**（字串非空），是死碼。
+# 改用 grep -o 只取真正的數字 tag，取不到就是空字串，讓那條分支真的會走到。
+COMPOSE_TAG=$(printf '%s' "$GRAFANA_LINES" | head -1 | grep -oE 'grafana/grafana:[0-9][0-9.]*' | head -1 | sed -E 's/.*://')
 VERIFIED_TAG=$(head -1 monitoring/VERIFIED-GRAFANA.txt 2>/dev/null | tr -d '[:space:]')
 if [ "$GRAFANA_COUNT" -gt 1 ]; then
   echo "grafana-version: monitoring/docker-compose.yml 有 $GRAFANA_COUNT 個未註解的 grafana image 宣告，無法判斷哪個生效"

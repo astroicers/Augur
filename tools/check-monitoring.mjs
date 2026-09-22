@@ -80,20 +80,72 @@ for (const f of ['windows/windows_exporter-install.ps1', 'windows/alloy-install.
 }
 
 // --- 3) alert rule：不得用已移除的 metric，且每條都要有 dashboard/panel 註解 ---
-const RULE_FILES = ['grafana/provisioning/alerting/rules-perf.yml', 'grafana/provisioning/alerting/rules-security.yml', 'grafana/provisioning/alerting/rules-poc.yml'];
+// ⚠️ **掃整個目錄，不要寫死檔名清單。**
+// 先前是寫死的三檔清單，於是同目錄放第四個 rules yml 就**完全不檢查** ——
+// 實測丟一個含已移除 metric、且完全沒有 __dashboardUid__/__panelId__ 的
+// rules-extra.yml 進去，`MONITORING-CHECK: PASS（6 項）` exit 0，規則數還是報 10。
+// Grafana 會載入它，閘門不會看它。而「新增一個規則檔」正是最常見的動作。
+const ALERTING_DIR = 'grafana/provisioning/alerting';
+const RULE_FILES = (() => {
+  let names;
+  try {
+    names = fs.readdirSync(M(ALERTING_DIR));
+  } catch (err) {
+    console.error(`MONITORING-CHECK: TOOL-ERROR  讀不到 ${ALERTING_DIR}：${err.message}`);
+    process.exit(2);
+  }
+  const found = names.filter((n) => /^rules.*\.ya?ml$/i.test(n)).sort();
+  if (!found.length) {
+    console.error(`MONITORING-CHECK: TOOL-ERROR  ${ALERTING_DIR} 裡找不到任何 rules*.yml`);
+    process.exit(2);
+  }
+  return found.map((n) => `${ALERTING_DIR}/${n}`);
+})();
 const boundPanels = new Set();
 let ruleCount = 0;
 for (const f of RULE_FILES) {
   const src = read(M(f)).toString('utf8');
   for (const [metric, why] of Object.entries(REMOVED_METRICS)) {
-    // 只看真正的 expr 行，註解裡提到它是合法的（我們就在註解裡解釋為什麼不能用）
-    const bad = src.split('\n').filter((l) => l.includes(metric) && /^\s*expr:/.test(l));
+    // 只看真正的 expr，註解裡提到它是合法的（我們就在註解裡解釋為什麼不能用）。
+    // ⚠️ **不能只看「行首是 expr:」的那一行** —— YAML 的折疊純量
+    // （`expr: >-` 後面接縮排的多行）會讓 metric 出現在**下一行**，
+    // 於是整條檢查完全隱形（實測改成折疊寫法後 PASS exit 0）。
+    // 作法：把 expr 的整個區塊（含後續縮排行）攤平再比對，但跳過 `#` 註解行。
+    const lines = src.split('\n');
+    const bad = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s*expr:/.test(lines[i])) {
+        continue;
+      }
+      const indent = lines[i].match(/^\s*/)[0].length;
+      let block = lines[i].replace(/^\s*expr:/, '');
+      for (let j = i + 1; j < lines.length; j++) {
+        const ind = lines[j].match(/^\s*/)[0].length;
+        if (lines[j].trim() === '') {
+          continue;
+        }
+        if (ind <= indent) {
+          break;
+        }
+        block += '\n' + lines[j];
+      }
+      const code = block.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+      if (code.includes(metric)) {
+        bad.push(i + 1);
+      }
+    }
     if (bad.length) {
       problems.push(`${f}：expr 用了已移除的 metric ${metric}（${why}）—— 規則會永遠停在 Normal/NoData`);
     }
   }
   // 逐條規則：title 之後必須出現 __dashboardUid__ 與 __panelId__
-  const blocks = src.split(/^\s*- uid:/m).slice(1);
+  //
+  // ⚠️ **先以 `- title:` 為準切塊，`uid` 是選填的。**
+  // 原本用 `split(/^\s*- uid:/m)`，於是一條**沒有 uid 的規則**會被整個併進
+  // 上一條的 block、繼承它的 annotations 而通過檢查 —— 實測第三條規則被吸收，
+  // PASS，而且印出來的「N 條規則」這個數字本身就是錯的（少算一條）。
+  // Grafana 的 provisioning 不要求 uid，所以這不是假想的寫法。
+  const blocks = src.split(/^\s*-\s+(?=uid:|title:)/m).slice(1);
   for (const b of blocks) {
     ruleCount++;
     const title = (/title:\s*(\S+)/.exec(b) || [])[1] || '(無 title)';
