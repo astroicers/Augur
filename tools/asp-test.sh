@@ -61,7 +61,14 @@ case "$BUNDLE_OUT" in
   *'BUNDLE-DEPS: NOT-BUILT'*) BUNDLE_SUM='bundle: 未建置' ;;
   *'BUNDLE-DEPS: PASS'*)      BUNDLE_SUM='bundle: 相依乾淨' ;;
   *'BUNDLE-DEPS: FAIL'*)      BUNDLE_SUM='bundle: 含未稽核的第三方模組' ;;
-  *)                          BUNDLE_SUM='bundle: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
+  *'BUNDLE-DEPS: TOOL-ERROR'*) GATE_OK=false; FAILED="$FAILED bundle-deps"; BUNDLE_SUM='bundle: 工具錯誤' ;;
+  # ⚠️ **必須讓 gate 紅。** 這個 arm 代表 CLI 印了一個沒有 arm 認得的字串 ——
+  # 也就是工具與閘門已經不同步，而那時「檢查有沒有跑」本身就不成立。
+  # 原本只寫摘要不設旗標：實測把成功 sentinel 改個名字，gate 照樣 exit 0、
+  # passed:true，摘要寫著「未知輸出」而沒有人看。這是一條已證實的靜默放行路徑，
+  # 而整個 land 決策建立在 gate 綠燈上。
+  *)                          GATE_OK=false; FAILED="$FAILED bundle-deps"
+                              BUNDLE_SUM='bundle: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
 esac
 
 echo '--- sprite 素材 ---'
@@ -89,7 +96,10 @@ case "$SPRITE_OUT" in
   *'sha256 不符'*)                 SPRITE_SUM='sprites: sha256 不符（換圖沒更新 manifest）' ;;
   # 落到這裡代表 CLI 印了一個沒有 arm 認得的字串 —— 那本身就是要修的東西，
   # 不要把它猜成「素材違規」。先前正是這個 arm 把所有工具 crash 記成素材問題。
-  *)                               SPRITE_SUM='sprites: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
+  # ⚠️ 同上，這個 arm 必須讓 gate 紅 —— 它代表工具與閘門不同步，
+  # 而不是「素材大概沒事」。原本只寫摘要不設旗標，是一條靜默放行路徑。
+  *)                               GATE_OK=false; FAILED="$FAILED sprites"
+                                   SPRITE_SUM='sprites: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
 esac
 
 # sprite 工具自身的回歸測試。它驗的交付物還不存在，在素材進來之前，
@@ -152,7 +162,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=114
+MIN_SELFTEST=116
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)

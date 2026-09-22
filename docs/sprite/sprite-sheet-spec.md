@@ -909,12 +909,16 @@ RGBA 緩衝區。已實測可行性：1536×1536 RGBA 解碼 45–60ms、九格�
 >    而且一次回報全部（填這個檔的是畫師不是工程師）。
 
 **SP-7.13 【閘門接線】**
-- `tools/asp-test.sh` 增列第四道檢查，位置緊接 `bash tools/check-js-suffix.sh` 之後、`jest` 之前：
+- `tools/asp-test.sh` 納入 sprite 驗收，位置在 `bash tools/check-js-suffix.sh` 之後、`jest` 之前：
   `node tools/check-sprite-sheets.mjs || GATE_OK=false`。
-- ⚠️ **同時必須改 summary 字串**。現行末段是
-  `[ "$GATE_OK" = true ] || SUM="typecheck/lint/js-suffix 未過；$SUM"` ——
-  sprite 檢查失敗時寫進 `.asp-test-result.json` 的會是錯的原因，
-  而這個檔正是 ASP hook 唯一會讀的痕跡。改成四項並列。
+- ⚠️ **同時必須讓 summary 指名是哪一道沒過**。`.asp-test-result.json` 是 ASP hook 唯一會讀的
+  痕跡，把 sprite 的失敗寫成「typecheck 未過」比不寫更糟。現行作法是每一道各自累積到
+  `$FAILED`，摘要印 `未過：<名稱>`。
+  > **【2026-09-22 更新】** 本條原文寫「增列**第四道**檢查」並逐字引用一段
+  > `SUM="typecheck/lint/js-suffix 未過；$SUM"` 的程式碼。兩者都已過期 ——
+  > 閘門現在是 **9 道**（typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 /
+  > sprite 驗收 / sprite 工具自測 / Grafana 版本 / jest），而被引用的那一行不存在了。
+  > 照舊文去找錨點的人會找不到，或更糟 —— 以為有人動過閘門而去「修正」它。
 - **不得**寫成 jest 測試：`testMatch` 只涵蓋 `src/**`，把影像檢查塞進 src 會讓交付物驗收
   寄生在產品碼樹裡；且 jest 的斷言輸出無法承載 SP-7.10 的逐格表格。
 - **不得**改動 `.git/index`（不呼叫任何 git 指令），以免破壞 `tools/asp-test.sh` 註解所述

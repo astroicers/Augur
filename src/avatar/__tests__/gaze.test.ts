@@ -37,9 +37,18 @@ test('遲滯不會把視線鎖死：從中央格出發一定會跟上', () => {
 });
 
 test('cellToBackgroundPosition 對到 3×3 的九宮格', () => {
-  expect(cellToBackgroundPosition(0)).toBe('0% 0%');
-  expect(cellToBackgroundPosition(4)).toBe('50% 50%');
-  expect(cellToBackgroundPosition(8)).toBe('100% 100%');
+  // ⚠️ **九格全測，不要只挑 0 / 4 / 8。**
+  // 那三格正好是對角線 —— 轉置下不變的那三格。把 col 與 row 兩項對調
+  // （一個 token 的錯誤），九格裡有六格會變，而 0/4/8 一格都不在其中：
+  // jest 全綠、閘門放行，而吉祥物每一個非中央方向都顯示錯的格。
+  //
+  // 這支是 **panel 實際 render 用的那一份**。tools/blind-test/scoring.mjs 有一份
+  // 同義的複本（刻意不共用 —— 那個檔要能在瀏覽器裡直接以 ES module 載入），
+  // 兩邊都必須逐格釘住，否則修了一邊等於沒修。
+  const WANT = ['0% 0%', '50% 0%', '100% 0%', '0% 50%', '50% 50%', '100% 50%', '0% 100%', '50% 100%', '100% 100%'];
+  for (let c = 0; c < 9; c++) {
+    expect(cellToBackgroundPosition(c)).toBe(WANT[c]);
+  }
   // 越界不該算出負值或超過 100%
   expect(cellToBackgroundPosition(-3)).toBe('0% 0%');
   expect(cellToBackgroundPosition(99)).toBe('100% 100%');

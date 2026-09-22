@@ -190,19 +190,51 @@ export function checkFormatAndHygiene(sheets, manifest) {
         });
       }
 
-      // 黑邊 matte：半透明且 RGB 純黑 —— 匯出成預乘 alpha 的指紋
+      // 黑邊 matte：半透明且 RGB 純黑 —— 對**黑底**合成過的指紋。
+      //
+      // ⚠️ **這一條抓不到預乘 alpha，而先前的註解宣稱它抓得到。**
+      // 實測（抗鋸齒邊緣 + 預乘）：11,970 個半透明像素，RGB 純黑的是 **0 個**，
+      // 本條一筆都沒發。原因是算術的：`round(c * a / 255) === 0` 要求 `c * a < 127.5`，
+      // 而膚色、髮色這些淺色在任何可見的 alpha 下都不滿足。
+      // 所以**預乘的抗鋸齒交付先前完全偵測不到**，而 SP-7.4 移除一條檢查時
+      // 寫的理由正是「預乘由本條以正確極性接住」—— 那句話是錯的。
+      //
+      // 預乘真正的數學指紋是 **max(R,G,B) ≤ alpha**（因為 RGB_pre = RGB × alpha/255 ≤ alpha）。
+      // 實測分離度：直通 alpha **0.0%**、預乘 **100.0%**。
+      // 而且它在 alpha 很低時特別可靠 —— 預乘把 RGB 乘成 ~0 所以恆成立，
+      // 直通 alpha 在 alpha=1 時任何非黑色都不成立，於是永遠到不了 100%。
       let matte = 0;
       let opaque = 0;
+      let semi = 0;
+      let underAlpha = 0;
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
           const [r, g, b, a] = v.px(x, y);
           if (a > 0) {
             opaque += a === 255 ? 1 : 0;
           }
-          if (a > 0 && a < 255 && r === 0 && g === 0 && b === 0) {
-            matte++;
+          if (a > 0 && a < 255) {
+            semi++;
+            if (Math.max(r, g, b) <= a) {
+              underAlpha++;
+            }
+            if (r === 0 && g === 0 && b === 0) {
+              matte++;
+            }
           }
         }
+      }
+      // 樣本太少時不判（1-bit alpha 的圖沒有半透明像素 —— 那是 SP-2.14 的事，不是本條的）。
+      if (semi >= 200 && underAlpha / semi >= 0.98) {
+        out.push({
+          id: 'SP-7.1/預乘alpha',
+          severity: 'error',
+          sheet: name,
+          cell: c,
+          message: `半透明像素 ${semi} 個裡有 ${(underAlpha / semi * 100).toFixed(1)}% 滿足 max(R,G,B) ≤ alpha —— 那是預乘（premultiplied）alpha 的指紋，SP-2.13 要求非預乘（straight）`,
+          measured: underAlpha / semi,
+          limit: 0.98,
+        });
       }
       const matteRatio = matte / (cellPx * cellPx);
       if (matteRatio > 0.001) {
@@ -1264,22 +1296,26 @@ export function checkAnchors(directions, manifest, centroids) {
         limit: 1.1,
       });
     }
-    // 下巴：SP-7.5 指名要驗，而 headBox 早就算出 y1 卻被丟掉。
-    // 它比頭頂乾淨 —— 下巴以下通常不是膚色也不是髮色，bbox 底端就是下巴。
-    // ⚠️ 但胸上構圖的脖子與鎖骨也是膚色，所以這裡只能是**警告**：
-    // 要把下巴與脖子機械地分開，需要規格凍結一個量得到的分界，目前沒有。
-    const chin = (box.y1 + 1) / cellPx;
-    if (Math.abs(chin - a.chinY) > manifest.anchorToleranceS) {
-      out.push({
-        id: 'SP-7.5/下巴',
-        severity: 'warn',
-        sheet: 'directions',
-        cell: 4,
-        message: `皮膚＋髮 bbox 底端 ${chin.toFixed(4)}·S，宣告下巴 ${a.chinY}·S。胸上構圖的脖子與鎖骨同為膚色，bbox 底端未必等於下巴 —— 本條僅記錄，不判失敗`,
-        measured: chin,
-        limit: a.chinY,
-      });
-    }
+    /**
+     * ⚠️ **下巴沒有機械檢查，而且那是刻意的 —— 它在算繪圖上量不到。**
+     *
+     * 這裡一度用「皮膚＋髮 bbox 的底端」當下巴。兩個版本都不成立：
+     *
+     *  1. bbox **不裁切**時（最初的版本）：胸上構圖的脖子、鎖骨與及胸長髮都在裡面，
+     *     底端是髮尾或胸口而不是下巴。實測每一張合規畫稿都以 **83 倍容差**發出警告，
+     *     而訊息還寫著「宣告下巴 0.6·S」—— 一個 100% 觸發率、83 倍數字的警告
+     *     與壞掉的檢查無法區分，它會是第一個被消音的東西。
+     *  2. bbox **裁切在 chinY** 時（2026-09-22 為了修頭寬而加的）：底端在**數學上**
+     *     不可能超過 chinY。實測下巴畫到 0.62 / 0.70 / 0.80·S 全部量成 0.6016、零 finding
+     *     ——「下巴畫太低」變成結構上偵測不到，只剩畫太高會響。
+     *
+     * 兩者是同一個循環：**我們用 chinY 裁切來隔離頭部，再想從裁切後的結果量出 chinY。**
+     * 而不裁切就量不到頭 —— 臉部皮膚無縫接進脖子，沒有任何像素級的分界。
+     * 要恢復這條檢查，規格必須凍結一個**量得到**的下緣錨點（例如「下顎線稿最低點 Y」），
+     * 那是規格修訂不是程式修正。在那之前下巴的驗收屬於 SP-V.1 的人眼複核。
+     *
+     * 留一個結構上不可能往關鍵方向觸發的檢查，比沒有更糟：它會讓人以為驗過了。
+     */
   }
 
   /**

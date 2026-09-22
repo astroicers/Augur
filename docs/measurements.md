@@ -146,11 +146,21 @@ WebKit 需要超過 10.24 px 才會出事的機率很低。但**這是推論不�
 
 ### 怎麼複驗
 
+⚠️ **這兩支腳本不在版控裡，下面的指令現在會 `MODULE_NOT_FOUND`。**
+它們當初寫在 `.sprite-check/`，而那個目錄是 gitignore 的，從未 commit。
+要複驗得先照下面的描述重建 harness（我就是這樣做的，花了一輪 playwright + PIL）。
+
 ```bash
+# 以下是**當初的**指令，保留作為 harness 應該做什麼的描述，不是可以直接跑的東西：
 node .sprite-check/a2-4-bleed.mjs     # 24 組 × 2 引擎 × 實驗/對照 + 健全性檢查
 node .sprite-check/a2-4-margin.mjs    # 透明帶寬度掃描
 # 兩者都用 PIL 數紅色像素（一次性外部裁判，不是 repo 依賴）
 ```
+
+**重建要點**（兩個坑我都踩過）：
+- 用 `page.setContent()` 的頁面**載不進 `file://` 圖片**，會靜默失敗。要走 HTTP。
+  當初是對照組讀到 299% 才發現的。
+- 不要攔截 Grafana 自己的 rules 請求去做假資料，那會讓所有 chip 變成 `—`。
 
 ---
 
@@ -216,6 +226,9 @@ t=156 與 t=276（emotion 皆為 `resolved` → **不會顯示**）。
 pending 那一格畫了卻幾乎看不到，回來看這一節。
 
 ### 怎麼複驗
+
+⚠️ **同上，這支也不在版控裡**（`.sprite-check/` 是 gitignore 的），現在跑會 `MODULE_NOT_FOUND`。
+保留作為 harness 應該產出什麼的描述。
 
 ```bash
 node .sprite-check/a2-2-observe.mjs 420 .sprite-check/a2-2-trace.tsv

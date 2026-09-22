@@ -80,11 +80,21 @@ node tools/check-bundle-deps.mjs
 > （一度想加「dist 比 src 舊就失敗」，但那是誤紅：webpack 對未變動的輸出不重寫檔案，
 > 所以正確的 build 也會被判過期。內容相同本來就表示 bundle 是對的。）
 
-> ⚠️ **原本這裡寫的是 `grep -c 'js-cookie|react-router|react-use' dist/module.js` 必須為 0，
-> 那條驗不出東西。** 打包後的程式碼是壓縮過的 —— 套件名不會以字面字串出現在 bundle 裡。
-> 真的有人 `import Cookies from 'js-cookie'` 時，js-cookie 的程式碼會被編進去、
-> bundle 變大，而那個 grep **仍然是 0**。要看的是 AMD `define([...])` 的相依清單：
-> 被 externalise 的東西會出現在那裡，被打包進去的不會。
+> ⚠️ **這一段記的是兩個先後被否決的方法，不是現行做法。現行做法在上面。**
+>
+> **(1) `grep -c 'js-cookie|react-router|react-use' dist/module.js` 必須為 0** ——
+> 驗不出東西。打包後的程式碼壓縮過，套件名不會以字面字串留在 bundle 裡；
+> 真的有人 `import Cookies from 'js-cookie'` 時 js-cookie 會被整包編進去，
+> 而那個 grep **仍然是 0**（實測）。
+>
+> **(2) 看 AMD `define([...])` 的相依清單** —— 同樣驗不出東西，而且方向反了。
+> 被 **externalise** 的東西才會出現在清單裡，被**打包進去**的不會 ——
+> 而稽核要防的正是「打包進去」那一種。實測：加一行 `import Cookies from 'js-cookie'`
+> 之後 bundle 由 25,558 → 27,299 bytes，而 define 清單**與基準逐字相同**。
+> 它的通過條件（「只有三個 @grafana/* 加 React」）在乾淨 build 上也不成立。
+>
+> **兩條都不要用。** 現行做法是看 sourcemap 的 `sources`，見本檔上方與
+> `tools/check-bundle-deps.mjs`。
 >
 > **也不要引用絕對位元組數。** 先前這裡寫「24,967 bytes」，它在寫下的同一天就因為
 > 一次無關的改動變成 25,112。`sprite-sheet-spec.md` SP-7.8 引用的 20,915 同樣早就過期。

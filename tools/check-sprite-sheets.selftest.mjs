@@ -844,6 +844,16 @@ const mutants = [
     },
   },
   {
+    // ⚠️ 先前唯一的預乘檢查是「半透明且 RGB 純黑」，而它**抓不到真正的預乘**：
+    // 實測 11,970 個半透明預乘像素，純黑 0 個。算術上 `round(c*a/255)===0`
+    // 要求 `c*a < 127.5`，淺色（膚、髮）在任何可見 alpha 下都不滿足。
+    // 而 SP-7.4 移除一條檢查時寫的理由正是「預乘由黑邊matte 以正確極性接住」——
+    // 那句話是錯的，這條變異體把它釘住。
+    name: 'SP-2.13 預乘 alpha 匯出（抗鋸齒 + premultiply）',
+    expect: 'SP-7.1/預乘alpha',
+    apply: (s) => antialiasEdge(s, true),
+  },
+  {
     // 改由**形狀**承接。遮罩大小比率擋不住這個 —— 本機重現：塗 8 欄（183 px）時
     // 質心由 +12.00 被拉到 −7.99、比率 1.202 < 上限 1.25，A–H **全部綠燈**。
     // 規格原本宣稱「要翻 sign 需要 ≥36% 膨脹」，實測 20.2% 就夠（複審是 10.8%）。
@@ -1000,8 +1010,50 @@ function occludeExceptBottomRow(s, frac) {
   }
 }
 
+
+/**
+ * 把剪影邊緣做成半透明（模擬 SP-2.14 要求的抗鋸齒），`premul` 時再做預乘。
+ * 直通版是**合規**的，預乘版違反 SP-2.13。
+ */
+function antialiasEdge(s, premul) {
+  const d = s.directions.data;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const ox = (c % 3) * S;
+    const oy = Math.floor(c / 3) * S;
+    for (let y = 1; y < S - 1; y++) {
+      for (let x = 1; x < S - 1; x++) {
+        const o = ((oy + y) * SHEET + (ox + x)) * 4;
+        if (d[o + 3] !== 255) {
+          continue;
+        }
+        const edge = [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => d[((oy + y + dy) * SHEET + (ox + x + dx)) * 4 + 3] === 0);
+        if (edge) {
+          d[o + 3] = 128;
+        }
+      }
+    }
+  }
+  if (premul) {
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3];
+      if (a > 0 && a < 255) {
+        d[i] = Math.round(d[i] * a / 255);
+        d[i + 1] = Math.round(d[i + 1] * a / 255);
+        d[i + 2] = Math.round(d[i + 2] * a / 255);
+      }
+    }
+  }
+}
+
 /** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
-const NON_MUTANTS = [
+const NON_MUTANTS = [  {
+    // ⚠️ 直通 alpha 的抗鋸齒邊緣是 **SP-2.14 強制要求**的，不得被預乘偵測誤殺。
+    // 實測分離度：直通 0.0% vs 預乘 100.0%，門檻 0.98。
+    name: 'SP-2.14 的抗鋸齒邊緣（直通 alpha）不得被判成預乘',
+    forbid: 'SP-7.1/預乘alpha',
+    apply: (s) => antialiasEdge(s, false),
+  },
+
   {
     // ⚠️ 遮罩大小比率的**前提是錯的**。程式註解原本寫「可見面積只會被眼瞼遮掉（變小），
     // 沒有任何合法的理由讓它比 master frame 變大」—— 那在 master frame 的虹膜
