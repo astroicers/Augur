@@ -3,7 +3,7 @@
 用 Docker 起一套 **Grafana + Prometheus + Loki**，監控 **Windows 主機**的效能與安全。
 告警由 dashboard 上的 **`augur-mascot-panel`** 自己 pull 並念出來 —— 沒有後端、沒有 webhook。
 
-> 2026-09-21 整份重寫。先前描述的 bridge 架構（`:3001` webhook 接收端）已於 `d428af1`
+> 2026-09-21 整份重寫。先前描述的 bridge 架構（`:3001` webhook 接收端）已於 `fbd81f4`
 > 隨舊管線一起刪除，ADR-004 把 Augur 改成 Grafana panel plugin。
 
 ## 架構
@@ -65,7 +65,9 @@ docker compose --profile security up -d
 - **確認 plugin**：Administration → Plugins → 搜尋 `Mascot`。
   看不到就是 `../dist` 沒建置，或 unsigned 白名單沒生效。
 - **POC dashboard**：Dashboards → `Augur POC — alertState 探測`（uid `augur-poc`）。
-  三個 panel：兩個 Mascot、一個 timeseries 對照組。
+  **五個 panel**：四個 Mascot（id 1 / 3 / 4 / 5）＋一個 timeseries 對照組（id 2）。
+  ⚠️ **panel id 4 與 5 是有作用的**：`rules-perf.yml` 的 3 條與 `rules-security.yml` 的 5 條
+  用 `__panelId__` 綁的就是這兩個數字，改動 id 會讓那 8 條規則的 alertState 到不了 panel。
 
 ### plugin 是怎麼掛上去的
 
@@ -137,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File .\alloy-install.ps1
 ## ⚠️ contactpoints / policies：待裁定，目前不通往任何地方
 
 `grafana/provisioning/alerting/contactpoints.yml` 仍然指向
-`http://host.docker.internal:3001/grafana/webhook` —— **那個 bridge 已於 `d428af1` 刪除**。
+`http://host.docker.internal:3001/grafana/webhook` —— **那個 bridge 已於 `fbd81f4` 刪除**。
 它現在是一份指向不存在服務的 webhook 設定。
 
 **為什麼還留著**：ADR-004 決策 7（Accepted）寫的是「`monitoring/` **全套**保留」，
@@ -188,11 +190,12 @@ docker exec augur-prometheus wget -qO- 'http://localhost:9090/api/v1/targets' | 
   1..([Environment]::ProcessorCount) | ForEach-Object { Start-Job { while($true){} } }
   # 結束：Get-Job | Stop-Job; Get-Job | Remove-Job
   ```
-  ⚠️ `rules-perf.yml` 的 8 條真實規則目前**沒有** `__dashboardUid__` / `__panelId__` 註解，
-  所以它們的 `alertState` 到不了 panel。要補，見 `../docs/handoff/remaining-plan.md` 的 A5-4。
+  ✅ `rules-perf.yml` 與 `rules-security.yml` 的 8 條真實規則**已於 2026-09-21 補上**
+  `__dashboardUid__` / `__panelId__`（A5-4），分別綁 panel 4 與 5。
+  連同 `rules-poc.yml` 的 2 條，這台 Grafana 上 10 條規則全部帶齊註解。
 - **安全**：Windows 故意連續登入失敗 → `WindowsFailedLogonBurst` firing。
   先在 Grafana → Explore → Loki 查 `{job="windows-eventlog"} |= "An account failed to log on"`
-  確認有資料。同樣受上面那個註解問題影響。
+  確認有資料。註解已補齊（見上），所以裝好 Alloy 之後就能直接驗。
 
 ## 告警門檻 / 規則調整
 

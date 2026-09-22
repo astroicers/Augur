@@ -106,7 +106,7 @@ ADR-001／002 引用的 `broadcaster-spikes/` 在 repo 中已不存在，那兩�
 
 `@grafana/create-plugin` 7.11.0 腳手架（**webpack**，非 Vite）·
 執行期 Grafana **13.2.x**、編譯期 pin `@grafana/*` **13.1.0**（externals，不進 bundle）·
-React 18 · Emotion（`@grafana/ui` 的 `useStyles2`）· Jest + @swc/jest（36 測試）· npm。
+React 18 · Emotion（`@grafana/ui` 的 `useStyles2`）· Jest + @swc/jest（55 測試 / 9 suites）· npm。
 
 **`.config/` 由 create-plugin 託管，禁止手改** —— 手改的後果不是被覆寫而是**靜默失效**
 （migration 全是 `if (!AST match) return` 的早退）。要擴充就改根層的 wrapper。

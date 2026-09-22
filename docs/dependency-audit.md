@@ -42,17 +42,25 @@
 /^@grafana\/data/i
 ```
 
-量測佐證（2026-09-21）：
+量測佐證 —— **看 AMD 的相依宣告，不要 grep 套件名**：
 
-```
-$ ls -l dist/module.js
-24967 bytes
-$ grep -c 'js-cookie\|react-router\|react-use' dist/module.js
-0
+```bash
+npm run build
+head -c 400 dist/module.js | grep -oE 'define\(\[[^]]*\]'
 ```
 
-> 順帶更正：`docs/sprite/sprite-sheet-spec.md` SP-7.8 引用的 `dist/module.js`
-> **20,915 bytes 已過期**，當下是 24,967。
+輸出應該**只有**三個 `@grafana/*` 加上 React 那幾個，沒有別的。
+
+> ⚠️ **原本這裡寫的是 `grep -c 'js-cookie|react-router|react-use' dist/module.js` 必須為 0，
+> 那條驗不出東西。** 打包後的程式碼是壓縮過的 —— 套件名不會以字面字串出現在 bundle 裡。
+> 真的有人 `import Cookies from 'js-cookie'` 時，js-cookie 的程式碼會被編進去、
+> bundle 變大，而那個 grep **仍然是 0**。要看的是 AMD `define([...])` 的相依清單：
+> 被 externalise 的東西會出現在那裡，被打包進去的不會。
+>
+> **也不要引用絕對位元組數。** 先前這裡寫「24,967 bytes」，它在寫下的同一天就因為
+> 一次無關的改動變成 25,112。`sprite-sheet-spec.md` SP-7.8 引用的 20,915 同樣早就過期。
+> 位元組數每次 build 都會動，而**沒有任何東西依賴它的確切值** —— 要判斷的是
+> 「相依清單有沒有多出東西」，那是離散的、看得出來的。
 
 ## ⚠️ 這裡有一個給下一個人的陷阱
 
@@ -94,9 +102,10 @@ npm warn peer react@">=19" from @grafana/runtime@13.2.2
 
 ```bash
 npm audit --json | jq '.metadata.vulnerabilities'
-npm run build && ls -l dist/module.js
-grep -c 'js-cookie\|react-router\|react-use' dist/module.js   # 必須是 0
+npm run build
+head -c 400 dist/module.js | grep -oE 'define\(\[[^]]*\]'
 ```
 
-第三條是這份裁決的核心 —— **它一旦不是 0，上面整套推論就不成立**，
-表示有人 import 了本來不會進 bundle 的東西，或 externals 設定被改動了。
+**第三條是這份裁決的核心**：AMD 相依清單一旦多出 `@grafana/*` 與 React 以外的東西，
+上面整套推論就不成立 —— 表示有人 import 了本來不會進 bundle 的東西，
+或 `externals.ts` 被改動了。清單是離散的，多一個少一個看得出來；位元組數不是。

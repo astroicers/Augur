@@ -62,10 +62,16 @@ const getStyles = () => ({
   body: css`
     display: flex;
     gap: 10px;
-    align-items: flex-start;
     flex: 1 1 auto;
     min-height: 0;
   `,
+  /*
+   * ⚠️ 這裡**不能**有 \`align-items: flex-start\`。
+   * 它會讓 feed 這個 flex item 收縮成內容高度，於是 \`overflow-y: auto\` 永遠不觸發 ——
+   * 在真 Grafana 上實測：602×398 的 panel 塞 20 行播報，feed 的 clientHeight 與
+   * scrollHeight 都是 950px（不可捲動），而 panel 底只到 503px，**583px 的內容被切掉且沒有捲軸**。
+   * stage 自己用 \`align-self: flex-start\` 固定在上緣，不需要父層代勞。
+   */
   bodyStacked: css`
     flex-direction: column;
   `,
@@ -82,6 +88,8 @@ const getStyles = () => ({
   feed: css`
     flex: 1 1 auto;
     min-width: 0;
+    /* flex item 的預設 min-height 是 auto（＝內容高度），不歸零的話 overflow 不會生效。 */
+    min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;

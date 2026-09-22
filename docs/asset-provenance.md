@@ -102,7 +102,7 @@ nami 是可辨識的**第三方角色**，風險是著作權侵害；A1 是本�
 | 路徑 | 原因 |
 |---|---|
 | `live2d/_archive/nami/` 的 34 張 png | 「娜美風」角色美術，零出處、零授權記錄。2026-09-16 從 branch 歷史移除（分支當時尚未推送，故只需改寫本地 commit）。原檔留在本機備份 |
-| `web/public/avatar.vrm`（11MB） | 體積 + 授權；原由 `web/scripts/fetch-assets.sh` 下載。`web/` 已於 `d428af1` 刪除 |
+| `web/public/avatar.vrm`（11MB） | 體積 + 授權；原由 `web/scripts/fetch-assets.sh` 下載。`web/` 已於 `fbd81f4` 刪除 |
 | `web/public/live2dcubismcore.min.js` | **Live2D Cubism Core 為專有軟體，不可再散布** |
 | `web/public/models/Hiyori.*` | Live2D 官方範例模型，Free Material License，不隨本專案散布 |
 

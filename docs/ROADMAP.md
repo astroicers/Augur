@@ -73,7 +73,7 @@
 | **計畫 P3** | 「**丟** `alerting/contactpoints.yml` 與 `policies.yml`（指向已不存在的 :3001 bridge）。」 | 計畫，未經 ADR 程序 |
 
 **現況**：兩個檔**都還在**，而 `contactpoints.yml:11` 逐字是
-`url: http://host.docker.internal:3001/grafana/webhook` —— 那個 bridge 已於 `d428af1` 刪除。
+`url: http://host.docker.internal:3001/grafana/webhook` —— 那個 bridge 已於 `fbd81f4` 刪除。
 所以它現在是一個**指向不存在服務的 webhook 設定**。
 
 **為什麼不自行裁定**：ADR 的效力高於計畫。「全套保留」是 Accepted 的文字，
@@ -90,6 +90,20 @@
 另外還有一件**與裁定無關、但不該一起拖著**的事：`WEBHOOK_SECRET`
 曾出現在容器環境變數與 provisioning 檔裡。**那應該由人輪換**，不論上面選哪一條。
 AI 不編輯 `.env`。
+
+## ⚠️ 引用 commit SHA 這件事已經出過一次錯
+
+2026-09-22 的複審發現：本 repo 的四份文件共五處引用 **`d428af1`**，而**那個 commit 不存在**。
+`git cat-file -t d428af1` → `fatal: Not a valid object name`。
+真正刪掉舊管線的是 **`fbd81f4`**（已全部更正）。
+
+**來歷**：`d428af1` 是 nami 美術那次 `filter-branch` **之前**的 SHA。
+改寫歷史讓分支上每個 commit 的 SHA 都變了，而文件裡的引用沒人回去更新 ——
+**而且過了好幾天都沒有人發現**，因為沒有任何機械檢查會去驗一個 SHA 解不解得開。
+
+**這直接關係到還沒做的 A1 歷史改寫（`remaining-plan.md` 的 D1／B6 前置）**：
+同一件事會再發生一次。要做的話，改寫**之後**必須逐一重映文件裡的 SHA，
+或者乾脆改成引用 commit 標題而不是 SHA。
 
 ## 相關文件
 

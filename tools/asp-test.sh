@@ -18,6 +18,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# ⚠️ **第一件事就是刪掉上一輪的結果檔。**
+# 腳本檔頭第 11–14 行講的正是這個失敗模式，但當時只對 .jest-result.json 做了，
+# 對它自己寫的 .asp-test-result.json 沒做。後果是**每一條 abort 路徑都留著上一輪的判決**：
+# jq 不存在、cd 失敗、set -u 中止、操作者 Ctrl-C、CI step timeout、OOM、磁碟滿。
+# 實際的利用路徑不需要惡意：跑過一次綠 → 改壞某個檔 → 再跑閘門但它中途 abort
+# → 結果檔還是上一輪的綠、而且比 .git/index 新 → commit 直接放行。
+# 實測：注入兩個 typecheck 錯誤後在第 3 秒 kill -9，結果檔原封不動是綠的。
+rm -f .asp-test-result.json
+
 command -v jq >/dev/null 2>&1 || { echo 'asp-test: jq 不存在，無法產生測試痕跡'; exit 1; }
 
 # 閘門不能只看 jest —— jest 覆蓋不到 module.ts 與 panelOptions.ts
@@ -47,6 +56,7 @@ case "$SPRITE_OUT" in
   *'SPRITE-CHECK: TOOL-ERROR'*)    SPRITE_SUM='sprites: 工具或格式錯誤' ;;
   *'SPRITE-CHECK: CRASH'*)         SPRITE_SUM='sprites: 工具自己壞了（見輸出的堆疊）' ;;
   *'SPRITE-CHECK: FAIL'*)          SPRITE_SUM='sprites: 素材違規' ;;
+  *'sha256 不符'*)                 SPRITE_SUM='sprites: sha256 不符（換圖沒更新 manifest）' ;;
   # 落到這裡代表 CLI 印了一個沒有 arm 認得的字串 —— 那本身就是要修的東西，
   # 不要把它猜成「素材違規」。先前正是這個 arm 把所有工具 crash 記成素材問題。
   *)                               SPRITE_SUM='sprites: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
@@ -59,9 +69,20 @@ esac
 # 而「每次 minor 升版重跑 G-ADR004-4」這條規則原本只活在 ARCHITECTURE.md 的散文裡 ——
 # 升版的人不會去讀那一行。這道檢查把它變成機械的。
 echo '--- Grafana 版本 ---'
-COMPOSE_TAG=$(grep -oE 'grafana/grafana:[0-9.]+' monitoring/docker-compose.yml | head -1 | cut -d: -f2)
+# ⚠️ **只認未被註解掉的 `image:` 鍵，而且拒絕歧義。**
+# 原本是 `grep -oE 'grafana/grafana:[0-9.]+' | head -1`，抓的是**整個檔案裡第一個文字命中**，
+# 包含註解。於是「升版時把舊行註解起來留參考」這個再普通不過的動作就會讓檢查讀到舊版號、
+# 與 VERIFIED 相符、整個閘門綠燈放行一個沒驗過的 Grafana。
+GRAFANA_LINES=$(grep -nE '^[[:space:]]*image:[[:space:]]*"?grafana/grafana:' monitoring/docker-compose.yml || true)
+GRAFANA_COUNT=$(printf '%s' "$GRAFANA_LINES" | grep -c . || true)
+COMPOSE_TAG=$(printf '%s' "$GRAFANA_LINES" | head -1 | sed -E 's/.*grafana\/grafana:([0-9][0-9.]*).*/\1/')
 VERIFIED_TAG=$(head -1 monitoring/VERIFIED-GRAFANA.txt 2>/dev/null | tr -d '[:space:]')
-if [ -z "$COMPOSE_TAG" ] || [ -z "$VERIFIED_TAG" ]; then
+if [ "$GRAFANA_COUNT" -gt 1 ]; then
+  echo "grafana-version: monitoring/docker-compose.yml 有 $GRAFANA_COUNT 個未註解的 grafana image 宣告，無法判斷哪個生效"
+  printf '%s\n' "$GRAFANA_LINES" | sed 's/^/    /'
+  GATE_OK=false; FAILED="$FAILED grafana-version"
+  GRAFANA_SUM="grafana: $GRAFANA_COUNT 個 image 宣告，有歧義"
+elif [ -z "$COMPOSE_TAG" ] || [ -z "$VERIFIED_TAG" ]; then
   echo "grafana-version: 讀不到 tag（compose='$COMPOSE_TAG' verified='$VERIFIED_TAG'）"
   GATE_OK=false; FAILED="$FAILED grafana-version"
   GRAFANA_SUM='grafana: 版本讀不到'
@@ -77,15 +98,39 @@ fi
 
 # ASP 鐵則四的「逾 180 天提醒複查」在本 repo 沒有任何機械承接（無 .asp/）。
 # 這一段只提醒、不擋 —— 外部事實過期是風險不是錯誤。
+# ⚠️ **這一段只能提醒，絕對不能讓腳本中止。**
+# 原本直接把 `$(date -u -d "$FACT_CHECK_DATE" +%s)` 代進算術。`date -d` 是 GNU 擴充 ——
+# 在 BusyBox / alpine CI image / macOS 上它會失敗並回空字串，算術於是變成
+# `( 1790047103 -  ) / 86400`，在 `set -u` 下**整個腳本中止**。
+# 而中止發生在寫 .asp-test-result.json **之前**，所以留下的是上一輪的判決。
+# 實測：在有兩個真 typecheck 錯誤的樹上，這條路徑讓閘門留下一個綠的結果檔。
 FACT_CHECK_DATE='2026-09-16'
-FACT_AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -d "$FACT_CHECK_DATE" +%s) ) / 86400 ))
-if [ "$FACT_AGE_DAYS" -gt 180 ]; then
-  echo "fact-check: ADR-004 的外部事實查證距今 $FACT_AGE_DAYS 天（> 180），建議複查"
-  GRAFANA_SUM="$GRAFANA_SUM；外部事實查證逾 $FACT_AGE_DAYS 天"
+FACT_EPOCH=$(date -u -d "$FACT_CHECK_DATE" +%s 2>/dev/null || echo '')
+if [ -n "$FACT_EPOCH" ]; then
+  FACT_AGE_DAYS=$(( ( $(date -u +%s) - FACT_EPOCH ) / 86400 ))
+  if [ "$FACT_AGE_DAYS" -gt 180 ]; then
+    echo "fact-check: ADR-004 的外部事實查證距今 $FACT_AGE_DAYS 天（> 180），建議複查"
+    GRAFANA_SUM="$GRAFANA_SUM；外部事實查證逾 $FACT_AGE_DAYS 天"
+  fi
+else
+  echo "fact-check: 本機的 date 不支援 -d（非 GNU coreutils），跳過 180 天提醒"
+  GRAFANA_SUM="$GRAFANA_SUM；查證日期算不出（date 非 GNU）"
 fi
 
 echo '--- sprite 工具自測 ---'
-node tools/check-sprite-sheets.selftest.mjs | tail -2 || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
+# ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
+# 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
+# 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
+MIN_SELFTEST=68
+SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
+printf '%s\n' "$SELF_OUT" | tail -2
+SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)
+SELF_FAIL=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\2/p' | tail -1)
+if [ -z "$SELF_PASS" ] || [ "$SELF_FAIL" != 0 ] || [ "$SELF_PASS" -lt "$MIN_SELFTEST" ]; then
+  echo "sprite-selftest: 斷言數 ${SELF_PASS:-?} 通過 / ${SELF_FAIL:-?} 失敗（要求 >= $MIN_SELFTEST 通過且 0 失敗）"
+  GATE_OK=false
+  case "$FAILED" in *sprite-selftest*) ;; *) FAILED="$FAILED sprite-selftest" ;; esac
+fi
 
 echo '--- jest ---'
 # 先刪：jest 沒起來時不會寫這個檔，殘留的舊檔會被誤當成本輪結果。
@@ -106,7 +151,24 @@ if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   SUM=$(jq -r '"\(.numPassedTests) pass / \(.numFailedTests) fail / \(.numTotalTestSuites) suites"' .jest-result.json)
 else
   JEST_OK=false
-  SUM="jest 未通過或未產生結果（exit=$JEST_EXIT）"
+  # 四種原因分開寫。原本一律寫成「jest 未通過或未產生結果」——
+  # 刪掉一支測試檔時 jest 退出碼是 0、結果檔也在、success 是 true，
+  # 只是 numPassedTests 少於 MIN_TESTS，而記下來的理由卻自相矛盾。
+  if [ "$JEST_EXIT" != 0 ]; then
+    SUM="jest 退出碼 $JEST_EXIT"
+  elif [ ! -f .jest-result.json ]; then
+    SUM='jest 沒寫出結果檔（設定壞掉或 crash）'
+  else
+    JP=$(jq -r '.numPassedTests // "?"' .jest-result.json 2>/dev/null)
+    JF=$(jq -r '.numFailedTests // "?"' .jest-result.json 2>/dev/null)
+    JS=$(jq -r '.numFailedTestSuites // "?"' .jest-result.json 2>/dev/null)
+    JD=$(jq -r '((.numPendingTests // 0) + (.numTodoTests // 0))' .jest-result.json 2>/dev/null)
+    if [ "$JP" != '?' ] && [ "$JF" = 0 ] && [ "$JS" = 0 ] && [ "$JD" = 0 ]; then
+      SUM="jest 測試數 $JP 少於 MIN_TESTS=$MIN_TESTS（測試被刪掉了？）"
+    else
+      SUM="jest $JP pass / $JF fail / $JS suite 失敗 / $JD skipped-or-todo"
+    fi
+  fi
 fi
 
 if [ "$GATE_OK" = true ] && [ "$JEST_OK" = true ]; then

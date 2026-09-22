@@ -34,22 +34,29 @@ export class DiagnosticAvatar implements AvatarController {
   private t0 = 0;
 
   mount(container: HTMLElement): void {
+    // ⚠️ **必須填滿容器。** 先前格子是寫死 10px，整個儀表約 34px 擠在 252px stage 的左上角，
+    // 而 `MascotPanel` 的 dead zone 是**依 stage 尺寸**算的（252px → 63px）。
+    // 後果在真 Grafana 上實測到：游標壓在那 34px 的角色身上時，它與 stage 幾何中心
+    // 差了 219px，落在 dead zone 之外 —— **角色看向別的方向，而不是看著壓在它身上的游標**。
+    // 「中央格＝游標壓在身上」這個語意整個反過來。
+    // 填滿容器之後，看得見的東西與被量測的矩形重合。
     const root = document.createElement('div');
-    root.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    root.style.cssText =
+      'display:flex;align-items:center;justify-content:center;gap:6%;width:100%;height:100%;';
 
     const grid = document.createElement('div');
     grid.style.cssText =
-      'display:grid;grid-template-columns:repeat(3,10px);grid-template-rows:repeat(3,10px);gap:2px;flex:0 0 auto;';
+      'display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:6%;height:78%;aspect-ratio:1;flex:0 0 auto;';
     grid.setAttribute('aria-label', '視線方向（3×3 格，中央為不看任何方向）');
     for (let i = 0; i < 9; i++) {
       const c = document.createElement('div');
-      c.style.cssText = 'width:10px;height:10px;border-radius:2px;background:currentColor;opacity:0.18;';
+      c.style.cssText = 'border-radius:14%;background:currentColor;opacity:0.18;';
       grid.appendChild(c);
       this.cells.push(c);
     }
 
     const mouth = document.createElement('div');
-    mouth.style.cssText = 'width:10px;border-radius:2px;flex:0 0 auto;';
+    mouth.style.cssText = 'width:8%;border-radius:20%;flex:0 0 auto;';
     mouth.setAttribute('aria-label', '嘴型');
 
     root.appendChild(grid);
@@ -87,7 +94,8 @@ export class DiagnosticAvatar implements AvatarController {
       open = phase < 0.5 ? 0.8 : 0.15;
     }
     if (this.mouthEl) {
-      this.mouthEl.style.height = `${2 + open * 14}px`;
+      // 相對容器而非寫死像素 —— 與上面「填滿容器」同一個理由。
+      this.mouthEl.style.height = `${2 + open * 22}%`;
       this.mouthEl.style.background = color;
     }
   };
