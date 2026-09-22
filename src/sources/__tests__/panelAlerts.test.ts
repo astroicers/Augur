@@ -262,3 +262,66 @@ test('降級路徑留下的泛用 episode 在細節回來時被取代而非「�
   expect(recovered.filter((a) => a.status === 'resolved')).toHaveLength(0);
   expect(recovered.map((a) => a.name)).toEqual(['WindowsHighCPU']);
 });
+
+/**
+ * 迴歸：泛用 episode 被取代之後，降級路徑**不得永久靜音**。
+ *
+ * 上一條測的是「取代時不念『已恢復』」，它在 source 這一層就驗完了。
+ * 但 source 只刪自己的 `episodes`，dedup 的 `lastFiring` 不會跟著清 ——
+ * 而預設 `repeatFiringMin: 0` 會讓窗變成 `Infinity`（見 MascotPanel 的映射），
+ * 於是 `t - last < Infinity` 恆真，同一個 fingerprint 再也播不出來。
+ *
+ * 症狀是**告警真的在燒而面板一聲不吭**，而且不留任何錯誤訊息 ——
+ * 所以必須把 source 與 dedup 串起來測，只測 source 看不到這件事。
+ */
+test('端點恢復讓泛用 episode 被取代後，下一次降級仍然播得出來', async () => {
+  const clock = { t: 1_000_000 };
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+
+  let endpointDown = true;
+  let detail: RuleDetail[] = [];
+  const src = createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules: async () => {
+      if (endpointDown) {
+        throw new Error('rules endpoint down');
+      }
+      return detail;
+    },
+    fallbackSeverity: 'critical',
+    ruleCacheSec: 0,
+    now: () => clock.t,
+    onSupersede: (fp) => dedup.forget(fp),
+  });
+
+  const spoken: string[] = [];
+  const tick = async (state: string) => {
+    for (const ev of await src.evaluate({ state }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+
+  // 1) 端點掛掉而 alertState=alerting → 泛用「告警」播出，dedup 記下 alert:panel:N
+  await tick('alerting');
+  expect(spoken).toEqual(['告警/firing']);
+
+  // 2) 端點恢復、拿到具名規則 → 泛用被取代（無聲），具名的播出
+  endpointDown = false;
+  detail = [{ alertname: 'WindowsHighCPU', severity: 'warning' }];
+  clock.t += 60_000;
+  await tick('alerting');
+  expect(spoken).toEqual(['告警/firing', 'WindowsHighCPU/firing']);
+
+  // 3) 全部恢復
+  clock.t += 60_000;
+  await tick('ok');
+
+  // 4) 端點又掛了，而且真的有告警 —— 這一句非播不可。
+  //    沒有 onSupersede → dedup 仍記著 alert:panel:N → 這裡會是沉默。
+  endpointDown = true;
+  clock.t += 60_000;
+  await tick('alerting');
+  expect(spoken.filter((s) => s === '告警/firing')).toHaveLength(2);
+});

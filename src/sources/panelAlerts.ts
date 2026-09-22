@@ -60,6 +60,11 @@ export interface PanelAlertSourceOptions {
   fallbackSeverity: string;
   /** 規則細節的快取秒數；同一個 episode 期間不必反覆打端點。 */
   ruleCacheSec?: number;
+  /**
+   * 某個 episode 被**取代**（而非恢復）時呼叫，讓 dedup 清掉它的狀態而不播任何東西。
+   * 不接的話降級路徑會永久靜音 —— 理由見 `core/dedup.ts` 的 `forget()`。
+   */
+  onSupersede?: (fingerprint: string) => void;
   /** 注入時鐘（測試用）。 */
   now?: () => number;
 }
@@ -269,8 +274,14 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         }
         if (fp === `alert:panel:${opts.panelId}`) {
           // 降級路徑留下的泛用 episode。現在拿得到細節了，它是被**取代**而不是恢復 ——
-          // 靜默清掉，不要念一句「告警 已恢復」。
+          // 不要念一句「告警 已恢復」（那會在告警仍在燒的時候宣告恢復）。
+          //
+          // ⚠️ 但也**不能只是刪掉自己這邊**：dedup 的 `lastFiring` 只在播出 resolved 時
+          // 才清 key，而預設窗是 `Infinity`，所以光刪 `episodes` 會讓這個 fingerprint
+          // 永久靜音 —— 之後端點再掛一次、真的有告警時，面板會完全不出聲。
+          // 必須同時請 dedup 忘掉它。
           episodes.delete(fp);
+          opts.onSupersede?.(fp);
           continue;
         }
         // 與 resolvedAll 同一個規則：丟掉 value（它是 firing 當時的值，恢復時已不是「目前」）。

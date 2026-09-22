@@ -369,6 +369,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       panelId: id,
       fetchRules: fetchPanelRules,
       fallbackSeverity,
+      // 泛用 episode 被具名規則取代時，dedup 也要忘掉它，否則降級路徑永久靜音。
+      // 讀 ref 而非閉包捕捉：兩個 effect 的建立先後無所謂。
+      onSupersede: (fp) => dedupRef.current?.forget(fp),
     });
     return () => {
       sourceRef.current = null;

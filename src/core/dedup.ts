@@ -19,6 +19,18 @@ import type { ParsedAlert } from './types'
 export interface Dedup {
   /** 此告警是否該播報(已套用防洪 + resolved 綁狀態)。 */
   shouldSpeak(alert: ParsedAlert): boolean
+  /**
+   * 忘掉某個 fingerprint 的狀態,**不播任何東西**。
+   *
+   * 給「episode 被取代而不是恢復」用 —— 例如降級路徑先以 `alert:panel:N` 播了一句
+   * 泛用「告警」,稍後 rules 端點恢復、拿到具名規則之後,那個泛用 episode 就該無聲消失。
+   *
+   * ⚠️ **沒有這個方法的話那條路徑會永久靜音。** `lastFiring` 只在「播出 resolved」時
+   * 才刪 key,而預設 `repeatFiringMin: 0` → 窗是 `Infinity` → `t - last < Infinity` 恆真,
+   * 於是同一個 fingerprint 再也不會被播報。症狀是**告警真的在燒而面板一聲不吭**,
+   * 且不留任何錯誤訊息。
+   */
+  forget(fingerprint: string): void
   /** 停掉清理 timer(關閉流程呼叫)。 */
   close(): void
 }
@@ -75,6 +87,9 @@ export function createDedup(windowSec: number, opts: DedupOptions = {}): Dedup {
 
   return {
     shouldSpeak,
+    forget(fingerprint: string) {
+      lastFiring.delete(fingerprint)
+    },
     close() {
       if (timer) {clearInterval(timer)}
     },
