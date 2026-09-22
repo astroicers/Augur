@@ -16,6 +16,32 @@
 
 export const CELL_COUNT = 9;
 
+/**
+ * 「選填欄位」的預設值 —— **唯一來源**。
+ *
+ * 這些鍵是後來才加進 manifest 的，舊 manifest 沒有它們仍要能跑，所以各有一個預設。
+ * 但預設值一旦同時出現在「驗證器」與「消費端」兩處，就會各自漂移：驗證器拿 A 去比
+ * 區間、檢查拿 B 去算，於是驗證通過的 manifest 在檢查裡用的是另一個數字 ——
+ * 而這種不一致不會有任何錯誤訊息。
+ *
+ * 更具體的坑（2026-09-22 複審實測）：`anchors.hairTopMinY` 與 `anchors.crownY` 若只在
+ * 「兩鍵都存在時」比大小，就漏掉「省略 hairTopMinY、把 crownY 壓到 0.048 以下」——
+ * 那同樣會讓 SP-7.5 的接受區間變空，而訊息寫成對畫稿的要求（`必須落在 [0.048, 0.04]·S`），
+ * 沒有一個字指向 manifest。要比的是**生效值**，所以兩邊必須讀同一份預設。
+ */
+export const MANIFEST_DEFAULTS = Object.freeze({
+  anchors: { hairTopMinY: 0.048, maxSilhouetteWidth: 0.84 },
+  gaze: { maskRatioMin: 0.35, maskRatioMax: 1.25 },
+  blink: { opaqueFraction: 0.9 },
+  stroke: { luminanceSlack: 0.03 },
+});
+
+/** 讀 manifest 的選填值，缺席時退回 MANIFEST_DEFAULTS。驗證器與檢查都走這裡。 */
+export function optional(manifest, group, key) {
+  const v = manifest?.[group]?.[key];
+  return Number.isFinite(v) ? v : MANIFEST_DEFAULTS[group][key];
+}
+
 export function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
   if (!m) {
@@ -87,8 +113,13 @@ export function windowRect(win, cellPx) {
  * 一個合規的空格仍被判 FAIL，而訊息叫他去宣告一個他已經宣告了的東西。
  */
 function declaredEmpty(manifest) {
-  const v = manifest.intentionallyEmpty ?? manifest.intentionally_empty;
-  return Array.isArray(v) ? v : [];
+  // ⚠️ 聯集而非 `??`。`[] ?? x` 得到 `[]`，而出貨樣板帶著 `"intentionallyEmpty": []`，
+  // 所以畫師照規格補上底線鍵時，駝峰的空陣列會無條件勝出、宣告被靜默丟棄。
+  // CLI 會先正規化，但 selftest 直接呼叫本函式 —— 兩邊必須是同一套語意，
+  // 否則 CLI 綠而函式庫紅（或反過來），而那種分歧不會有任何訊息。
+  const a = Array.isArray(manifest.intentionallyEmpty) ? manifest.intentionallyEmpty : [];
+  const b = Array.isArray(manifest.intentionally_empty) ? manifest.intentionally_empty : [];
+  return [...a, ...b];
 }
 
 function inRect(x, y, r) {
@@ -360,8 +391,8 @@ export function checkGazeBinding(directions, manifest) {
    * (b) manifest 宣告的其他色值都不得落在虹膜色的容差內 —— 色盤相撞應該是
    *     「規則排除的」而不是「碰巧沒發生」。
    */
-  const maskLo = manifest.gaze?.maskRatioMin ?? 0.35;
-  const maskHi = manifest.gaze?.maskRatioMax ?? 1.25;
+  const maskLo = optional(manifest, 'gaze', 'maskRatioMin');
+  const maskHi = optional(manifest, 'gaze', 'maskRatioMax');
   const irisTol = manifest.colours.irisToleranceRgb;
   const irisRgb = hexToRgb(manifest.colours.iris);
   for (const key of ['lineart', 'skin', 'hair']) {
@@ -741,7 +772,7 @@ export function checkOverlayOwnership(sheets, manifest) {
         }
       }
       const ratio = area === 0 ? 0 : opaqueInFootprint / area;
-      const need = manifest.blink?.opaqueFraction ?? 0.9;
+      const need = optional(manifest, 'blink', 'opaqueFraction');
       if (ratio < need) {
         const holes = area - nonZero;
         out.push({
@@ -775,43 +806,24 @@ export function checkOverlayOwnership(sheets, manifest) {
       }
     }
 
-    // SP-7.4 第三點：composite 在產權視窗之外必須與 master frame 逐位元相同。
+    // SP-7.4 第三點（composite 在產權視窗外須與 master frame 逐位元相同）**不需要**
+    // 獨立檢查：它已由上面的 SP-7.4/視窗產權（limit 0）隱含 —— alpha = 0 的像素在
+    // source-over 下是 no-op，視窗外沒有不透明像素就等於沒有漂移。
     //
-    // ⚠️ **原本這段是死碼。** 它寫的是 `const composited = under;` 然後逐欄比較
-    // `composited` 與 `under` —— 同一個陣列自己比自己，`drift` 恆為 0，
-    // 這條 finding 永遠發不出來。
+    // ⚠️ 這裡一度有一條 `SP-7.4/透明像素帶色`，擋「alpha = 0 但 RGB 非零」的像素，
+    // 理由寫的是「直通道匯出會把它們清成 0，預乘不會」。**那句話是反的，而且那條
+    // 檢查與規格正面衝突**，2026-09-22 複審實測：
     //
-    // 真正要擋的是**帶顏色酬載的透明像素**：alpha = 0 但 RGB 非零。
-    // 直通道（straight alpha）的正確匯出會把它們清成 0；預乘或某些圖層扁平化不會。
-    // 那種像素在標準 source-over 下看不見，但一旦有人改用預乘合成、或把 sheet
-    // 餵進會忽略 alpha 的工具，它們就會浮出來 —— 而那時已經沒有人記得這裡查過什麼。
-    let payload = 0;
-    let firstPayload = null;
-    for (let y = 0; y < cellPx; y++) {
-      for (let x = 0; x < cellPx; x++) {
-        if (allow[y * cellPx + x]) {
-          continue;
-        }
-        const over = v.px(x, y);
-        if (over[3] === 0 && (over[0] !== 0 || over[1] !== 0 || over[2] !== 0)) {
-          payload++;
-          if (!firstPayload) {
-            firstPayload = [x, y, over[0], over[1], over[2]];
-          }
-        }
-      }
-    }
-    if (payload > 0) {
-      out.push({
-        id: 'SP-7.4/透明像素帶色',
-        severity: 'error',
-        sheet: 'reactions',
-        cell: c,
-        message: `產權視窗外有 ${payload} 個 alpha=0 卻帶非零 RGB 的像素（首例 ${firstPayload[0]},${firstPayload[1]} = rgb(${firstPayload[2]},${firstPayload[3]},${firstPayload[4]})）—— 直通道匯出應把它們清成 0`,
-        measured: payload,
-        limit: 0,
-      });
-    }
+    //  1. 極性反了。預乘是 RGB × alpha，alpha = 0 時強制 RGB = 0 —— 預乘正是會清掉
+    //     這些像素的那一方；alpha = 0 而帶色是**直通道的指紋**，也就是 SP-2.13 要求的。
+    //     真正預乘的交付在那條檢查下反而靜默通過。
+    //  2. 它擋掉 SP-2.15 強制要求的東西。SP-2.15 逐字寫「凡距任何不透明像素 ≤ 8px 的
+    //     alpha = 0 像素，其 RGB **必須**填為最近的不透明像素之 RGB」（否則縮放時沿
+    //     剪影邊緣會出現暗環或白環）。拿本檔的合成 sheet 照 SP-2.15 做一次色彩擴張，
+    //     九格裡三格由綠變紅。常見流程也會中：PIL `fill + putalpha(0)` → 4096/4096，
+    //     柔邊筆刷 / 圖層遮罩（Photoshop、Krita 的標準做法）→ 840/840。
+    //  3. 它是冗餘的。預乘匯出的真正指紋是「半透明且 RGB 純黑」，而那個**極性正確**的
+    //     檢查在本檔 SP-7.1/黑邊matte 已經跑了六百多行。
   }
   return out;
 }
@@ -958,8 +970,8 @@ export function checkAnchors(directions, manifest, centroids) {
     // 原本少算一格：對 ±0.004·S（S=512 時 ±2.048 px）的容差來說，整個接受窗被平移一整個像素，
     // 於是真寬 203 px（Δ=−1.8，在容差內）被量成 202 而硬失敗，
     // 真寬 207 px（Δ=+2.2，超出容差）被量成 206 而放行。兩個方向都錯。
-    const hairTopMin = a.hairTopMinY ?? 0.048;
-    const maxSilWidth = a.maxSilhouetteWidth ?? 0.84;
+    const hairTopMin = optional(manifest, 'anchors', 'hairTopMinY');
+    const maxSilWidth = optional(manifest, 'anchors', 'maxSilhouetteWidth');
     range(
       'SP-7.5/頭頂',
       '皮膚＋髮 bbox 頂端 Y',
@@ -1162,7 +1174,7 @@ export function measureStrokeWidths(directions, manifest) {
   const geom = manifest.sheet;
   const { cellPx } = geom;
   const stroke = manifest.stroke;
-  const slack = stroke.luminanceSlack ?? 0.03;
+  const slack = optional(manifest, 'stroke', 'luminanceSlack');
   const lo = stroke.luminanceMin - slack;
   const hi = stroke.luminanceMax + slack;
   const maxDepth = Math.ceil(stroke.width * cellPx * 3);

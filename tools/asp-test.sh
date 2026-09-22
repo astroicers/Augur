@@ -52,7 +52,18 @@ node tools/check-monitoring.mjs || { GATE_OK=false; FAILED="$FAILED monitoring";
 
 echo '--- sprite 素材 ---'
 SPRITE_OUT=$(node tools/check-sprite-sheets.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprites"; }
-echo "$SPRITE_OUT" | tail -3
+# ⚠️ 非零退出時**印完整輸出**。原本無條件 `tail -3` 會把最有用的部分吃掉：
+#   - TOOL-ERROR 的 sentinel 與「manifest 有 N 處不合法」在**第一行**，N 條縮排項目在後
+#     → N>2 就連標題帶計數一起消失，只剩孤兒項目掛在「--- sprite 素材 ---」底下，
+#       看起來像素材問題而不是 manifest 問題。validateManifest 刻意「一次回報全部」，
+#       而 tail -3 正好把那個設計抵銷掉，變回撞一個修一個。
+#   - CRASH 只剩三行堆疊，而摘要卻寫「見輸出的堆疊」。
+#   - FAIL 的 sentinel 活得下來，但 SP-7.10 要求的逐格表格與「超出多少」全被砍。
+# gate 判定、case 分類與 .asp-test-result.json 讀的都是未截斷的變數，所以這只影響人看到什麼。
+case "$SPRITE_OUT" in
+  *'SPRITE-CHECK: PASS'*|*'SPRITE-CHECK: NOT-DELIVERED'*) echo "$SPRITE_OUT" | tail -3 ;;
+  *) echo "$SPRITE_OUT" ;;
+esac
 # 四種結局各自有字，不要用「已驗」概括 —— 「manifest 壞掉」與「素材通過」
 # 寫成同一句，等於把 SP-7.11 特地分出來的退出碼分級在痕跡裡抹掉。
 case "$SPRITE_OUT" in
@@ -126,7 +137,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=77
+MIN_SELFTEST=86
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)

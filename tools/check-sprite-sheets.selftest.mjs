@@ -647,11 +647,11 @@ const mutants = [
       }
     },
   },
-  {
-    name: 'SP-7.4 透明像素帶了顏色酬載（預乘匯出的指紋）',
-    expect: 'SP-7.4/透明像素帶色',
-    apply: (s) => put(s.reactions, 4, 100, 100, [255, 0, 255, 0]),
-  },
+  // ⚠️ 這裡一度有一條 `SP-7.4 透明像素帶了顏色酬載（預乘匯出的指紋）`，突變是
+  // `put(s.reactions, 4, 100, 100, [255, 0, 255, 0])`。它會轉紅，但**釘住的是錯的行為**：
+  // `[255,0,255,0]` 是直通道的指紋（SP-2.13 要求、SP-2.15 強制產生），預乘匯出在數學上
+  // 永遠產不出這個值 —— 標籤與被測物不符。與該檢查一起刪，理由見 spriteChecks.mjs 同處。
+  // 預乘的真正指紋（半透明且 RGB 純黑）由 SP-7.1/黑邊matte 以正確極性擋著，仍有斷言。
   {
     name: 'SP-7.5 呆毛超過 SP-2.3 的 0.048·S 上限',
     expect: 'SP-7.5/頭頂',
@@ -892,6 +892,99 @@ function materialise(dir, sheets, patch = {}) {
     code = e instanceof ToolError ? 2 : -1;
   }
   ok('manifest 壞掉 → ToolError（CLI 對應 exit 2）', code === 2);
+}
+
+// ---------------------------------------------------------------------------
+// validateManifest 的負向覆蓋。
+//
+// ⚠️ 這一區先前幾乎是空的：77 條斷言裡只有「JSON 壞格式 → ToolError」碰得到
+// validateManifest 的約 150 行。雙拼法的正規化是**零覆蓋出貨**的，
+// 那正是 FF-4 的 both-keys 情況從未被跑過的原因。
+//
+// 每一條都配一個「拿掉修正就會轉紅」的形狀，另有兩條「不得誤紅」。
+// ---------------------------------------------------------------------------
+
+/** 跑一次 runCheck，回傳 { code, out }；ToolError 記成 2。 */
+function runWith(name, patch) {
+  const dir = path.join(tmp, name);
+  materialise(dir, base, patch);
+  const lines = [];
+  let code;
+  try {
+    code = runCheck({ spriteDir: dir, outDir: path.join(tmp, 'o-' + name), log: (s) => lines.push(s) });
+  } catch (e) {
+    code = e instanceof ToolError ? 2 : -1;
+    lines.push(String(e.message));
+  }
+  return { code, out: lines.join('\n') };
+}
+
+{
+  // FF-5：對調 stroke 亮度帶。沒有這條驗證，帶會收縮成空集合，
+  // 九格全報「量不到描邊」而輸出裡沒有一個字指向 manifest。
+  const r = runWith('lum-swap', { stroke: { ...buildManifest().stroke, luminanceMin: 0.24, luminanceMax: 0.18 } });
+  ok('FF-5 stroke 亮度帶對調 → ToolError 且訊息指向 manifest',
+    r.code === 2 && r.out.includes('stroke.luminanceMin 必須小於 stroke.luminanceMax'),
+    `code=${r.code} out=${r.out.slice(0, 200)}`);
+
+  // FF-5b：倒置幅度小於 2×slack 時，先前會被 slack 的外擴「救回來」→ exit 0 PASS，
+  // 一個語意上無意義的 manifest 拿到綠燈，描邊檢查跑在被偷偷重建的帶上。
+  const r2 = runWith('lum-swap-small', { stroke: { ...buildManifest().stroke, luminanceMin: 0.2, luminanceMax: 0.19 } });
+  ok('FF-5b 小幅倒置不得被 slack 救回成 PASS', r2.code === 2, `code=${r2.code}`);
+}
+
+{
+  // FF-6：兩組 SP-7.5 區間端點倒置 → 接受區間為空 → 每張交付都失敗，
+  // 而訊息寫成對畫稿的要求（「必須落在 [0.4, 0.3]·S」），沒有圖能滿足。
+  const A = buildManifest().anchors;
+  const r = runWith('anchor-inv', { anchors: { ...A, hairTopMinY: 0.12 } });
+  ok('FF-6 hairTopMinY >= crownY → ToolError',
+    r.code === 2 && r.out.includes('hairTopMinY 必須小於'), `code=${r.code}`);
+
+  const r2 = runWith('anchor-inv2', { anchors: { ...A, maxSilhouetteWidth: 0.3 } });
+  ok('FF-6 headWidth >= maxSilhouetteWidth → ToolError',
+    r2.code === 2 && r2.out.includes('maxSilhouetteWidth'), `code=${r2.code}`);
+
+  // FF-6b：**生效值**才是對的比較對象。省略選填的 hairTopMinY、把 crownY 壓到
+  // 預設 0.048 以下 —— 只比「兩鍵都在」的寫法會漏掉這個，而後果一樣是空區間。
+  const withoutHairTop = { ...A, crownY: 0.03 };
+  delete withoutHairTop.hairTopMinY;
+  const r3 = runWith('anchor-eff', { anchors: withoutHairTop });
+  ok('FF-6b 省略 hairTopMinY 而 crownY 低於預設 → 仍然 ToolError（比生效值）',
+    r3.code === 2 && r3.out.includes('hairTopMinY 必須小於'), `code=${r3.code} out=${r3.out.slice(0, 200)}`);
+}
+
+{
+  // D-1：非陣列的 intentionally_empty 先前被強制成 []，結果與「沒宣告」逐位元組相同，
+  // 而畫師收到的訊息是「去宣告 intentionally_empty」，指向一個他已經填了的鍵。
+  for (const [label, v] of [['物件', { reactions: [8] }], ['字串', 'reactions:8'], ['數字', 8]]) {
+    const r = runWith('empty-shape-' + label, { intentionally_empty: v });
+    ok(`D-1 intentionally_empty 是${label} → ToolError 而非靜默丟棄`,
+      r.code === 2 && r.out.includes('必須是 [{ sheet, cell }] 陣列'), `code=${r.code} out=${r.out.slice(0, 200)}`);
+  }
+}
+
+{
+  // D-1b：**這條才是對 `??` 有鑑別力的形狀** —— 駝峰是空陣列、底線是畸形物件。
+  // `[] ?? {...}` 得到 `[]`，而 `[]` 是合法陣列，於是用 `??` 挑一個的寫法會整個驗不到，
+  // �capture 師的畸形宣告被靜默丟棄。只有「兩個鍵各自驗形狀」才抓得到。
+  const r = runWith('empty-shadow', {
+    intentionallyEmpty: [],
+    intentionally_empty: { reactions: [8] },
+  });
+  ok('D-1b 駝峰空陣列遮蔽底線畸形值 → 仍然報出形狀錯誤',
+    r.code === 2 && r.out.includes('intentionally_empty 必須是 [{ sheet, cell }] 陣列'),
+    `code=${r.code} out=${r.out.slice(0, 240)}`);
+}
+
+{
+  // FF-4：兩種拼法並存且內容不同 —— 先前駝峰的空陣列會無條件吃掉底線的宣告。
+  const r = runWith('empty-both', {
+    intentionallyEmpty: [],
+    intentionally_empty: [{ sheet: 'reactions', cell: 8 }],
+  });
+  ok('FF-4 兩種拼法並存且內容不同 → ToolError 要求收斂成一種',
+    r.code === 2 && r.out.includes('兩種拼法同時存在'), `code=${r.code} out=${r.out.slice(0, 240)}`);
 }
 fs.rmSync(tmp, { recursive: true, force: true });
 

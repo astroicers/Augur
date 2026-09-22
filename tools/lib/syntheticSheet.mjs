@@ -79,7 +79,7 @@ export function buildManifest(overrides = {}) {
       reactions: ['click', 'warning', 'critical', 'resolved', '半開嘴', '大開嘴', '全閉眼', '半閉眼', 'pending'],
     },
     reactionOwnership: ['EBMK', 'BMK', 'BMK', 'BMK', 'M', 'M', 'E', 'E', 'BMK'],
-    intentionallyEmpty: [],
+    intentionally_empty: [],
     budget: { perSheetBytes: 921600, totalBytes: 1258291 },
     sha256: { directions: '', reactions: '' },
   };

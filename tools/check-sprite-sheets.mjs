@@ -40,6 +40,7 @@ import {
   checkHeadImmobility,
   checkLuminanceAndStroke,
   checkOverlayOwnership,
+  optional as effective,
   windowRect,
 } from './lib/spriteChecks.mjs';
 
@@ -57,20 +58,6 @@ const THEMES = [
 ];
 const CONTACT_SIZES = [128, 160, 224];
 const MAGENTA = [0xff, 0x00, 0xff, 0xff];
-
-const REQUIRED_MANIFEST_KEYS = [
-  'sheet',
-  'anchors',
-  'windows',
-  'margins',
-  'colours',
-  'luminance',
-  'stroke',
-  'cells',
-  'reactionOwnership',
-  'budget',
-  'sha256',
-];
 
 class ToolError extends Error {}
 
@@ -146,6 +133,23 @@ function validateManifest(m) {
   num('anchors.hairTopMinY', { min: 0, max: 1, optional: true });
   num('anchors.maxSilhouetteWidth', { min: 0, max: 1, optional: true });
   num('anchorToleranceS', { min: 0, max: 1 });
+  // 這兩組是 SP-7.5 的區間端點。倒置 → 接受區間為空 → 每一張交付都失敗，
+  // 而訊息寫成對畫稿的要求（`必須落在 [0.4, 0.3]·S`），一個沒有任何圖能滿足的要求。
+  //
+  // ⚠️ 比的是**生效值**不是「兩鍵都在時才比」：兩個 hairTopMinY / maxSilhouetteWidth 都是
+  // 選填，只比並存的情況會漏掉「省略選填的那個、把必填的那個壓過預設值」。
+  // 預設值來自 spriteChecks.mjs 的 MANIFEST_DEFAULTS —— 驗證器與檢查讀同一份，
+  // 否則驗證器用 A 比區間、檢查用 B 算，而那種不一致不會有任何訊息。
+  const A = m.anchors || {};
+  // 別名 `effective`：本函式內的 num()/hex() 各有一個同名參數 `optional`，
+  // 雖然作用域不同，相鄰同名遲早會在某次編輯裡被搞混。
+  const eff = (k) => effective(m, 'anchors', k);
+  if (Number.isFinite(A.crownY) && eff('hairTopMinY') >= A.crownY) {
+    errs.push(`anchors.hairTopMinY 必須小於 anchors.crownY（生效值 ${eff('hairTopMinY')} / ${A.crownY}；髮頂在顱骨頂之上）`);
+  }
+  if (Number.isFinite(A.headWidth) && A.headWidth >= eff('maxSilhouetteWidth')) {
+    errs.push(`anchors.headWidth 必須小於 anchors.maxSilhouetteWidth（生效值 ${A.headWidth} / ${eff('maxSilhouetteWidth')}）`);
+  }
 
   // --- 三個視窗（SP-2.11） ---
   for (const w of ['E', 'B', 'M']) {
@@ -194,6 +198,17 @@ function validateManifest(m) {
   num('stroke.luminanceMin', { min: 0, max: 1 });
   num('stroke.luminanceMax', { min: 0, max: 1 });
   num('stroke.luminanceSlack', { min: 0, max: 1, optional: true });
+  // 與五行之上的 luminance.min/max 同形。少了它，把這兩個值對調會讓亮度帶收縮成空集合，
+  // 九格全報「量不到描邊（剪影邊緣沒有落在亮度帶內的像素）」—— 輸出裡沒有一個字指向 manifest，
+  // 畫師被告知九次他的描邊不見了。
+  //
+  // ⚠️ 而且倒置幅度小於 2×slack 時會被 slack 的外擴「救回來」（實測 0.20/0.19 → exit 0 PASS）：
+  // 一個語意上無意義的 manifest 拿到綠燈，描邊檢查跑在一條被偷偷重建的帶上。
+  // 所以這裡比的是原始值而不是套用 slack 之後的帶。
+  const S = m.stroke || {};
+  if (Number.isFinite(S.luminanceMin) && Number.isFinite(S.luminanceMax) && S.luminanceMin >= S.luminanceMax) {
+    errs.push(`stroke.luminanceMin 必須小於 stroke.luminanceMax（實際 ${S.luminanceMin} / ${S.luminanceMax}）`);
+  }
   num('gaze.zeroAxisRatio', { min: 0, max: 10, optional: true });
   num('gaze.maskRatioMin', { min: 0, max: 1, optional: true });
   num('gaze.maskRatioMax', { min: 1, max: 10, optional: true });
@@ -229,9 +244,33 @@ function validateManifest(m) {
   }
 
   // --- intentionally_empty：規格與工具訊息都用底線寫法，程式卻只讀駝峰 ---
+  //
+  // ⚠️ 要讀**原始值**再判形狀。先前這裡讀的是 `intentionallyEmpty(m)` 的回傳，
+  // 而那支函式把任何非陣列強制成 `[]` —— 於是 `{"reactions":[8]}`、`"reactions:8"`、`8`
+  // 三種畸形寫法全部靜默丟棄，結果與「根本沒宣告」逐位元組相同，
+  // 而畫師收到的訊息是「去宣告 intentionally_empty」，指向一個他已經填了的鍵。
+  // ⚠️ 兩個鍵**各自**驗形狀，不要先用 `??` 挑一個 —— `[] ?? x` 得到 `[]`，
+  // 而 `[]` 是合法陣列，於是「駝峰是空陣列、底線是畸形物件」會整個驗不到。
+  // （這行原本就是寫成 `??` 的，被新增的 D-1 斷言當場抓到。）
+  for (const k of ['intentionallyEmpty', 'intentionally_empty']) {
+    if (m[k] !== undefined && !Array.isArray(m[k])) {
+      errs.push(`${k} 必須是 [{ sheet, cell }] 陣列，實際是 ${JSON.stringify(m[k])}`);
+    }
+  }
   const empties = intentionallyEmpty(m);
   if (empties !== null && !empties.every((e) => e && typeof e.sheet === 'string' && Number.isInteger(e.cell))) {
     errs.push('intentionally_empty 的每一項必須是 { sheet, cell }');
+  }
+  // 兩種拼法並存且內容不同 —— 只取其一會靜默丟掉另一半的宣告（見下方 intentionallyEmpty）。
+  if (m.intentionallyEmpty !== undefined && m.intentionally_empty !== undefined) {
+    const a = JSON.stringify(m.intentionallyEmpty);
+    const b = JSON.stringify(m.intentionally_empty);
+    if (a !== b) {
+      errs.push(
+        `intentionallyEmpty 與 intentionally_empty 兩種拼法同時存在且內容不同（${a} vs ${b}）——` +
+          '請只留底線寫法 intentionally_empty（規格與本工具訊息用的都是它）'
+      );
+    }
   }
 
   return errs;
@@ -240,18 +279,58 @@ function validateManifest(m) {
 /**
  * 讀 `intentionally_empty`。
  *
- * ⚠️ **兩種拼法都收。** SP-7.15、SP-7.1、SP-4 與工具自己印的錯誤訊息
+ * ⚠️ **兩種拼法都收，而且取聯集。** SP-7.15、SP-7.1、SP-4 與工具自己印的錯誤訊息
  * （「未宣告 intentionally_empty」）用的都是**底線**寫法，而程式只讀駝峰的
  * `intentionallyEmpty`。後果是：畫師照規格的字填了 `intentionally_empty`，
  * 一個**合規**的空格仍然被判 FAIL，而錯誤訊息叫他去宣告一個他已經宣告了的東西。
  * 這是最惡劣的一種 —— 訊息本身把人推向錯誤的方向。
+ *
+ * ⚠️ 但用 `??` 取「其中一個」還不夠，因為 **`[] ?? x` 得到 `[]`**：
+ * SP-7.15 叫畫師複製的樣板出貨就帶著 `"intentionallyEmpty": []`，
+ * 畫師照規格再加一個底線鍵，駝峰的空陣列就**無條件勝出**、底線那邊被整個丟掉，
+ * 輸出與「完全沒宣告」逐位元組相同。這正是上面那段註解說它修掉的情況，
+ * 而且是最可能發生的那條路徑（2026-09-22 複審實測）。
+ * 取聯集則兩種寫法都算數；並存而內容不同時另有一條 validator error 提醒收斂成一種。
  */
 function intentionallyEmpty(m) {
-  const v = m.intentionallyEmpty ?? m.intentionally_empty;
-  if (v === undefined) {
+  if (m.intentionallyEmpty === undefined && m.intentionally_empty === undefined) {
     return null;
   }
-  return Array.isArray(v) ? v : [];
+  const a = Array.isArray(m.intentionallyEmpty) ? m.intentionallyEmpty : [];
+  const b = Array.isArray(m.intentionally_empty) ? m.intentionally_empty : [];
+  return [...a, ...b];
+}
+
+/**
+ * 在驗證**之前**把字串欄位正規化，讓驗證器與所有消費端看到同一個值。
+ *
+ * ⚠️ 方向很重要：不是放寬 regex，是在讀入時收斂。兩者的差別在 sha256 上很具體 ——
+ * 畫師把 `sha256sum directions.png` 的輸出整行貼進來（`<hash>  directions.png`）時：
+ *   - 放寬 regex 讓它通過 → `verifyDigests` 只做 `.toLowerCase()` 不 trim →
+ *     比對失敗 → exit 1 的「sha256 不符，換圖必須同時更新 manifest」，
+ *     **誣賴畫師換了圖**，而且跳過全部像素檢查。比原本的 exit 2 更糟。
+ *   - 讀入時取第一個空白前的 token → 那一貼就是對的，而真正的不符仍然抓得到。
+ * 色值同理：`hexToRgb` 本來就 `.trim()`，驗證器卻不 trim，於是驗證器比消費端還嚴格，
+ * 把一個下游能正確處理的值擋在門口。
+ */
+function normaliseManifestStrings(m) {
+  if (m.sha256 && typeof m.sha256 === 'object') {
+    for (const k of Object.keys(m.sha256)) {
+      if (typeof m.sha256[k] === 'string') {
+        m.sha256[k] = m.sha256[k].trim().split(/\s+/)[0].toLowerCase();
+      }
+    }
+  }
+  if (m.colours && typeof m.colours === 'object') {
+    for (const k of Object.keys(m.colours)) {
+      if (typeof m.colours[k] === 'string') {
+        m.colours[k] = m.colours[k].trim();
+      }
+    }
+  }
+  if (Array.isArray(m.luminanceExemptColours)) {
+    m.luminanceExemptColours = m.luminanceExemptColours.map((v) => (typeof v === 'string' ? v.trim() : v));
+  }
 }
 
 function readManifest(manifestPath) {
@@ -267,10 +346,18 @@ function readManifest(manifestPath) {
   } catch (err) {
     throw new ToolError(`manifest 不是合法 JSON：${err.message}`);
   }
-  const missing = REQUIRED_MANIFEST_KEYS.filter((k) => !(k in manifest));
-  if (missing.length) {
-    throw new ToolError(`manifest 缺少必要欄位：${missing.join(', ')}`);
+  // ⚠️ 這裡一度先跑一輪 `REQUIRED_MANIFEST_KEYS` 的缺鍵檢查並直接 throw。
+  // 那正好製造了 validateManifest 存在的理由所要消滅的東西：缺 `budget` 區塊而另有
+  // 6 個問題時，輸出只有一行「manifest 缺少必要欄位：budget」，補上之後下一輪才看到其餘 6 個
+  // —— 兩趟往返，而填這個檔的人通常是畫師不是工程師。
+  // 實測拿掉之後同一份輸入一次回報 11 項，空物件 `{}` 回報 53 項且不崩，
+  // 證明 validateManifest 獨力涵蓋全部 11 個必要鍵。
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    // 非物件會讓 validateManifest 內的屬性存取丟出未捕捉的 TypeError，
+    // 被上層標成 CRASH 而不是 SP-7.11 的 exit 2。
+    throw new ToolError(`manifest 必須是一個 JSON 物件，實際是 ${Array.isArray(manifest) ? 'array' : typeof manifest}`);
   }
+  normaliseManifestStrings(manifest);
   const errs = validateManifest(manifest);
   if (errs.length) {
     throw new ToolError(`manifest 有 ${errs.length} 處不合法：\n` + errs.map((e) => `    - ${e}`).join('\n'));

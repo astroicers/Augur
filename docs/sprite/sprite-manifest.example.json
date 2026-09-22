@@ -94,7 +94,9 @@
   },
   "reactionOwnership": ["EBMK", "BMK", "BMK", "BMK", "M", "M", "E", "E", "BMK"],
 
-  "intentionallyEmpty": [],
+  "_note_empty": "規格、SP-7.1/SP-7.4/SP-7.15 與工具印的錯誤訊息用的都是【底線】寫法。這裡跟著用底線，不要改成駝峰 intentionallyEmpty —— 兩種拼法同時存在且內容不同時工具會報錯要你收斂成一種。下面是一個填好的範例，沒有空格時留空陣列即可。",
+  "intentionally_empty": [],
+  "_example_empty": [{ "sheet": "reactions", "cell": 8 }],
   "irisCentroids": {
     "_note": "SP-3.3 的標稱 Δx/Δy 已廢除。這裡改記【交付後實測】的逐格虹膜質心（格內像素座標），供日後回歸比對。腳本的診斷表會印出來，直接抄。",
     "directions": []
