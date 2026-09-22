@@ -20,7 +20,10 @@
     "pupilRightX": 0.59,
     "mouthCentreY": 0.53,
     "shoulderY": 0.85,
-    "headWidth": 0.4
+    "headWidth": 0.4,
+    "_note_range": "下面兩個讓 SP-7.5 的頭頂/頭寬用區間比對 —— 量測法量到的是含髮的 bbox，而 crownY/headWidth 描述的是顱骨，兩者量的不是同一個東西。數字取自 SP-2.3 與 SP-2.9，不是新發明的。",
+    "hairTopMinY": 0.048,
+    "maxSilhouetteWidth": 0.84
   },
   "anchorToleranceS": 0.004,
 

@@ -37,6 +37,7 @@ import { encodeGif } from './lib/gif.mjs';
 import { buildManifest, buildSheets, S, SHEET } from './lib/syntheticSheet.mjs';
 import { CENTER_CELL, buildQuestions, score, verdict } from './blind-test/scoring.mjs';
 import * as C from './lib/spriteChecks.mjs';
+const { CELL_COUNT } = C;
 import { runCheck, SENTINEL, ToolError } from './check-sprite-sheets.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,6 +63,9 @@ function runAll(sheets, manifest) {
   f.push(...C.checkOverlayOwnership(sheets, manifest));
   f.push(...C.checkAnchors(sheets.directions, manifest, g.centroids));
   f.push(...C.checkLuminanceAndStroke(sheets.directions, manifest));
+  // ⚠️ SP-7.6 必須在這裡。它原本只會吐 warn，所以被漏掉了；2026-09-22 起它也會吐
+  // `SP-7.6/眉窗為空` 這個 error（眉毛漏畫是真實的交付失誤，不是對比差）。
+  f.push(...C.checkDownsampleReadability(sheets, manifest));
   return f.filter((x) => x.severity === 'error');
 }
 
@@ -598,6 +602,147 @@ const mutants = [
     expect: 'SP-7.7/描邊寬度',
     sheets: () => buildSheets({ strokePx: 0.008 * S }),
   },
+  // ⬇️ 以下八條是 2026-09-22 複審抓到的缺陷，每一條都配一個變異體 ——
+  //    沒有變異體的檢查等於沒驗過，而這一批當初就是這樣溜過去的。
+  {
+    name: 'SP-7.4 BMK 格把不透明線稿畫進眼窗 E（K 曾被當成整個安全框）',
+    expect: 'SP-7.4/視窗產權',
+    apply: (s) => {
+      for (let dy = -6; dy <= 6; dy++) {
+        for (let dx = -6; dx <= 6; dx++) {
+          put(s.reactions, 1, Math.round(0.41 * S) + dx, Math.round(0.38 * S) + dy, [0, 0, 16, 255]);
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-6.6 覆蓋層畫在下巴以下的鎖骨（膚色，但不是臉）',
+    expect: 'SP-6.6/皮膚遮罩',
+    apply: (s) => {
+      for (let dy = -5; dy <= 5; dy++) {
+        for (let dx = -5; dx <= 5; dx++) {
+          put(s.reactions, 1, 256 + dx, Math.round(0.6 * S) + 43 + dy, [0, 0, 16, 255]);
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-7.4 眨眼格被挖成棋盤狀的洞（半透的眼瞼）',
+    expect: 'SP-7.4/眨眼不透明',
+    apply: (s) => {
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const o = ((Math.floor(6 / 3) * S + y) * SHEET + ((6 % 3) * S + x)) * 4;
+          if (s.reactions.data[o + 3] === 255 && (x + y) % 2 === 0) {
+            s.reactions.data[o + 3] = 0;
+          }
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-7.4 透明像素帶了顏色酬載（預乘匯出的指紋）',
+    expect: 'SP-7.4/透明像素帶色',
+    apply: (s) => put(s.reactions, 4, 100, 100, [255, 0, 255, 0]),
+  },
+  {
+    name: 'SP-7.5 呆毛超過 SP-2.3 的 0.048·S 上限',
+    expect: 'SP-7.5/頭頂',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let y = Math.round(0.02 * S); y < Math.round(0.082 * S); y++) {
+          for (let x = 250; x < 262; x++) {
+            put(s.directions, c, x, y, [0x9f, 0xb4, 0xcc, 255]);
+          }
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-7.5 左瞳心右移 8px（瞳距變窄，合併質心看不出來）',
+    expect: 'SP-7.5/左瞳心',
+    apply: (s) => {
+      const iris = [0x6a, 0x4f, 0xd0];
+      for (let c = 0; c < CELL_COUNT; c++) {
+        const ox = (c % 3) * S;
+        const oy = Math.floor(c / 3) * S;
+        for (let y = 0; y < S; y++) {
+          for (let x = 0; x < 256; x++) {
+            const o = ((oy + y) * SHEET + ox + x) * 4;
+            const d = s.directions.data;
+            if (Math.abs(d[o] - iris[0]) < 10 && Math.abs(d[o + 1] - iris[1]) < 10 && Math.abs(d[o + 2] - iris[2]) < 10) {
+              d[o] = 0xf8;
+              d[o + 1] = 0xf8;
+              d[o + 2] = 0xf8;
+            }
+          }
+        }
+        const dx = ((c % 3) - 1) * 12;
+        const dy = (Math.floor(c / 3) - 1) * 8;
+        for (let y = -12; y <= 12; y++) {
+          for (let x = -12; x <= 12; x++) {
+            if (x * x + y * y <= 144) {
+              put(s.directions, c, Math.round(0.41 * S) + 8 + dx + x, Math.round(0.38 * S) + dy + y, [...iris, 255]);
+            }
+          }
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-7.6 眉窗整個透明（量測失敗，不是對比差）',
+    expect: 'SP-7.6/眉窗為空',
+    apply: (s) => {
+      const B = { y0: Math.round(0.255 * S), y1: Math.round(0.33 * S), x0: Math.round(0.28 * S), x1: Math.round(0.72 * S) };
+      for (const sheet of [s.directions, s.reactions]) {
+        for (let c = 0; c < CELL_COUNT; c++) {
+          for (let y = B.y0; y < B.y1; y++) {
+            for (let x = B.x0; x < B.x1; x++) {
+              const o = ((Math.floor(c / 3) * S + y) * SHEET + ((c % 3) * S + x)) * 4;
+              sheet.data[o + 3] = 0;
+            }
+          }
+        }
+      }
+    },
+  },
+];
+
+/** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
+const NON_MUTANTS = [
+  {
+    name: 'SP-2.3 允許的呆毛（頂到 0.048·S）不得誤紅',
+    forbid: 'SP-7.5/頭頂',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let y = Math.round(0.048 * S); y < Math.round(0.082 * S); y++) {
+          for (let x = 250; x < 262; x++) {
+            put(s.directions, c, x, y, [0x9f, 0xb4, 0xcc, 255]);
+          }
+        }
+      }
+    },
+  },
+  {
+    name: '角色內部貼著邊緣的亮度帶內色不得拉高描邊量測',
+    forbid: 'SP-7.7/描邊寬度',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let y = 100; y < 300; y++) {
+          const dy = (y + 0.5 - 174.08) / 133.12;
+          if (Math.abs(dy) >= 1) {
+            continue;
+          }
+          const hw = 102.4 * Math.sqrt(1 - dy * dy);
+          for (const side of [-1, 1]) {
+            for (let k = 0; k < 4; k++) {
+              put(s.directions, c, Math.round(256 + side * (hw - 13 - k)), y, [0x7a, 0x82, 0x90, 255]);
+            }
+          }
+        }
+      }
+    },
+  },
 ];
 
 for (const m of mutants) {
@@ -607,6 +752,13 @@ for (const m of mutants) {
   }
   const got = ids(runAll(sheets, manifest));
   ok(m.name, got.includes(m.expect), `實際紅的是 [${got.join(', ') || '（全綠 —— 這條檢查無效）'}]`);
+}
+
+for (const m of NON_MUTANTS) {
+  const sheets = clone(base);
+  m.apply(sheets);
+  const got = ids(runAll(sheets, manifest));
+  ok(`（不得誤紅）${m.name}`, !got.includes(m.forbid), `卻紅了 [${got.join(', ')}]`);
 }
 
 // ===========================================================================

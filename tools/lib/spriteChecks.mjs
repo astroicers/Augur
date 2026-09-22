@@ -58,14 +58,37 @@ export function cellView(sheet, index, geom) {
   };
 }
 
-/** 把 SP-2.11 的比例視窗換算成格內像素矩形（含上界，取 floor/ceil 放寬一格）。 */
+/**
+ * 把 SP-2.11 的比例視窗換算成格內像素矩形（半開區間 `[x0, x1)`）。
+ *
+ * ⚠️ **四個邊界都用 `round`，不是 floor/ceil。**
+ * 原本 x0/y0 用 floor、x1/y1 用 ceil，把每個視窗向外撐大不到一個像素。後果有兩個：
+ *
+ * 1. **讓 SP-2.11 宣告「互斥」的視窗重疊。** B 的下緣與 E 的上緣共用 `0.330·S`：
+ *    S=512 時是 168.96，floor 給 168、ceil 給 169，於是**第 168 列同時屬於 B 與 E**。
+ *    `round` 兩邊都給 169，剛好接合 —— 不重疊也不留縫。
+ * 2. **讓 SP-7.2 少檢查一列。** 那條檢查「差異像素必須全部落在 E 之內」是用
+ *    `continue` 跳過 E 內的像素實作的，E 被撐大一列就等於多放行一列。
+ */
 export function windowRect(win, cellPx) {
   return {
-    x0: Math.floor(win.x0 * cellPx),
-    x1: Math.ceil(win.x1 * cellPx),
-    y0: Math.floor(win.y0 * cellPx),
-    y1: Math.ceil(win.y1 * cellPx),
+    x0: Math.round(win.x0 * cellPx),
+    x1: Math.round(win.x1 * cellPx),
+    y0: Math.round(win.y0 * cellPx),
+    y1: Math.round(win.y1 * cellPx),
   };
+}
+
+/**
+ * 讀 `intentionally_empty` 宣告。**兩種拼法都收。**
+ *
+ * SP-7.15、SP-7.1、SP-4 與本檔自己印的錯誤訊息（「未宣告 intentionally_empty」）
+ * 用的都是**底線**寫法，而程式只讀駝峰。後果是畫師照規格的字填了 `intentionally_empty`，
+ * 一個合規的空格仍被判 FAIL，而訊息叫他去宣告一個他已經宣告了的東西。
+ */
+function declaredEmpty(manifest) {
+  const v = manifest.intentionallyEmpty ?? manifest.intentionally_empty;
+  return Array.isArray(v) ? v : [];
 }
 
 function inRect(x, y, r) {
@@ -98,7 +121,7 @@ export function checkFormatAndHygiene(sheets, manifest) {
     }
 
     const band = Math.round(manifest.margins.opaqueFree * cellPx);
-    const emptyCells = new Set((manifest.intentionallyEmpty || []).filter((e) => e.sheet === name).map((e) => e.cell));
+    const emptyCells = new Set(declaredEmpty(manifest).filter((e) => e.sheet === name).map((e) => e.cell));
 
     for (let c = 0; c < CELL_COUNT; c++) {
       const v = cellView(sheet, c, geom);
@@ -392,8 +415,16 @@ export function skinMask(directions, manifest) {
   const v = cellView(directions, 4, geom);
   const skin = hexToRgb(manifest.colours.skin);
   const tol = manifest.colours.skinToleranceRgb;
+  // ⚠️ **必須限縮到「臉」，不是「整格裡所有膚色的像素」。**
+  // 胸上構圖的脖子、鎖骨、耳朵、手都是膚色，原本全部被當成合法的覆蓋區域。
+  // 配上 K 被當成整個安全框那個缺陷（已修），一滴畫在裸露鎖骨上的汗滴
+  // —— 下巴以下 43 px —— 會同時通過 SP-7.4 與 SP-6.6，而那正是 SP-6.6 要擋的漂移。
+  //
+  // 兩道限縮：(a) 下界取**凍結的**下巴錨點（SP-2.3 的 chinY），不是猜的；
+  // (b) 只保留**與眼窗中心連通**的那一塊 —— 耳朵或手若與臉不連通就不算。
+  const chinPx = Math.round((manifest.anchors?.chinY ?? 1) * cellPx);
   const mask = new Uint8Array(cellPx * cellPx);
-  for (let y = 0; y < cellPx; y++) {
+  for (let y = 0; y < Math.min(cellPx, chinPx); y++) {
     for (let x = 0; x < cellPx; x++) {
       const [r, g, b, a] = v.px(x, y);
       if (a >= 128 && colourNear(r, g, b, skin, tol)) {
@@ -401,7 +432,43 @@ export function skinMask(directions, manifest) {
       }
     }
   }
-  return fillHoles(mask, cellPx);
+  const filled = fillHoles(mask, cellPx);
+  return faceComponent(filled, cellPx, manifest);
+}
+
+/**
+ * 只保留與眼窗中心連通的那一個連通塊。
+ *
+ * 眼窗中心是**臉**的定義性位置 —— 若連它都不在遮罩裡（例如整張臉被瀏海蓋住），
+ * 就退回原遮罩而不是回傳空的：空遮罩會讓 SP-6.6 把**每一個**覆蓋像素都判成越界，
+ * 那是把一個量測失敗變成一場素材災難。
+ */
+function faceComponent(mask, cellPx, manifest) {
+  const E = windowRect(manifest.windows.E, cellPx);
+  const seedX = Math.round((E.x0 + E.x1) / 2);
+  const seedY = Math.round((E.y0 + E.y1) / 2);
+  if (!mask[seedY * cellPx + seedX]) {
+    return mask;
+  }
+  const keep = new Uint8Array(cellPx * cellPx);
+  const stack = [seedY * cellPx + seedX];
+  keep[stack[0]] = 1;
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % cellPx;
+    const y = (i - x) / cellPx;
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      if (nx < 0 || ny < 0 || nx >= cellPx || ny >= cellPx) {
+        continue;
+      }
+      const j = ny * cellPx + nx;
+      if (mask[j] && !keep[j]) {
+        keep[j] = 1;
+        stack.push(j);
+      }
+    }
+  }
+  return keep;
 }
 
 /**
@@ -454,29 +521,55 @@ function fillHoles(mask, cellPx) {
 }
 
 /**
- * 把 `"EBMK"` 之類的產權宣告展開成矩形清單。
- * K = 安全框內、E ∪ B ∪ M 以外的全部區域（SP-2.12），所以含 K 時
- * 產權上界即整個安全框 —— 這也是為什麼 SP-6.6 的皮膚遮罩約束必須同時生效：
- * 光靠視窗表，含 K 的格等於沒有邊界。
+ * 把 `"EBMK"` 之類的產權宣告展開成一張**允許遮罩**。
+ *
+ * ⚠️ **原本這裡回傳矩形清單，而 K 被當成「整個安全框」—— 那是錯的。**
+ * SP-2.12 逐字寫 K ＝「安全框內、**E ∪ B ∪ M 以外**的全部區域」。
+ * 把 K 展成整個安全框的後果是：`'BMK'` 這四個格（warning / critical / resolved / pending）
+ * 的產權**悄悄包含了眼窗 E**，而它們是疊在當下那一格 directions 上的 ——
+ * 任何畫進 E 的東西都會毀掉 SP-7.3 存在的理由。
+ * 實測：在 warning 格的眼窗正中央（瞳孔上）畫一塊 13×13 的不透明線稿，**A–H 全綠**。
+ *
+ * 用遮罩而不是矩形，是因為「框減去三個視窗」不是矩形，用矩形表達不出來。
  */
-function ownershipRects(code, manifest) {
+function ownershipMask(code, manifest) {
   const { cellPx } = manifest.sheet;
-  const rects = [];
-  if (code.includes('E')) {
-    rects.push(windowRect(manifest.windows.E, cellPx));
-  }
-  if (code.includes('B')) {
-    rects.push(windowRect(manifest.windows.B, cellPx));
-  }
-  if (code.includes('M')) {
-    rects.push(windowRect(manifest.windows.M, cellPx));
-  }
+  const mask = new Uint8Array(cellPx * cellPx);
+  const E = windowRect(manifest.windows.E, cellPx);
+  const B = windowRect(manifest.windows.B, cellPx);
+  const M = windowRect(manifest.windows.M, cellPx);
+
   if (code.includes('K')) {
+    // K = 安全框 − (E ∪ B ∪ M)
     const lo = Math.floor(manifest.margins.silhouetteBox[0] * cellPx);
     const hi = Math.ceil(manifest.margins.silhouetteBox[1] * cellPx);
-    rects.push({ x0: lo, x1: hi, y0: lo, y1: hi });
+    for (let y = lo; y < hi; y++) {
+      for (let x = lo; x < hi; x++) {
+        if (!inRect(x, y, E) && !inRect(x, y, B) && !inRect(x, y, M)) {
+          mask[y * cellPx + x] = 1;
+        }
+      }
+    }
   }
-  return rects;
+  const add = (r) => {
+    for (let y = r.y0; y < r.y1; y++) {
+      for (let x = r.x0; x < r.x1; x++) {
+        if (x >= 0 && y >= 0 && x < cellPx && y < cellPx) {
+          mask[y * cellPx + x] = 1;
+        }
+      }
+    }
+  };
+  if (code.includes('E')) {
+    add(E);
+  }
+  if (code.includes('B')) {
+    add(B);
+  }
+  if (code.includes('M')) {
+    add(M);
+  }
+  return mask;
 }
 
 export function checkOverlayOwnership(sheets, manifest) {
@@ -486,16 +579,14 @@ export function checkOverlayOwnership(sheets, manifest) {
   const { cellPx } = geom;
   const skin = skinMask(sheets.directions, manifest);
   const B = windowRect(manifest.windows.B, cellPx);
-  const emptyCells = new Set(
-    (manifest.intentionallyEmpty || []).filter((e) => e.sheet === 'reactions').map((e) => e.cell)
-  );
+  const emptyCells = new Set(declaredEmpty(manifest).filter((e) => e.sheet === 'reactions').map((e) => e.cell));
 
   for (let c = 0; c < CELL_COUNT; c++) {
     if (emptyCells.has(c)) {
       continue;
     }
     const code = manifest.reactionOwnership[c];
-    const rects = ownershipRects(code, manifest);
+    const allow = ownershipMask(code, manifest);
     const v = cellView(sheets.reactions, c, geom);
 
     let outsideWindows = 0;
@@ -513,7 +604,7 @@ export function checkOverlayOwnership(sheets, manifest) {
         if (a === 255) {
           fullyOpaque++;
         }
-        if (!rects.some((r) => inRect(x, y, r))) {
+        if (!allow[y * cellPx + x]) {
           outsideWindows++;
           if (!firstOut) {
             firstOut = [x, y];
@@ -561,15 +652,47 @@ export function checkOverlayOwnership(sheets, manifest) {
 
     // 格 6 / 7 為眨眼：必須是不透明的修補塊（SP-4.7 的「不足」失敗模式）
     if (c === 6 || c === 7) {
-      const ratio = fullyOpaque / nonZero;
+      // ⚠️ **分母必須是修補塊的「輪廓面積」，不是「非零 alpha 的像素數」。**
+      // 原本算的是 `fullyOpaque / nonZero` —— 被挖成 alpha=0 的洞根本不在分母裡，
+      // 所以洞**永遠壓不低這個比例**。實測：把閉眼格挖成棋盤狀（1201 個像素 alpha 歸零，
+      // 也就是一半的眼瞼是透的、底下的瞳孔直接讀出來），這條檢查回報 0 個 finding。
+      // 而那正是 SP-4.7 點名的「不足」失敗模式。
+      //
+      // 反過來，一塊有 20% 像素是 alpha=254 的修補塊（肉眼完全看不出差別）原本會被判失敗。
+      // 兩個方向都錯。
+      //
+      // 修法：先把非零 alpha 的區域補洞（`fillHoles`）得到修補塊的**輪廓**，
+      // 再要求輪廓內每一個像素 alpha === 255。
+      const footprint = new Uint8Array(cellPx * cellPx);
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          footprint[y * cellPx + x] = v.px(x, y)[3] !== 0 ? 1 : 0;
+        }
+      }
+      const filled = fillHoles(footprint, cellPx);
+      let area = 0;
+      let opaqueInFootprint = 0;
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          if (!filled[y * cellPx + x]) {
+            continue;
+          }
+          area++;
+          if (v.px(x, y)[3] === 255) {
+            opaqueInFootprint++;
+          }
+        }
+      }
+      const ratio = area === 0 ? 0 : opaqueInFootprint / area;
       const need = manifest.blink?.opaqueFraction ?? 0.9;
       if (ratio < need) {
+        const holes = area - nonZero;
         out.push({
           id: 'SP-7.4/眨眼不透明',
           severity: 'error',
           sheet: 'reactions',
           cell: c,
-          message: `非零 alpha 像素中僅 ${(ratio * 100).toFixed(1)}% 為 alpha=255，低於 ${(need * 100).toFixed(0)}% —— 半透明的閉眼會讓底下的瞳孔透出來`,
+          message: `修補塊輪廓 ${area} px 中只有 ${(ratio * 100).toFixed(1)}% 是 alpha=255（低於 ${(need * 100).toFixed(0)}%）${holes > 0 ? `，其中 ${holes} px 是 alpha=0 的洞` : ''} —— 透的眼瞼會讓底下的瞳孔讀出來`,
           measured: ratio,
           limit: need,
         });
@@ -595,35 +718,40 @@ export function checkOverlayOwnership(sheets, manifest) {
       }
     }
 
-    // composite 在視窗之外必須與 master frame 逐位元相同。
-    // 這條其實由「非零 alpha 全在視窗內」蘊含，但分開驗是有意義的：
-    // 它擋的是 alpha=0 卻帶了非零 RGB 的像素在某些合成實作下滲出來。
-    const base = cellView(sheets.directions, 4, geom);
-    let drift = 0;
+    // SP-7.4 第三點：composite 在產權視窗之外必須與 master frame 逐位元相同。
+    //
+    // ⚠️ **原本這段是死碼。** 它寫的是 `const composited = under;` 然後逐欄比較
+    // `composited` 與 `under` —— 同一個陣列自己比自己，`drift` 恆為 0，
+    // 這條 finding 永遠發不出來。
+    //
+    // 真正要擋的是**帶顏色酬載的透明像素**：alpha = 0 但 RGB 非零。
+    // 直通道（straight alpha）的正確匯出會把它們清成 0；預乘或某些圖層扁平化不會。
+    // 那種像素在標準 source-over 下看不見，但一旦有人改用預乘合成、或把 sheet
+    // 餵進會忽略 alpha 的工具，它們就會浮出來 —— 而那時已經沒有人記得這裡查過什麼。
+    let payload = 0;
+    let firstPayload = null;
     for (let y = 0; y < cellPx; y++) {
       for (let x = 0; x < cellPx; x++) {
-        if (rects.some((r) => inRect(x, y, r))) {
+        if (allow[y * cellPx + x]) {
           continue;
         }
         const over = v.px(x, y);
-        if (over[3] !== 0) {
-          continue;
-        }
-        const under = base.px(x, y);
-        const composited = under;
-        if (composited[0] !== under[0] || composited[1] !== under[1] || composited[2] !== under[2] || composited[3] !== under[3]) {
-          drift++;
+        if (over[3] === 0 && (over[0] !== 0 || over[1] !== 0 || over[2] !== 0)) {
+          payload++;
+          if (!firstPayload) {
+            firstPayload = [x, y, over[0], over[1], over[2]];
+          }
         }
       }
     }
-    if (drift > 0) {
+    if (payload > 0) {
       out.push({
-        id: 'SP-7.4/合成漂移',
+        id: 'SP-7.4/透明像素帶色',
         severity: 'error',
         sheet: 'reactions',
         cell: c,
-        message: `composite(directions[4], reactions[${c}]) 在產權視窗外有 ${drift} 個像素與 master frame 不同`,
-        measured: drift,
+        message: `產權視窗外有 ${payload} 個 alpha=0 卻帶非零 RGB 的像素（首例 ${firstPayload[0]},${firstPayload[1]} = rgb(${firstPayload[2]},${firstPayload[3]},${firstPayload[4]})）—— 直通道匯出應把它們清成 0`,
+        measured: payload,
         limit: 0,
       });
     }
@@ -702,7 +830,8 @@ export function checkAnchors(directions, manifest, centroids) {
   const tol = (manifest.anchorToleranceS ?? 0.004) * cellPx;
   const a = manifest.anchors;
 
-  const push = (id, label, measured, expected) => {
+  /** 點值比對：實測必須落在 `expected ± tol`。 */
+  const point = (id, label, measured, expected) => {
     if (!Number.isFinite(measured)) {
       out.push({ id, severity: 'error', sheet: 'directions', cell: 4, message: `${label} 量不到` });
       return;
@@ -721,20 +850,141 @@ export function checkAnchors(directions, manifest, centroids) {
     }
   };
 
-  push('SP-7.5/臉中軸', '臉中軸 X', silhouetteAxis(directions, manifest), a.faceAxisX);
+  /**
+   * 區間比對：實測必須落在 `[lo, hi]`（單位都是 ·S）。
+   *
+   * ⚠️ **為什麼頭頂與頭寬是區間而不是點值** —— 這是規格自己的一處矛盾，2026-09-22 解掉的：
+   *
+   * SP-7.5 的量測法逐字寫「頭寬與頭頂/下巴由**皮膚+髮遮罩**的 bbox」，
+   * 而它要比對的 SP-2.3 `crownY = 0.080` 定義的是「**顱骨**最高處，**不含髮量與呆毛**」。
+   * 兩者量的是**不同的東西**：bbox 的頂端是頭髮的頂端，顱骨頂在它下面。
+   *
+   * 後果不是「稍微不準」，是**合規的畫稿會硬失敗**：SP-2.3 明文允許髮／呆毛最高到
+   * `0.048·S`，而那會讓 bbox 頂端比宣告的 crownY 高出 `0.032·S`＝ 容差的 8 倍。
+   * SP-2.11 自己的註記還寫著這個角色「有 long side locks」。
+   *
+   * 顱骨頂端在 2D 算繪裡**本來就量不到**（它被頭髮蓋著），所以沒有「量得更準」這條路。
+   * 改成區間：bbox 頂端必須落在 `[髮頂上限, 顱骨頂]` 之間 —— 兩個數字**規格都已經凍結**
+   * （SP-2.3 的 0.048 與 0.080），不需要發明新的值。頭寬同理，用 SP-2.9 的
+   * 「頭寬 0.400」與「剪影最寬處 ≤ 0.840」當上下界。
+   *
+   * 代價要說清楚：**區間比點值鬆得多**，它擋得住「整顆頭畫錯位置」，擋不住
+   * 「頭頂差了 0.01·S」。要恢復點值精度，規格必須凍結一個**量得到**的錨點
+   * （例如「髮絲最高點 Y」），那是規格修訂不是程式修正。
+   */
+  const range = (id, label, measured, lo, hi, why) => {
+    if (!Number.isFinite(measured)) {
+      out.push({ id, severity: 'error', sheet: 'directions', cell: 4, message: `${label} 量不到` });
+      return;
+    }
+    const m = measured / cellPx;
+    if (m < lo - manifest.anchorToleranceS || m > hi + manifest.anchorToleranceS) {
+      out.push({
+        id,
+        severity: 'error',
+        sheet: 'directions',
+        cell: 4,
+        message: `${label} 實測 ${m.toFixed(4)}·S，必須落在 [${lo}, ${hi}]·S（${why}）`,
+        measured: m,
+        limit: m < lo ? lo : hi,
+      });
+    }
+  };
+
+  point('SP-7.5/臉中軸', '臉中軸 X', silhouetteAxis(directions, manifest), a.faceAxisX);
 
   const box = headBox(directions, manifest);
   if (!box) {
     out.push({ id: 'SP-7.5/頭部遮罩', severity: 'error', sheet: 'directions', cell: 4, message: '皮膚＋髮色遮罩為空，量不到頭部 bbox' });
   } else {
-    push('SP-7.5/頭頂', '頭頂 Y', box.y0, a.crownY);
-    push('SP-7.5/頭寬', '頭寬', box.x1 - box.x0, a.headWidth);
+    // ⚠️ bbox 的 x0/x1/y0/y1 是**含端點的像素索引**，所以範圍是 `x1 - x0 + 1` 而不是 `x1 - x0`。
+    // 原本少算一格：對 ±0.004·S（S=512 時 ±2.048 px）的容差來說，整個接受窗被平移一整個像素，
+    // 於是真寬 203 px（Δ=−1.8，在容差內）被量成 202 而硬失敗，
+    // 真寬 207 px（Δ=+2.2，超出容差）被量成 206 而放行。兩個方向都錯。
+    const hairTopMin = a.hairTopMinY ?? 0.048;
+    const maxSilWidth = a.maxSilhouetteWidth ?? 0.84;
+    range(
+      'SP-7.5/頭頂',
+      '皮膚＋髮 bbox 頂端 Y',
+      box.y0,
+      hairTopMin,
+      a.crownY,
+      `SP-2.3：髮/呆毛最高 ${hairTopMin}·S、顱骨頂 ${a.crownY}·S，而 bbox 量到的是前者`
+    );
+    range(
+      'SP-7.5/頭寬',
+      '皮膚＋髮 bbox 寬',
+      box.x1 - box.x0 + 1,
+      a.headWidth,
+      maxSilWidth,
+      `SP-2.9：顱骨最寬 ${a.headWidth}·S、剪影最寬 ${maxSilWidth}·S，而 bbox 含側髮`
+    );
+    // 下巴：SP-7.5 指名要驗，而 headBox 早就算出 y1 卻被丟掉。
+    // 它比頭頂乾淨 —— 下巴以下通常不是膚色也不是髮色，bbox 底端就是下巴。
+    // ⚠️ 但胸上構圖的脖子與鎖骨也是膚色，所以這裡只能是**警告**：
+    // 要把下巴與脖子機械地分開，需要規格凍結一個量得到的分界，目前沒有。
+    const chin = (box.y1 + 1) / cellPx;
+    if (Math.abs(chin - a.chinY) > manifest.anchorToleranceS) {
+      out.push({
+        id: 'SP-7.5/下巴',
+        severity: 'warn',
+        sheet: 'directions',
+        cell: 4,
+        message: `皮膚＋髮 bbox 底端 ${chin.toFixed(4)}·S，宣告下巴 ${a.chinY}·S。胸上構圖的脖子與鎖骨同為膚色，bbox 底端未必等於下巴 —— 本條僅記錄，不判失敗`,
+        measured: chin,
+        limit: a.chinY,
+      });
+    }
   }
 
   if (centroids && centroids[4] && centroids[4].n > 0) {
-    push('SP-7.5/眼線', '眼線 Y', centroids[4].cy, a.eyeLineY);
+    point('SP-7.5/眼線', '眼線 Y', centroids[4].cy, a.eyeLineY);
   }
+
+  // 瞳距與左右瞳心 X（SP-2.5）。左右眼各自的虹膜質心，用眼窗中線切開。
+  const eyes = eyeCentroids(directions, 4, manifest);
+  if (eyes) {
+    point('SP-7.5/左瞳心', '左瞳心 X', eyes.left, a.pupilLeftX);
+    point('SP-7.5/右瞳心', '右瞳心 X', eyes.right, a.pupilRightX);
+  }
+
   return out;
+}
+
+/**
+ * master frame 的左右虹膜質心 X（像素）。以臉中軸把眼窗 E 切成兩半分別取質心。
+ *
+ * SP-2.5 凍結了瞳距 0.180 與左右瞳心 X 0.410 / 0.590，而先前**一個都沒有機械承接** ——
+ * `irisCentroid` 把兩眼混成一個質心，剛好把「兩眼一起偏移」與「瞳距變了」抹平成同一個數字。
+ */
+export function eyeCentroids(directions, cell, manifest) {
+  const geom = manifest.sheet;
+  const { cellPx } = geom;
+  const E = windowRect(manifest.windows.E, cellPx);
+  const iris = hexToRgb(manifest.colours.iris);
+  const tol = manifest.colours.irisToleranceRgb;
+  const mid = manifest.anchors.faceAxisX * cellPx;
+  const v = cellView(directions, cell, geom);
+  let lx = 0;
+  let ln = 0;
+  let rx = 0;
+  let rn = 0;
+  for (let y = E.y0; y < E.y1; y++) {
+    for (let x = E.x0; x < E.x1; x++) {
+      const [r, g, b, alpha] = v.px(x, y);
+      if (alpha < 128 || !colourNear(r, g, b, iris, tol)) {
+        continue;
+      }
+      if (x < mid) {
+        lx += x;
+        ln++;
+      } else {
+        rx += x;
+        rn++;
+      }
+    }
+  }
+  return ln > 0 && rn > 0 ? { left: lx / ln, right: rx / rn, leftN: ln, rightN: rn } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -913,19 +1163,51 @@ export function measureStrokeWidths(directions, manifest) {
       queue = next;
     }
 
-    let band = 0;
+    // ⚠️ **描邊帶取「從外緣連通的那一圈」，不是「3w 以內所有亮度在帶內的像素」。**
+    //
+    // 原本的寫法把 `depth <= 3w`（S=512 時 25 px）以內、亮度落在
+    // [0.18−slack, 0.24+slack] = [0.15, 0.27] 的**任何**像素都算進描邊面積，
+    // 而描邊本身只佔最外面約 8 px —— 剩下的 17 px 是角色內部。
+    // 內部的帶內色不是罕見情形：實測描邊 #6E7681 與髮色 #9FB4CC 之間的抗鋸齒過渡
+    // 在 t=0.25 處是 L=0.2333，正在帶內。任何貼著邊緣的陰影或漸層都會把量到的
+    // 寬度拉高，而容差只有 ±1.02 px —— 合規的畫稿會被硬失敗。
+    //
+    // 改成從 depth 0 的帶內像素往內 flood，只穿過帶內鄰居：得到的就是真正貼著
+    // 外緣的那一圈，內部另一塊帶內色即使距離很近也不會被併進來。
+    const inBand = (x, y) => {
+      const [r, g, b] = v.px(x, y);
+      const L = relativeLuminance(r, g, b);
+      return L >= lo && L <= hi;
+    };
+    const ring = new Uint8Array(cellPx * cellPx);
+    const stack = [];
     for (let y = 0; y < cellPx; y++) {
       for (let x = 0; x < cellPx; x++) {
         const i = y * cellPx + x;
-        if (depth[i] < 0) {
-          continue;
-        }
-        const [r, g, b] = v.px(x, y);
-        const L = relativeLuminance(r, g, b);
-        if (L >= lo && L <= hi) {
-          band++;
+        if (depth[i] === 0 && inBand(x, y)) {
+          ring[i] = 1;
+          stack.push(i);
         }
       }
+    }
+    while (stack.length) {
+      const i = stack.pop();
+      const x = i % cellPx;
+      const y = (i - x) / cellPx;
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        if (nx < 0 || ny < 0 || nx >= cellPx || ny >= cellPx) {
+          continue;
+        }
+        const j = ny * cellPx + nx;
+        if (depth[j] >= 0 && !ring[j] && inBand(nx, ny)) {
+          ring[j] = 1;
+          stack.push(j);
+        }
+      }
+    }
+    let band = 0;
+    for (let i = 0; i < ring.length; i++) {
+      band += ring[i];
     }
     widths.push(band === 0 ? NaN : band / perimeter);
   }
@@ -974,16 +1256,69 @@ export function downsampleCell(sheet, cell, manifest, target) {
   return out;
 }
 
+/**
+ * SP-7.6：把 **`composite(directions[4], reactions[2])`** 降採樣到 128px，量眉線對比。
+ *
+ * ⚠️ **三處修正（2026-09-22）**：
+ *
+ * 1. **原本從來沒讀過 reactions。** 函式簽章收 `sheets`，body 裡只出現 `sheets.directions` ——
+ *    `sheets.reactions` 一次都沒有。也就是說 reactions[2]（critical，整個情緒讀值
+ *    最依賴眉形的那一格，也正是 SP-7.6 指名的那一格）可以是空白或垃圾，
+ *    量到的對比**逐位元相同**。
+ * 2. **`severity: contrast >= need ? 'warn' : 'warn'`** —— 三元判斷算了結果然後丟掉。
+ *    它看起來像是已經分辨兩種情形了，於是未來只改門檻值的那次 commit 會讓檢查
+ *    永遠停在 warn 而沒有人發現。改成明寫 `'warn'` 並把「什麼時候翻成 error」寫在註解裡。
+ * 3. **空眉窗回報 −1。** `lo` 初值 1、`hi` 初值 0，一個像素都沒取到時 `hi − lo = −1`，
+ *    讀起來像「對比很差」而不是「量測失敗」。眉窗全透明是真實的交付失誤，
+ *    它該是 error 而不是一個看不懂的負數。
+ */
 export function checkDownsampleReadability(sheets, manifest) {
   const { cellPx } = manifest.sheet;
   const target = manifest.readability?.targetPx ?? 128;
   const need = manifest.readability?.minBrowContrast ?? 0.25;
-  const small = downsampleCell(sheets.directions, 4, manifest, target);
+
+  // SP-7.6 指名的是合成後的畫面，不是底圖。critical 的眉壓在 reactions[2]。
+  const base = cellBufferOf(sheets.directions, 4, manifest);
+  const over = cellBufferOf(sheets.reactions, 2, manifest);
+  const composed = compositeOver(base, over);
+  const small = downsampleBuffer(composed, cellPx, target);
+
   const B = windowRect(manifest.windows.B, cellPx);
+
+  // 空窗判定要在**全解析度**上做。在降採樣後判會把窗外的不透明像素混進來
+  // （每個輸出像素平均 4×4 個來源像素，窗邊一定吃到外面），於是「眉毛整個漏畫」
+  // 這種真實的交付失誤驗不出來。
+  let fullResSamples = 0;
+  for (let y = B.y0; y < B.y1; y++) {
+    for (let x = B.x0; x < B.x1; x++) {
+      if (composed[(y * cellPx + x) * 4 + 3] >= 128) {
+        fullResSamples++;
+      }
+    }
+  }
+  if (fullResSamples === 0) {
+    return [
+      {
+        id: 'SP-7.6/眉窗為空',
+        severity: 'error',
+        sheet: 'directions',
+        cell: 4,
+        message: '合成後眉窗內一個不透明像素都沒有 —— 這是量測失敗不是對比差。檢查眉毛是否漏畫或畫在窗外',
+        measured: 0,
+        limit: 1,
+      },
+    ];
+  }
+
   const s = target / cellPx;
-  let lo = 1;
-  let hi = 0;
-  for (let y = Math.floor(B.y0 * s); y < Math.ceil(B.y1 * s); y++) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const rowMeans = [];
+  const yLo = Math.floor(B.y0 * s);
+  const yHi = Math.ceil(B.y1 * s);
+  for (let y = yLo; y < yHi; y++) {
+    let sum = 0;
+    let n = 0;
     for (let x = Math.floor(B.x0 * s); x < Math.ceil(B.x1 * s); x++) {
       const o = (y * target + x) * 4;
       if (small[o + 3] < 128) {
@@ -992,20 +1327,112 @@ export function checkDownsampleReadability(sheets, manifest) {
       const L = relativeLuminance(small[o], small[o + 1], small[o + 2]);
       lo = Math.min(lo, L);
       hi = Math.max(hi, L);
+      sum += L;
+      n++;
+    }
+    rowMeans.push(n ? sum / n : null);
+  }
+  const contrast = Number.isFinite(hi) && Number.isFinite(lo) ? hi - lo : 0;
+
+  /**
+   * 第二個度量：**眉列與其鄰列的落差**。
+   *
+   * SP-7.6 規定的是眉窗內線性亮度的 `max − min`，而實測顯示**它對眉毛本身不敏感**：
+   * 把 `reactions[2]`（critical 的壓眉）整格清空，這個數字**一位數都沒變**（0.606），
+   * 因為窗內同時有線稿（L≈0）與膚色（L≈0.61），兩個極值由它們決定，眉毛在不在都一樣。
+   *
+   * 這裡另外算「最暗的那一列」與「其上下各兩列」的平均落差 —— 眉毛糊成灰霧時它會掉，
+   * 而 `max − min` 不會。**不改 SP-7.6 的驗收條件**（那是規格修訂），
+   * 只是把這個數字一併報出來，讓第一批素材到貨時的校準有東西可用。
+   */
+  const valid = rowMeans.map((v, i) => [v, i]).filter(([v]) => v !== null);
+  let browDrop = 0;
+  if (valid.length >= 3) {
+    const [, darkest] = valid.reduce((a, b) => (b[0] < a[0] ? b : a));
+    const near = valid.filter(([, i]) => Math.abs(i - darkest) >= 1 && Math.abs(i - darkest) <= 2);
+    if (near.length) {
+      const around = near.reduce((a, [v]) => a + v, 0) / near.length;
+      browDrop = Math.max(0, around - rowMeans[darkest]);
     }
   }
-  const contrast = hi - lo;
+
   return [
     {
       id: 'SP-7.6/眉線對比',
-      severity: contrast >= need ? 'warn' : 'warn',
+      // 首版刻意固定為 warn（SP-7.6 明文）。要翻成 error 的條件是「第一批素材交付後
+      // 以實測校準 readability.minBrowContrast」—— 改的是門檻值**與這一行**，兩者要一起改。
+      severity: 'warn',
       sheet: 'directions',
       cell: 4,
-      message: `降採樣到 ${target}px 後眉窗線性亮度 max−min = ${contrast.toFixed(3)}（暫定門檻 ${need}；首版僅記錄，待第一批交付校準後改硬失敗）`,
+      message: `composite(directions[4], reactions[2]) 降採樣到 ${target}px：眉窗 max−min = ${contrast.toFixed(3)}（SP-7.6 的暫定門檻 ${need}）；眉列相對鄰列落差 = ${browDrop.toFixed(3)}（第二度量，見程式註解 —— max−min 對眉毛本身不敏感）`,
       measured: contrast,
       limit: need,
     },
   ];
+}
+
+/** 取單一格的 RGBA 緩衝區。 */
+export function cellBufferOf(sheet, cell, manifest) {
+  const { cellPx } = manifest.sheet;
+  const v = cellView(sheet, cell, manifest.sheet);
+  const out = new Uint8Array(cellPx * cellPx * 4);
+  for (let y = 0; y < cellPx; y++) {
+    const src = v.offset(0, y);
+    out.set(sheet.data.subarray(src, src + cellPx * 4), y * cellPx * 4);
+  }
+  return out;
+}
+
+/** source-over 合成，兩邊同尺寸 RGBA。 */
+export function compositeOver(under, over) {
+  const out = new Uint8Array(under.length);
+  for (let i = 0; i < under.length; i += 4) {
+    const oa = over[i + 3] / 255;
+    const ua = under[i + 3] / 255;
+    const a = oa + ua * (1 - oa);
+    if (a === 0) {
+      continue;
+    }
+    for (let k = 0; k < 3; k++) {
+      out[i + k] = Math.round((over[i + k] * oa + under[i + k] * ua * (1 - oa)) / a);
+    }
+    out[i + 3] = Math.round(a * 255);
+  }
+  return out;
+}
+
+/** box filter 降採樣，輸入是方形 RGBA 緩衝區。 */
+export function downsampleBuffer(buf, size, target) {
+  const out = new Uint8Array(target * target * 4);
+  const scale = size / target;
+  for (let y = 0; y < target; y++) {
+    for (let x = 0; x < target; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let n = 0;
+      const sx1 = Math.min(size, Math.floor((x + 1) * scale));
+      const sy1 = Math.min(size, Math.floor((y + 1) * scale));
+      for (let sy = Math.floor(y * scale); sy < sy1; sy++) {
+        for (let sx = Math.floor(x * scale); sx < sx1; sx++) {
+          const o = (sy * size + sx) * 4;
+          const pa = buf[o + 3];
+          r += buf[o] * pa;
+          g += buf[o + 1] * pa;
+          b += buf[o + 2] * pa;
+          a += pa;
+          n++;
+        }
+      }
+      const o = (y * target + x) * 4;
+      out[o] = a > 0 ? Math.round(r / a) : 0;
+      out[o + 1] = a > 0 ? Math.round(g / a) : 0;
+      out[o + 2] = a > 0 ? Math.round(b / a) : 0;
+      out[o + 3] = n > 0 ? Math.round(a / n) : 0;
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

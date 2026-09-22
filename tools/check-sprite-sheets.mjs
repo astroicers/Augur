@@ -142,6 +142,8 @@ function validateManifest(m) {
   for (const k of ['faceAxisX', 'crownY', 'chinY', 'eyeLineY', 'pupilLeftX', 'pupilRightX', 'mouthCentreY', 'shoulderY', 'headWidth']) {
     num(`anchors.${k}`, { min: 0, max: 1 });
   }
+  num('anchors.hairTopMinY', { min: 0, max: 1, optional: true });
+  num('anchors.maxSilhouetteWidth', { min: 0, max: 1, optional: true });
   num('anchorToleranceS', { min: 0, max: 1 });
 
   // --- 三個視窗（SP-2.11） ---

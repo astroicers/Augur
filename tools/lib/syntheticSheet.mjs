@@ -43,6 +43,11 @@ export function buildManifest(overrides = {}) {
       mouthCentreY: 0.53,
       shoulderY: 0.85,
       headWidth: 0.4,
+      // SP-2.3「髮／呆毛最高點 ≥ 0.048·S」與 SP-2.9「剪影最寬處 ≤ 0.840·S」。
+      // 它們讓 SP-7.5 的頭頂／頭寬可以用**區間**比對 —— 因為量測法量到的是
+      // 含髮的 bbox，而 crownY/headWidth 描述的是顱骨。兩個數字規格都已凍結。
+      hairTopMinY: 0.048,
+      maxSilhouetteWidth: 0.84,
     },
     anchorToleranceS: 0.004,
     windows: {
