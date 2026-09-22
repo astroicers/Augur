@@ -204,3 +204,61 @@ test('整合：過濾 info、持續 firing 只播一次、恢復播一次、孤�
   // info 的那條從頭到尾沒被念過
   expect(spoken.join('')).not.toContain('Noisy');
 });
+
+test('一個 panel 綁多條規則時，部分恢復要當場播報而不是等到全部恢復', async () => {
+  // A5-4 把 3 條效能規則綁 panel 4、5 條安全規則綁 panel 5 之後，這條路徑才會被走到。
+  // 情境：兩條同時燒 → 其中一條恢復，但 panel 的 alertState 仍是 alerting
+  //（因為還有另一條在燒），所以 resolvedAll() 不會被呼叫。
+  let rules: RuleDetail[] = [
+    { alertname: 'WindowsAccountLockout', severity: 'critical', summary: '帳號被鎖定' },
+    { alertname: 'WindowsFailedLogonBurst', severity: 'warning', summary: '連續登入失敗' },
+  ];
+  const src = createPanelAlertSource({
+    panelId: 5,
+    fetchRules: async () => rules,
+    fallbackSeverity: 'critical',
+    ruleCacheSec: 0,
+  });
+  const alerting = { state: 'alerting', panelId: 5, dashboardUID: 'd' };
+
+  const first = await src.evaluate(alerting, 'd');
+  expect(first.map((a) => a.name).sort()).toEqual(['WindowsAccountLockout', 'WindowsFailedLogonBurst']);
+  expect(first.every((a) => a.status === 'firing')).toBe(true);
+
+  // 帳號解鎖，但另一條還在燒 —— alertState 依然是 alerting
+  rules = [{ alertname: 'WindowsFailedLogonBurst', severity: 'warning', summary: '連續登入失敗' }];
+  const second = await src.evaluate(alerting, 'd');
+  const resolved = second.filter((a) => a.status === 'resolved');
+  expect(resolved).toHaveLength(1);
+  expect(resolved[0]!.name).toBe('WindowsAccountLockout');
+  // 恢復時不得帶 value —— 那是 firing 當時的數字，念出來是錯的
+  expect(resolved[0]).not.toHaveProperty('value');
+  // 還在燒的那條照常吐（抑制交給 dedup）
+  expect(second.filter((a) => a.status === 'firing').map((a) => a.name)).toEqual(['WindowsFailedLogonBurst']);
+
+  // 已恢復的那條不得再被恢復一次
+  const third = await src.evaluate(alerting, 'd');
+  expect(third.filter((a) => a.status === 'resolved')).toHaveLength(0);
+});
+
+test('降級路徑留下的泛用 episode 在細節回來時被取代而非「恢復」', async () => {
+  let rules: RuleDetail[] = [];
+  const src = createPanelAlertSource({
+    panelId: 4,
+    fetchRules: async () => rules,
+    fallbackSeverity: 'critical',
+    ruleCacheSec: 0,
+  });
+  const alerting = { state: 'alerting', panelId: 4, dashboardUID: 'd' };
+
+  // rules 端點取不到 → 泛用事件
+  const degraded = await src.evaluate(alerting, 'd');
+  expect(degraded).toHaveLength(1);
+  expect(degraded[0]!.name).toBe('告警');
+
+  // 端點恢復了 → 拿到真細節。泛用那筆是被**取代**，不該念一句「告警 已恢復」。
+  rules = [{ alertname: 'WindowsHighCPU', severity: 'warning' }];
+  const recovered = await src.evaluate(alerting, 'd');
+  expect(recovered.filter((a) => a.status === 'resolved')).toHaveLength(0);
+  expect(recovered.map((a) => a.name)).toEqual(['WindowsHighCPU']);
+});

@@ -222,10 +222,12 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
       }
 
       const out: ParsedAlert[] = [];
+      const stillFiring = new Set<string>();
       for (const d of detail) {
         // fingerprint 用 alertname —— 一個 panel 可以綁多條規則，用 panelId 會把它們併成一個。
         // 不含 startsAt（不變量 2）、不含 value（它每次 refresh 都在變）。
         const fp = `alert:${d.alertname}`;
+        stillFiring.add(fp);
         const existing = episodes.get(fp);
         if (existing) {
           // 不變量 3：持續 firing 期間每次都吐同一個事件，抑制交給 dedup。
@@ -245,6 +247,36 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         };
         episodes.set(fp, ep);
         out.push(ep);
+      }
+
+      /**
+       * ⚠️ **一個 panel 綁多條規則時，「部分恢復」不會讓 `alertState` 離開 `alerting`。**
+       *
+       * A5-4 把 3 條效能規則綁在 panel 4、5 條安全規則綁在 panel 5 之後，這條路徑才真的
+       * 會被走到。情境：`WindowsAccountLockout`（critical）燒起來、播報了；兩分鐘後帳號解鎖，
+       * 但 `WindowsFailedLogonBurst` 還在燒 —— panel 的 `alertState` 仍是 `alerting`，
+       * 所以 `resolvedAll()` 不會被呼叫，那條 episode 就**一直留著**。
+       * 操作者聽到「帳號被鎖定」之後再也沒聽到恢復，會以為帳號還鎖著。
+       * 最糟的是它可能在二十分鐘後、最後一條規則也恢復時才跟著一起被念出來 ——
+       * 一個早就過期的「已恢復」。
+       *
+       * `parseRulesResponse` 只保留 `state === 'alerting'` 的告警（實查該函式），
+       * 所以 `detail` 就是「此刻仍在燒的」。差集即為「這一輪恢復的」。
+       */
+      for (const [fp, ep] of [...episodes]) {
+        if (stillFiring.has(fp)) {
+          continue;
+        }
+        if (fp === `alert:panel:${opts.panelId}`) {
+          // 降級路徑留下的泛用 episode。現在拿得到細節了，它是被**取代**而不是恢復 ——
+          // 靜默清掉，不要念一句「告警 已恢復」。
+          episodes.delete(fp);
+          continue;
+        }
+        // 與 resolvedAll 同一個規則：丟掉 value（它是 firing 當時的值，恢復時已不是「目前」）。
+        const { value: _ignored, ...rest } = ep;
+        out.push({ ...rest, status: 'resolved' as const });
+        episodes.delete(fp);
       }
       return out;
     },
