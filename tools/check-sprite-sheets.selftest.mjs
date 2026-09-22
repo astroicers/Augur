@@ -1398,6 +1398,26 @@ console.log('\n[7] SP-V.1 盲測的出題與計分');
     ok('index.html 不自己抄一份格號算式', !/\(cell % 3\)\s*\*\s*50/.test(html));
     ok('index.html 載圖失敗時不開始出題', html.includes('probe.onerror'));
     ok('index.html 有點擊防抖（一次雙擊不得吃掉兩題）', html.includes('lastAnswerAt'));
+    // ⚠️ 尺寸預檢不得用「邊長可被 3 整除」。舞台是 background-size: 300% 300%，
+    // 來源邊長跟顯示正確性無關；而那條規則擋掉 1024²/2048²（常見的校稿尺寸）
+    // 卻放行 1533²，錯誤訊息還叫人把邊長改成可被 3 整除 ——
+    // 照做會產出一張 SP-7.1 接著會退掉的圖（SP-7.1 要的是正好 1536×1536）。
+    // 只看**程式碼**不看註解 —— 那段修正的理由就寫在註解裡提到這條舊規則，
+    // 用裸 regex 掃整個檔會被自己的說明文字騙到（本斷言第一版就是這樣紅的）。
+    const htmlCode = html
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join('\n');
+    ok('index.html 的尺寸預檢不用「可被 3 整除」這條沒有依據的規則',
+      !/naturalWidth\s*%\s*3/.test(htmlCode));
+    ok('index.html 對非 1536 的圖提示 SP-7.1 的交付尺寸而不是直接拒絕',
+      html.includes('sizeNote') && html.includes('1536'));
+    // ⚠️ 不清 value 的話，重選**同一個路徑**不觸發 change（瀏覽器認為值沒變）：
+    // 畫師把修正版存回同一檔名、操作者重選一次 —— 什麼都不會發生，
+    // 而畫面留著上一個檔算出的錯誤訊息，一張修好的圖被回報成還是壞的。
+    // 實測（playwright）：不清 value 時第二次選同路徑的 change 事件數維持 1。
+    ok('index.html 選完檔就清掉 input value（否則重選同一個路徑不會觸發）',
+      /\.value\s*=\s*''/.test(html));
   }
 
   let threw = false;

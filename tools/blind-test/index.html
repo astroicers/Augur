@@ -45,6 +45,7 @@
     <p><strong>選一張 directions sheet</strong>（1536×1536、3×3）：</p>
     <input type="file" id="file" accept="image/png" />
     <p class="fail" id="loadErr" hidden></p>
+    <p id="sizeNote" hidden style="color:#b8860b;font-size:13px"></p>
     <p class="sub" style="margin:10px 0 0">
       也可以直接測 <button type="button" id="useRepo">repo 內的 src/img/sprite/directions.png</button>
       或 <button type="button" id="useFixture">編號假 sheet（驗這個頁面本身）</button>
@@ -91,14 +92,30 @@
       $('loadErr').textContent = `載不到 ${imageUrl} —— 素材還沒交付，或路徑不對。沒有開始出題。`;
     };
     probe.onload = () => {
-      if (probe.naturalWidth !== probe.naturalHeight || probe.naturalWidth % 3 !== 0) {
+      // ⚠️ **只擋「不是正方形」。**
+      //
+      // 這裡原本還要求 `naturalWidth % 3 === 0`，那條沒有技術依據：舞台用
+      // `background-size: 300% 300%`，來源邊長是多少都會被縮放成三等分，
+      // 所以邊長可不可被 3 整除跟顯示正確性無關。
+      // 而它的後果是雙向的錯：**擋掉 1024² / 2048²**（畫師在出最終檔之前送來的
+      // 常見校稿尺寸），卻**放行 1533²**；更糟的是錯誤訊息叫人「把邊長改成可被 3 整除」，
+      // 照做會產出一張 SP-7.1 接著會退掉的圖 —— SP-7.1 要的是**正好 1536×1536**。
+      //
+      // 正方形這條要留：3×3 等分格在非正方形上會變成長方形格，視線方向會被拉歪。
+      if (probe.naturalWidth !== probe.naturalHeight) {
         $('setup').hidden = false;
         $('quiz').hidden = true;
         $('loadErr').hidden = false;
         $('loadErr').textContent =
-          `這張圖是 ${probe.naturalWidth}×${probe.naturalHeight} —— 3×3 的 sheet 必須是正方形且邊長可被 3 整除。沒有開始出題。`;
+          `這張圖是 ${probe.naturalWidth}×${probe.naturalHeight} —— 3×3 的 sheet 必須是正方形。沒有開始出題。`;
         return;
       }
+      // 非 1536 可以測可讀性（這正是校稿的用途），但通過這裡不等於通過交付驗收。
+      const sizeNote = probe.naturalWidth === 1536
+        ? ''
+        : `⚠️ 這張是 ${probe.naturalWidth}×${probe.naturalWidth}，可讀性測得出來，但 SP-7.1 的交付驗收要求正好 1536×1536。`;
+      $('sizeNote').textContent = sizeNote;
+      $('sizeNote').hidden = sizeNote === '';
       url = imageUrl;
       $('loadErr').hidden = true;
       $('setup').hidden = true;
@@ -208,6 +225,12 @@
 
   $('file').onchange = (e) => {
     const f = e.target.files[0];
+    // ⚠️ **一定要清掉 value。** 不清的話重選**同一個路徑**不會觸發 change
+    // （瀏覽器認為值沒變），於是畫師把修正版存回同一個檔名、操作者重選一次 ——
+    // 什麼都不會發生，畫面上還留著**上一個檔**算出來的錯誤訊息，
+    // 一張已經修好的圖被回報成還是壞的。唯一的脫身方式是改檔名或重新整理，
+    // 而頁面不會告訴你這件事。
+    e.target.value = '';
     if (f) {
       start(URL.createObjectURL(f));
     }
