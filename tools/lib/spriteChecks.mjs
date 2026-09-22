@@ -32,7 +32,12 @@ export const CELL_COUNT = 9;
 export const MANIFEST_DEFAULTS = Object.freeze({
   anchors: { hairTopMinY: 0.048, maxSilhouetteWidth: 0.84 },
   gaze: { maskRatioMin: 0.35, maskRatioMax: 1.25 },
-  blink: { opaqueFraction: 0.9 },
+  // SP-2.14：剪影邊緣必須有 ≥ 0.004·S 的 alpha 漸層（禁 1-bit 硬邊）。
+  // 眨眼檢查要把這條**規格強制**的羽化帶從修補塊輪廓裡侵蝕掉，
+  // 剩下的才是「本來就該完全不透明」的核心。
+  // ⚠️ 不要拿 `margins.featherOuter`（0.04·S = 20px）來侵蝕 —— 那是剪影的留白帶，
+  // 差一個數量級，24px 高的眼瞼會被整個侵蝕成空集合而檢查靜默失效。
+  blink: { featherS: 0.004 },
   stroke: { luminanceSlack: 0.03 },
 });
 
@@ -570,6 +575,41 @@ function faceComponent(mask, cellPx, manifest) {
  * 補法是從格邊界對補集做 flood fill，填不到的即為洞。這同時保住了規格真正要擋的東西：
  * 側髮、斗篷、描邊、剪影外都與格邊界連通，不會被補進來。
  */
+/**
+ * 二值遮罩的形態學侵蝕，`n` 次 4-連通。
+ *
+ * 用途是把「羽化帶」從一塊修補塊的輪廓裡去掉，留下**本來就該完全不透明**的核心。
+ * SP-2.14 強制邊緣要有 ≥ 0.004·S 的 alpha 漸層，所以輪廓最外那一圈像素依規格
+ * 就不可能是 alpha=255 —— 把它們算進「不透明比例」等於要求畫師違反 SP-2.14。
+ */
+function erode(mask, cellPx, n) {
+  let cur = mask;
+  for (let i = 0; i < n; i++) {
+    const next = new Uint8Array(cellPx * cellPx);
+    for (let y = 0; y < cellPx; y++) {
+      for (let x = 0; x < cellPx; x++) {
+        if (!cur[y * cellPx + x]) {
+          continue;
+        }
+        // 邊界視為外部：貼著格邊的修補塊不該因為「看不到外面」就被當成內部。
+        if (x === 0 || y === 0 || x === cellPx - 1 || y === cellPx - 1) {
+          continue;
+        }
+        if (
+          cur[(y - 1) * cellPx + x] &&
+          cur[(y + 1) * cellPx + x] &&
+          cur[y * cellPx + (x - 1)] &&
+          cur[y * cellPx + (x + 1)]
+        ) {
+          next[y * cellPx + x] = 1;
+        }
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 function fillHoles(mask, cellPx) {
   const outside = new Uint8Array(cellPx * cellPx);
   const stack = [];
@@ -758,31 +798,87 @@ export function checkOverlayOwnership(sheets, manifest) {
         }
       }
       const filled = fillHoles(footprint, cellPx);
-      let area = 0;
-      let opaqueInFootprint = 0;
+
+      // ⚠️ **不要數 alpha === 255 的比例。** 那條門檻（0.9）在抗鋸齒素材上算術達不到：
+      // 用本 repo 自己的眼瞼幾何（格 6 兩個 rx32/ry12 橢圓、格 7 rx32/ry7）做 4×
+      // supersample 而**不加**任何額外羽化，實測 89.12% 與 84.27%，都低於 0.9；
+      // 抗鋸齒做得越好越糟（16× SS 是 86.93% / 80.95%）。再加上 SP-2.14 強制的
+      // ≥ 0.004·S alpha 漸層之後任何尺寸都不過，而格 7（SP-4.8 的半閉眼）本來就細，
+      // 在眼窗 E 容得下的全部尺寸掃描中一律落在 79–90% ——
+      // **不存在同時滿足 SP-4.8 與那條門檻的交付**，而工具照 SP-7.12 沒有旁路。
+      //
+      // 基線之所以曾經全綠，是因為 syntheticSheet 的 `ellipse()` 用布林判定寫 a=255，
+      // 也就是 SP-2.14 明文禁止的 1-bit 硬邊 —— 閘門是對著一張規格自己會退的圖校準的。
+      //
+      // 改成量**這條檢查的訊息本來就在講的那件事**：透的眼瞼會讓底下的瞳孔讀出來。
+      // 作法是把羽化帶侵蝕掉得到「本來就該完全不透明」的核心，在核心裡合成
+      // reactions[c] over directions[4]，然後找還讀得出來的虹膜色像素。
+      // 這同時對格 6（全閉，虹膜應完全消失）與格 7（半閉，可見的虹膜在眼瞼**之外**、
+      // 不在核心裡）都成立，而且量的與規格描述的是同一個量。
+      const feather = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
+      const core = erode(filled, cellPx, feather);
+      const master = cellView(sheets.directions, 4, geom); // master frame（與本檔 :277 / :503 同一個常數）
+      const iris = hexToRgb(manifest.colours.iris);
+      const irisTol = manifest.colours.irisToleranceRgb;
+      let coreArea = 0;
+      let showThrough = 0;
+      let firstShow = null;
+      let translucent = 0;
+      let coreAlphaSum = 0;
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
-          if (!filled[y * cellPx + x]) {
+          if (!core[y * cellPx + x]) {
             continue;
           }
-          area++;
-          if (v.px(x, y)[3] === 255) {
-            opaqueInFootprint++;
+          coreArea++;
+          const o = v.px(x, y);
+          coreAlphaSum += o[3];
+          if (o[3] !== 255) {
+            translucent++;
+          }
+          // source-over：核心內的眼瞼若完全不透明，結果就是眼瞼自己的顏色。
+          const a = o[3] / 255;
+          const u = master.px(x, y);
+          const r = Math.round(o[0] * a + u[0] * (1 - a));
+          const g = Math.round(o[1] * a + u[1] * (1 - a));
+          const b = Math.round(o[2] * a + u[2] * (1 - a));
+          if (colourNear(r, g, b, iris, irisTol)) {
+            showThrough++;
+            if (!firstShow) {
+              firstShow = [x, y];
+            }
           }
         }
       }
-      const ratio = area === 0 ? 0 : opaqueInFootprint / area;
-      const need = optional(manifest, 'blink', 'opaqueFraction');
-      if (ratio < need) {
-        const holes = area - nonZero;
+      // 均勻半透明的眼瞼合成後是「偏眼瞼色的混色」，讀不出虹膜色，所以上面那條抓不到它 ——
+      // 但 alpha=200 的眼瞼等於眼睛透出來 21%，正是 SP-4.7 的「不足」。
+      // 核心的**平均 alpha** 抓得到，而且門檻有很寬的餘裕：alpha=200 的整片是 0.784，
+      // 正常畫稿侵蝕掉羽化帶之後接近 1.00，門檻 0.98 落在中間。
+      // （對比先前那個「輪廓內 90% 像素恰為 255」—— 它的餘裕是負的，合規畫稿落在 79–90%。）
+      const meanAlpha = coreArea === 0 ? 0 : coreAlphaSum / (coreArea * 255);
+      if (coreArea > 0 && meanAlpha < 0.98) {
+        out.push({
+          id: 'SP-7.4/眨眼半透明',
+          severity: 'error',
+          sheet: 'reactions',
+          cell: c,
+          message: `眼瞼核心 ${coreArea} px 的平均 alpha 只有 ${(meanAlpha * 255).toFixed(0)}/255（${(meanAlpha * 100).toFixed(1)}%，需 ≥ 98%）—— 整片半透明的眼瞼會讓底下的眼睛透出來`,
+          measured: meanAlpha,
+          limit: 0.98,
+        });
+      }
+      if (showThrough > 0) {
         out.push({
           id: 'SP-7.4/眨眼不透明',
           severity: 'error',
           sheet: 'reactions',
           cell: c,
-          message: `修補塊輪廓 ${area} px 中只有 ${(ratio * 100).toFixed(1)}% 是 alpha=255（低於 ${(need * 100).toFixed(0)}%）${holes > 0 ? `，其中 ${holes} px 是 alpha=0 的洞` : ''} —— 透的眼瞼會讓底下的瞳孔讀出來`,
-          measured: ratio,
-          limit: need,
+          message:
+            `眼瞼核心（輪廓內縮 ${feather}px 羽化帶後 ${coreArea} px）合成到 master 之後，` +
+            `仍有 ${showThrough} px 讀得出虹膜色（首例 ${firstShow[0]},${firstShow[1]}）` +
+            `${translucent > 0 ? `；核心內另有 ${translucent} px 不是 alpha=255` : ''} —— 透的眼瞼會讓底下的瞳孔讀出來`,
+          measured: showThrough,
+          limit: 0,
         });
       }
       let intoBrow = 0;

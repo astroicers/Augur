@@ -72,7 +72,7 @@ export function buildManifest(overrides = {}) {
     // maskRatio 的上下界不對稱是有理由的：虹膜是固定大小的圓盤在眼眶內移動，
     // 可見面積只會被眼瞼遮掉（變小），沒有合法的理由變大。所以污染只會往上跑。
     gaze: { zeroAxisRatio: 0.2, maskRatioMin: 0.35, maskRatioMax: 1.25 },
-    blink: { opaqueFraction: 0.9 },
+    blink: { featherS: 0.004 },
     readability: { targetPx: 128, minBrowContrast: 0.25 },
     cells: {
       directions: ['左上', '上', '右上', '左', '中性(master)', '右', '左下', '下', '右下'],

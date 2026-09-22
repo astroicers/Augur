@@ -212,7 +212,10 @@ function validateManifest(m) {
   num('gaze.zeroAxisRatio', { min: 0, max: 10, optional: true });
   num('gaze.maskRatioMin', { min: 0, max: 1, optional: true });
   num('gaze.maskRatioMax', { min: 1, max: 10, optional: true });
-  num('blink.opaqueFraction', { min: 0, max: 1, optional: true });
+  // blink.opaqueFraction 已移除：那條「輪廓內 90% 須為 alpha=255」的門檻在抗鋸齒素材上
+  // 算術達不到（實測 89.1 / 84.3 / 78.9 / 70.3%），而 SP-2.14 又強制要求羽化 ——
+  // 規格自己要求的東西正好讓它失敗。改量「合成後還讀不讀得出虹膜」，見 spriteChecks.mjs。
+  num('blink.featherS', { min: 0, max: 0.1, optional: true });
   num('readability.targetPx', { min: 1, integer: true, optional: true });
   num('readability.minBrowContrast', { min: 0, max: 1, optional: true });
   num('budget.perSheetBytes', { min: 1, integer: true });

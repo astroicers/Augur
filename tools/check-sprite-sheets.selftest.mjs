@@ -562,8 +562,9 @@ const mutants = [
     apply: (s) => put(s.reactions, 6, 256, 150, [226, 200, 177, 255]),
   },
   {
+    // 整片半透明讀不出虹膜色（合成後是偏眼瞼色的混色），所以走的是核心平均 alpha 那一條。
     name: 'SP-7.4 眨眼修補塊半透明',
-    expect: 'SP-7.4/眨眼不透明',
+    expect: 'SP-7.4/眨眼半透明',
     apply: (s) => {
       for (let y = 0; y < S; y++) {
         for (let x = 0; x < S; x++) {
@@ -732,8 +733,72 @@ const mutants = [
   },
 ];
 
+
+/**
+ * 把兩個閉眼格（6 / 7）的修補塊邊緣羽化成 SP-2.14 要求的樣子：
+ * 沿輪廓由外而內做 2px 的 alpha 梯度，模擬任何一般繪圖軟體的抗鋸齒輸出。
+ * 這是**合規**的畫稿，不得被任何檢查判紅。
+ */
+function featherBlinkEdges(s) {
+  const sheet = s.reactions;
+  for (const cell of [6, 7]) {
+    const ox = (cell % 3) * S;
+    const oy = Math.floor(cell / 3) * S;
+    const alphaAt = (x, y) => sheet.data[((oy + y) * SHEET + (ox + x)) * 4 + 3];
+    const snapshot = new Uint8Array(S * S);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        snapshot[y * S + x] = alphaAt(x, y) !== 0 ? 1 : 0;
+      }
+    }
+    // 距離輪廓 0 / 1 px 的不透明像素分別降到 ~35% / ~75% alpha。
+    for (let y = 1; y < S - 1; y++) {
+      for (let x = 1; x < S - 1; x++) {
+        if (!snapshot[y * S + x]) {
+          continue;
+        }
+        const n4 = [snapshot[(y - 1) * S + x], snapshot[(y + 1) * S + x], snapshot[y * S + (x - 1)], snapshot[y * S + (x + 1)]];
+        const onEdge = n4.some((v) => !v);
+        if (onEdge) {
+          sheet.data[((oy + y) * SHEET + (ox + x)) * 4 + 3] = 90;
+          continue;
+        }
+        const n8edge = [[-1, -1], [1, -1], [-1, 1], [1, 1], [-2, 0], [2, 0], [0, -2], [0, 2]].some(([dx, dy]) => {
+          const nx = x + dx;
+          const ny = y + dy;
+          return nx >= 0 && ny >= 0 && nx < S && ny < S && !snapshot[ny * S + nx];
+        });
+        if (n8edge) {
+          sheet.data[((oy + y) * SHEET + (ox + x)) * 4 + 3] = 192;
+        }
+      }
+    }
+  }
+}
+
 /** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
 const NON_MUTANTS = [
+  {
+    // ⚠️ **這一條是 2026-09-22 複審的第二個 blocker。**
+    // 先前的門檻是「修補塊輪廓內 90% 的像素恰為 alpha=255」，而 SP-2.14 **強制**
+    // 邊緣要有 ≥ 0.004·S 的 alpha 漸層、禁 1-bit 硬邊 —— 規格要求的東西正好讓它失敗。
+    // 用本 repo 自己的眼瞼幾何實測：格 6 = 89.12%、格 7 = 84.27%，加上規格要求的
+    // 羽化後是 86.79% / 78.86%，全部低於 0.9。格 7（SP-4.8 半閉眼）在眼窗 E 容得下的
+    // 全部尺寸掃描中一律落在 79–90%：**不存在同時滿足 SP-4.8 與那條門檻的交付**。
+    //
+    // 基線曾經全綠，只因為合成器的 `ellipse()` 用布林判定寫 a=255 ——
+    // 也就是 SP-2.14 禁止的 1-bit 硬邊。閘門是對著一張規格自己會退的圖校準的。
+    //
+    // 這裡把兩個閉眼格的邊緣羽化成規格要求的樣子，斷言它**不會**紅。
+    name: 'SP-2.14 要求的 alpha 漸層（羽化的眼瞼邊緣）不得誤紅',
+    forbid: 'SP-7.4/眨眼半透明',
+    apply: (s) => featherBlinkEdges(s),
+  },
+  {
+    name: 'SP-2.14 要求的 alpha 漸層不得被誤判成「虹膜透出來」',
+    forbid: 'SP-7.4/眨眼不透明',
+    apply: (s) => featherBlinkEdges(s),
+  },
   {
     name: 'SP-2.3 允許的呆毛（頂到 0.048·S）不得誤紅',
     forbid: 'SP-7.5/頭頂',

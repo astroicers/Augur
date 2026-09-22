@@ -79,7 +79,7 @@
   },
   "blink": {
     "_source": "SP-4.7 的『不足』失敗模式：半透明的閉眼會讓底下的瞳孔透出來。",
-    "opaqueFraction": 0.9
+    "featherS": 0.004
   },
   "readability": {
     "_source": "SP-7.6，首版為警告；第一批交付後以實測校準再改硬失敗。",
