@@ -45,6 +45,9 @@ jobs:
       - name: .js 副檔名守門
         run: bash tools/check-js-suffix.sh
 
+      - name: monitoring 設定自洽性
+        run: node tools/check-monitoring.mjs
+
       - name: sprite 素材驗收
         run: node tools/check-sprite-sheets.mjs
 

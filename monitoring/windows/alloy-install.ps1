@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
   Augur 監控 — 在 Windows 主機安裝 Grafana Alloy，套用 alloy-config.alloy
   把 Windows Event Log 推到 Augur 的 Loki（http://localhost:3101）。

@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
   Augur 監控 — 在 Windows 主機安裝 windows_exporter（Prometheus 的效能 exporter）。
   Augur stack 的 Prometheus 會經 host.docker.internal:9182 抓取。
@@ -26,7 +26,13 @@ $expectedSha256 = '0aadce6afb20182b678bfca9e8f2e8464ef48c469b28b4cf02e99d82158f5
 $downloadUri = "https://github.com/prometheus-community/windows_exporter/releases/download/v$version/$assetName"
 
 $port = 9182
-$collectors = 'cpu,cs,logical_disk,memory,net,os,system,service'
+# ⚠️ **不要放 `cs`。** 它在 windows_exporter v0.31.8 已經不存在
+# （2026-09-22 實查該 tag 的 docs/：47 個 collector 裡沒有 collector.cs.md）。
+# 指定一個不存在的 collector 會讓**服務起不來**，而 msiexec 仍然回 0 ——
+# 於是腳本一路印到「完成」，Prometheus 的 windows target 卻永遠是 DOWN。
+# 它原本提供的實體記憶體總量，現在由 `memory` collector 的
+# `windows_memory_physical_total_bytes` 提供。
+$collectors = 'cpu,logical_disk,memory,net,os,system,service'
 
 $msi = Join-Path $env:TEMP $assetName
 Write-Host "下載 $assetName（v$version，釘住的版本）…"
@@ -65,18 +71,32 @@ Write-Host "  來源限制：$($allowedRemote -join ', ')"
 Write-Host '  ⚠️ 若 Docker Desktop 使用的網段不在上面清單內，Prometheus 會抓不到；'
 Write-Host '     用 `docker network inspect bridge` 查實際網段後補進 $allowedRemote。'
 
-Write-Host '驗證 /metrics…'
-Start-Sleep -Seconds 3
-try {
-  $r = Invoke-WebRequest -Uri "http://localhost:$port/metrics" -UseBasicParsing -TimeoutSec 5
-  if ($r.Content -match 'windows_cpu_time_total') {
-    Write-Host '✅ windows_exporter 正常輸出指標'
-  } else {
-    Write-Warning '服務有起，但沒看到預期指標，請檢查 collectors。'
+# ⚠️ **這個探測必須是致命的，不能只是 Warning。**
+# msiexec 對「指定了不存在的 collector」一樣回 0，所以退出碼證明不了服務起得來。
+# 原本探測失敗只印一行 Warning 然後腳本照樣印「完成」並 exit 0 ——
+# 操作者以為裝好了，而 Prometheus 的 target 永遠 DOWN，要等到有人去看 Targets 頁才發現。
+Write-Host '驗證 /metrics（失敗即視為安裝失敗）…'
+$ok = $false
+foreach ($attempt in 1..6) {
+  Start-Sleep -Seconds 3
+  try {
+    $r = Invoke-WebRequest -Uri "http://localhost:$port/metrics" -UseBasicParsing -TimeoutSec 5
+    if ($r.Content -match 'windows_cpu_time_total' -and $r.Content -match 'windows_memory_physical_total_bytes') {
+      $ok = $true
+      break
+    }
+    Write-Host "  第 $attempt 次：服務有回應但缺少預期指標，再試…"
+  } catch {
+    Write-Host "  第 $attempt 次：還連不上，再試…"
   }
-} catch {
-  Write-Warning "無法讀取 /metrics：$_（服務可能還在啟動，稍後再試 http://localhost:$port/metrics）"
 }
+if (-not $ok) {
+  throw ("windows_exporter 裝了但 /metrics 沒有輸出預期指標。" +
+    "最常見的原因是 ENABLED_COLLECTORS 裡有這個版本不存在的 collector —— " +
+    "服務會起不來而 msiexec 仍回 0。用 ``Get-Service windows_exporter`` 與 " +
+    "``Get-EventLog -LogName Application -Source windows_exporter -Newest 20`` 查原因。")
+}
+Write-Host '✅ windows_exporter 正常輸出指標（含 windows_memory_physical_total_bytes）'
 
 Write-Host ''
 Write-Host "完成。回到 WSL 確認：docker exec augur-prometheus wget -qO- http://host.docker.internal:$port/metrics | head"

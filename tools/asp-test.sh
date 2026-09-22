@@ -45,6 +45,11 @@ echo '--- .js 副檔名守門 ---'
 bash tools/check-js-suffix.sh || { GATE_OK=false; FAILED="$FAILED js-suffix"; }
 
 # sprite 素材驗收（SP-7.13）。素材未交付時這一步印 sentinel 並回 0，成本近乎零。
+# monitoring/ 設定的自洽性。每一條都對應一個已經發生過、而且**失敗時很安靜**的缺陷：
+# 服務起不來但腳本印「完成」、規則永遠停在 Normal、alertState 到不了 panel。
+echo '--- monitoring 設定 ---'
+node tools/check-monitoring.mjs || { GATE_OK=false; FAILED="$FAILED monitoring"; }
+
 echo '--- sprite 素材 ---'
 SPRITE_OUT=$(node tools/check-sprite-sheets.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprites"; }
 echo "$SPRITE_OUT" | tail -3
@@ -180,7 +185,7 @@ fi
 SUM="$SUM；$SPRITE_SUM；$GRAFANA_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1

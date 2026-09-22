@@ -68,7 +68,11 @@ groups:
             model:
               refId: A
               datasource: { type: prometheus, uid: prometheus }
-              expr: 'windows_memory_available_bytes / windows_cs_physical_memory_bytes * 100'
+              # ⚠️ 分母不是 windows_cs_physical_memory_bytes —— 那個 metric 隨 `cs` collector
+              # 一起從 windows_exporter v0.31.8 移除了（2026-09-22 實查該 tag 的 docs/）。
+              # 用不存在的 metric 做除法會回空集合，規則**永遠停在 Normal/NoData**：
+              # 主機記憶體掉到 3% 一小時，吉祥物一聲不吭。
+              expr: 'windows_memory_available_bytes / windows_memory_physical_total_bytes * 100'
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
