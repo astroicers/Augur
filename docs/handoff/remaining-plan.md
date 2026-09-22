@@ -573,7 +573,11 @@ build 輸出逐字是 `asset README.md 3.23 KiB [from: README.md] [copied]`—�
 
 順手對齊兩個數字：
 - `docs/ARCHITECTURE.md:109` 寫「Jest + @swc/jest（**36** 測試）」→ 改成 `asp-test.sh` 的 `MIN_TESTS` 當下值
-  （實查 `ARCHITECTURE.md:58`、`:71`、`README.md:96` 的「273 行」是對的，只有測試數落後）
+  （「273 行」仍是對的 —— 2026-09-22 複驗 `src/core/` 非測試檔合計正好 273 行。
+  過期的是**行號指標本身**：README 的那一列現在在 `:110` 不在 `:96`。
+  ⚠️ **不要在文件裡寫死其他檔案的行號** —— 它們每次編輯都會漂，而沒有任何檢查會驗。
+  2026-09-22 的複審就是靠這一類指標失效才發現 `d428af1` 那個不存在的 commit。
+  ✅ 測試數已於 2026-09-22 更正（`ARCHITECTURE.md` 36 → 55）。）
 - `docs/adr/ADR-004-...md:162` 寫 `src/core/*`（**268** 行）→ 實查 `wc -l src/core/*.ts` = **273**。
   ⚠️ 這一處在 ADR 內文，**需 B4 授權**，不能在 A4 做。列在這裡是為了不漏掉。
 

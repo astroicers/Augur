@@ -30,6 +30,7 @@ import { decodePng, encodePng, PngFormatError } from './lib/png.mjs';
 import { encodeGif } from './lib/gif.mjs';
 import {
   CELL_COUNT,
+  skinMask,
   cellView,
   checkAnchors,
   checkDownsampleReadability,
@@ -498,35 +499,116 @@ function writeContactSheets(sheets, manifest, outDir) {
  * 規格明寫「只印『不過』而不印『差多少』不符本規格」—— 圖是那句話的另一半：
  * 差異像素以洋紅標示（沿用 check_layers.py 的粉紅慣例），人才知道差在哪裡。
  */
-function writeDiffImages(sheets, manifest, failedCells, outDir) {
+function writeDiffImages(sheets, manifest, findings, outDir) {
   const { cellPx } = manifest.sheet;
   const base = cellBuffer(sheets.directions, 4, manifest);
   const E = windowRect(manifest.windows.E, cellPx);
   const written = [];
-  for (const cell of failedCells) {
-    const buf = cellBuffer(sheets.directions, cell, manifest);
+
+  // ⚠️ **每一種帶格號的失敗都要有圖，不只 SP-7.2。**
+  // 原本 `headFails` 只從 `SP-7.2/頭部不動` 建，而 SP-7.4/視窗產權、SP-6.6/皮膚遮罩、
+  // SP-7.4/眨眼吃眉、SP-7.1/透明帶 全部沒有圖。畫師拿到的是一個座標與一格 512×512
+  // 要自己找 —— 而 SP-7.10 逐字寫「只印『不過』而不印『差多少』不符本規格」。
+  const bySheetCell = new Map();
+  for (const f of findings) {
+    if (f.severity !== 'error' || f.cell === undefined || !f.sheet) {
+      continue;
+    }
+    const key = `${f.sheet}:${f.cell}`;
+    if (!bySheetCell.has(key)) {
+      bySheetCell.set(key, []);
+    }
+    bySheetCell.get(key).push(f.id);
+  }
+
+  for (const [key, ids] of bySheetCell) {
+    const [sheetName, cellStr] = key.split(':');
+    const cell = Number(cellStr);
+    const sheet = sheets[sheetName];
+    if (!sheet) {
+      continue;
+    }
+    const buf = cellBuffer(sheet, cell, manifest);
     const out = flatten(buf, cellPx, THEMES[0].bg);
-    for (let y = 0; y < cellPx; y++) {
-      for (let x = 0; x < cellPx; x++) {
-        if (x >= E.x0 && x < E.x1 && y >= E.y0 && y < E.y1) {
-          continue;
+    let marked = 0;
+
+    if (sheetName === 'directions') {
+      // 與 master frame 逐像素比，眼窗外的差異標洋紅（SP-7.2 的失敗模式）
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          if (cell !== 4 && x >= E.x0 && x < E.x1 && y >= E.y0 && y < E.y1) {
+            continue;
+          }
+          const o = (y * cellPx + x) * 4;
+          const differs =
+            Math.abs(base[o] - buf[o]) > 2 ||
+            Math.abs(base[o + 1] - buf[o + 1]) > 2 ||
+            Math.abs(base[o + 2] - buf[o + 2]) > 2 ||
+            Math.abs(base[o + 3] - buf[o + 3]) > 2;
+          if (differs) {
+            out.set(MAGENTA, o);
+            marked++;
+          }
         }
-        const o = (y * cellPx + x) * 4;
-        const differs =
-          Math.abs(base[o] - buf[o]) > 2 ||
-          Math.abs(base[o + 1] - buf[o + 1]) > 2 ||
-          Math.abs(base[o + 2] - buf[o + 2]) > 2 ||
-          Math.abs(base[o + 3] - buf[o + 3]) > 2;
-        if (differs) {
-          out.set(MAGENTA, o);
+      }
+    } else {
+      // reactions：把**越界**的非零 alpha 標洋紅（SP-7.4 / SP-6.6 的失敗模式）
+      const allow = ownershipMaskFor(manifest, cell);
+      const skin = skinMask(sheets.directions, manifest);
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          const o = (y * cellPx + x) * 4;
+          if (buf[o + 3] === 0) {
+            continue;
+          }
+          const i = y * cellPx + x;
+          if (!allow[i] || !skin[i]) {
+            out.set(MAGENTA, o);
+            marked++;
+          }
         }
       }
     }
-    const p = path.join(outDir, `diff-directions-${cell}.png`);
+
+    const p = path.join(outDir, `diff-${sheetName}-${cell}.png`);
     fs.writeFileSync(p, encodePng(cellPx, cellPx, out));
-    written.push(path.relative(ROOT, p));
+    written.push(`${path.relative(ROOT, p)}（${ids.join(' ')}：${marked} 個洋紅像素）`);
   }
   return written;
+}
+
+/** 取某一格的產權允許遮罩。`spriteChecks` 的 `ownershipMask` 未 export，這裡用同一組規則重建。 */
+function ownershipMaskFor(manifest, cell) {
+  const { cellPx } = manifest.sheet;
+  const code = manifest.reactionOwnership[cell] ?? '';
+  const mask = new Uint8Array(cellPx * cellPx);
+  const rects = { E: windowRect(manifest.windows.E, cellPx), B: windowRect(manifest.windows.B, cellPx), M: windowRect(manifest.windows.M, cellPx) };
+  const inR = (x, y, r) => x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1;
+  if (code.includes('K')) {
+    const lo = Math.floor(manifest.margins.silhouetteBox[0] * cellPx);
+    const hi = Math.ceil(manifest.margins.silhouetteBox[1] * cellPx);
+    for (let y = lo; y < hi; y++) {
+      for (let x = lo; x < hi; x++) {
+        if (!inR(x, y, rects.E) && !inR(x, y, rects.B) && !inR(x, y, rects.M)) {
+          mask[y * cellPx + x] = 1;
+        }
+      }
+    }
+  }
+  for (const k of ['E', 'B', 'M']) {
+    if (!code.includes(k)) {
+      continue;
+    }
+    const r = rects[k];
+    for (let y = r.y0; y < r.y1; y++) {
+      for (let x = r.x0; x < r.x1; x++) {
+        if (x >= 0 && y >= 0 && x < cellPx && y < cellPx) {
+          mask[y * cellPx + x] = 1;
+        }
+      }
+    }
+  }
+  return mask;
 }
 
 // --- 報表 -----------------------------------------------------------------
@@ -584,11 +666,24 @@ function renderTable(rows) {
   return [line(cols), '  ' + w.map((n) => '-'.repeat(n)).join('  '), ...rows.map((r) => line(cols.map((c) => r[c])))].join('\n');
 }
 
+/**
+ * 數字格式化。
+ *
+ * ⚠️ **接近門檻時不能全部塌成同一個數字。** 原本一律 `toFixed(4)`，於是一個
+ * 相對亮度 0.0469656（比下限 0.047 低 0.0000344）的真實違規會印成
+ * `[實測 0.0470 / 上限 0.0470；超出 0.0000]` —— 讀起來像工具壞了或誤報，
+ * 而它是對的。畫師看到這一行不會知道要改什麼。
+ * 小到 toFixed(4) 會變成全零時改用科學記號。
+ */
 function fmt(n) {
   if (!Number.isFinite(n)) {
     return String(n);
   }
-  return Math.abs(n) >= 1000 || Number.isInteger(n) ? String(n) : n.toFixed(4);
+  if (Math.abs(n) >= 1000 || Number.isInteger(n)) {
+    return String(n);
+  }
+  const fixed = n.toFixed(4);
+  return Number.parseFloat(fixed) === 0 && n !== 0 ? n.toExponential(2) : fixed;
 }
 
 // --- 主流程 ---------------------------------------------------------------
@@ -643,8 +738,7 @@ export function runCheck({ spriteDir = SPRITE_DIR, outDir = OUT_DIR, log = conso
 
   fs.mkdirSync(outDir, { recursive: true });
   const artefacts = [...writeContactSheets(sheets, manifest, outDir)];
-  const headFails = [...new Set(findings.filter((f) => f.id === 'SP-7.2/頭部不動').map((f) => f.cell))];
-  artefacts.push(...writeDiffImages(sheets, manifest, headFails, outDir));
+  artefacts.push(...writeDiffImages(sheets, manifest, findings, outDir));
 
   const errorCount = report(findings, gaze.centroids, manifest, log);
   log(`\n產出物（SP-7.9 / SP-7.10）：\n${artefacts.map((p) => `  ${p}`).join('\n')}`);
