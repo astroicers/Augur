@@ -58,6 +58,33 @@ export function cellToBackgroundPosition(cell) {
   return `${(c % 3) * 50}% ${Math.trunc(c / 3) * 50}%`;
 }
 
+/**
+ * 交付圖的尺寸預檢。回傳 `{ fatal, note }` —— `fatal` 非空就不該開始出題。
+ *
+ * ⚠️ **這支存在的理由是「把決策從 HTML 搬出來」。**
+ * 先前這個判斷寫在 `index.html` 的 inline script 裡，而 selftest 只能用
+ * `html.includes('...')` 去驗它 —— 那種斷言釘的是**字串拼法不是行為**：
+ * 六個 mutate-run-revert 全部保留拼法、打壞行為，而 selftest 維持全綠，
+ * 其中一個直接把已經移除的「邊長須可被 3 整除」規則原封不動加回去。
+ * 搬到這裡之後 selftest 測的是真的函式，餵真的數字。
+ *
+ * **只有「不是正方形」是致命的** —— 3×3 等分格在非正方形上會變成長方形格，
+ * 視線方向會被拉歪。邊長本身不影響顯示（舞台是 `background-size: 300% 300%`），
+ * 所以 1024²／2048² 這類校稿尺寸照常出題，只是提醒 SP-7.1 的交付要求是正好 1536。
+ */
+export function preflightError(width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { fatal: '讀不到圖片尺寸。沒有開始出題。', note: '' };
+  }
+  if (width !== height) {
+    return { fatal: `這張圖是 ${width}×${height} —— 3×3 的 sheet 必須是正方形。沒有開始出題。`, note: '' };
+  }
+  if (width !== 1536) {
+    return { fatal: '', note: `⚠️ 這張是 ${width}×${width}，可讀性測得出來，但 SP-7.1 的交付驗收要求正好 1536×1536。` };
+  }
+  return { fatal: '', note: '' };
+}
+
 /** SP-V.1 的兩條門檻。**百分比，不是比例** —— 規格寫的就是 85 與 60。 */
 export const THRESHOLD_OVERALL_PCT = 85;
 export const THRESHOLD_PER_DIRECTION_PCT = 60;
