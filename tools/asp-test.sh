@@ -121,7 +121,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=68
+MIN_SELFTEST=76
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)
@@ -138,9 +138,9 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 13 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 + components/MascotPanel 6）。
+# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 13 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 + components/MascotPanel 8）。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=55
+MIN_TESTS=57
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \

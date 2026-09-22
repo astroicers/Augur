@@ -237,3 +237,66 @@ test('觀測出口：chip 顯示 alertState.state 的原值', async () => {
   await settle();
   expect(view.getByTestId('alert-state-chip').textContent).toContain('—');
 });
+
+test('click 結束後若 pending 仍成立，必須回到 pending 而不是 null', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  try {
+    const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(setReaction).toHaveBeenLastCalledWith('pending');
+
+    // 點一下 panel。在 jsdom 裡看不到其他 panel，所以走的是降級路徑 —— 一樣會觸發 click 回饋。
+    setReaction.mockClear();
+    const host = view.getByTestId('mascot-stage');
+    await act(async () => {
+      host.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }));
+    });
+    expect(setReaction).toHaveBeenLastCalledWith('click');
+
+    // ⚠️ 420ms 後**必須回到 pending**，不是 null。
+    // 先前 click 的計時器無條件送 setReaction(null)，而 pending 那邊的守門旗標
+    // 還記著「已顯示」，依賴不變就不會再送一次 —— pending 從此永久消失。
+    setReaction.mockClear();
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    expect(setReaction).toHaveBeenLastCalledWith('pending');
+  } finally {
+    setReaction.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
+test('StrictMode 重複 mount 時，真正在畫面上的那個 avatar 收得到 pending', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  const disposed: DiagnosticAvatar[] = [];
+  const origDispose = DiagnosticAvatar.prototype.dispose;
+  jest.spyOn(DiagnosticAvatar.prototype, 'dispose').mockImplementation(function (this: DiagnosticAvatar) {
+    disposed.push(this);
+    return origDispose.call(this);
+  });
+  try {
+    render(
+      <React.StrictMode>
+        <MascotPanel {...props({ alertState: PENDING })} />
+      </React.StrictMode>
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // StrictMode 下第一個 avatar 會被 dispose。收到 'pending' 的那一次，
+    // 呼叫者不得是已經 dispose 掉的那一個 —— 先前守門旗標不隨 cleanup 重置，
+    // 於是第二個（真正在畫面上的）永遠停在 null。
+    const pendingCalls = setReaction.mock.contexts.filter((_, i) => setReaction.mock.calls[i]![0] === 'pending');
+    expect(pendingCalls.length).toBeGreaterThan(0);
+    const live = pendingCalls.filter((c) => !disposed.includes(c as DiagnosticAvatar));
+    expect(live.length).toBeGreaterThan(0);
+  } finally {
+    jest.restoreAllMocks();
+  }
+});

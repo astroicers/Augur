@@ -19,8 +19,44 @@ export const DIRECTION_LABELS = [
 /** 中央格不出題 —— 它是「沒有方向」，問它等於問一個沒有正確答案的題目。 */
 export const CENTER_CELL = 4;
 
-/** SP-V.1：每個非中央格至少 4 題。 */
-export const MIN_QUESTIONS_PER_CELL = 4;
+/**
+ * 每個非中央格的題數。SP-V.1 的條文是「**至少** 4 題」，這裡取 **10**。
+ *
+ * ⚠️ **4 題是壞的選擇，而壞在一個不明顯的地方。** 每方向 n 題時，實際生效的門檻是
+ * `ceil(0.6n)/n` —— n=4 時那是 **75%**，不是規格寫的 60%（只有 0/25/50/75/100 五個值可能）。
+ * 二項分佈實算：
+ *
+ * | n | 實際門檻 | 真實力 50% 誤收 | 真實力 75% 誤退 | 總題數 |
+ * |---|---|---|---|---|
+ * | 4 | **75.0%** | 31.2% | **26.2%** | 32 |
+ * | 10 | 60.0% | 37.7% | **7.8%** | 80 |
+ * | 15 | 60.0% | 30.4% | 5.7% | 120 |
+ *
+ * 最要緊的是**誤退**那一欄：n=4 時一份真實可讀性 75% 的**好**畫稿，
+ * 有超過四分之一的機率被退回去重畫。那是真的要花錢重畫的。
+ * n=10 把它降到 7.8%，而且實際門檻正好落在規格寫的 60% 上。代價是 80 題、約四分鐘。
+ *
+ * （「誤收」那一欄不太會因為加題數而改善，因為 50% 離 60% 的門檻本來就很近 ——
+ * 那是門檻位置的性質，不是樣本數的問題。要改善它得動 SP-V.1 的 60%，那是規格修訂。）
+ */
+export const MIN_QUESTIONS_PER_CELL = 10;
+
+/**
+ * 格號 → CSS `background-position`（3×3，每格 50%）。
+ *
+ * ⚠️ **這裡有一份，是為了讓 `index.html` 不要自己再抄一份。**
+ * 原本頁面裡手寫了同樣的算式，而 repo 內沒有任何東西涵蓋 `index.html` ——
+ * 把兩個項對調（column-major）是一個 token 的改動，會讓一份完美的交付被評成
+ * 8/32 = 25.0% 未通過，而 selftest 全綠。
+ *
+ * ⚠️ 它與 `src/avatar/gaze.ts` 的 `cellToBackgroundPosition` 是同一個算式。
+ * **沒有共用是刻意的** —— 這個檔要能在瀏覽器裡以純 ES module 直接載入，
+ * 不能依賴 `src/` 的 TypeScript 建置產物。兩邊都有測試釘住同樣的語意。
+ */
+export function cellToBackgroundPosition(cell) {
+  const c = Math.max(0, Math.min(8, Math.trunc(cell)));
+  return `${(c % 3) * 50}% ${Math.trunc(c / 3) * 50}%`;
+}
 
 /** SP-V.1 的兩條門檻。**百分比，不是比例** —— 規格寫的就是 85 與 60。 */
 export const THRESHOLD_OVERALL_PCT = 85;
@@ -97,6 +133,20 @@ export function score(questions, answers) {
   const overallPct = questions.length === 0 ? 0 : (correct / questions.length) * 100;
   const worst = directions.reduce((w, d) => (w === null || d.pct < w.pct ? d : w), null);
 
+  // ⚠️ **沒被問到的方向不得算通過。** `perDirection` 是以「被問到的格」為 key 建的，
+  // 所以一個從頭到尾沒出題的方向**不會出現在 directions 裡**，也就永遠不可能
+  // 讓單方向門檻失敗 —— 一份在該方向完全讀不出來的交付會拿到「通過」。
+  // 實測：28 題的清單漏掉格 6，全對 → `{ overallPct: 100, passed: true }`。
+  // 更極端：只含格 0 的 4 題清單全對，同樣 passed。這條必須 fail-closed。
+  const expected = [];
+  for (let c = 0; c < 9; c++) {
+    if (c !== CENTER_CELL) {
+      expected.push(c);
+    }
+  }
+  const asked = new Set(directions.map((d) => d.cell));
+  const missing = expected.filter((c) => !asked.has(c));
+
   return {
     total: questions.length,
     correct,
@@ -115,7 +165,9 @@ export function score(questions, answers) {
         };
       })
       .sort((a, b) => b.count - a.count),
-    ...verdict(overallPct, worst),
+    missing,
+    missingLabels: missing.map((c) => DIRECTION_LABELS[c]),
+    ...verdict(overallPct, worst, missing),
   };
 }
 
@@ -125,19 +177,24 @@ export function score(questions, answers) {
  * ⚠️ 用 `>=` 而非 `>`：規格寫的是「整體 **≥**85%」「沒有任何單一方向**低於** 60%」，
  * 所以 85.0 與 60.0 都是**通過**。差一個等號就會讓剛好壓線的交付被退回去重畫。
  */
-export function verdict(overallPct, worst) {
+export function verdict(overallPct, worst, missing = []) {
   const overallOk = overallPct >= THRESHOLD_OVERALL_PCT;
   const perDirectionOk = worst === null ? false : worst.pct >= THRESHOLD_PER_DIRECTION_PCT;
+  // 八個非中央方向少一個都不算數。見 `score()` 裡的說明。
+  const coverageOk = missing.length === 0;
   return {
     overallOk,
     perDirectionOk,
-    passed: overallOk && perDirectionOk,
+    coverageOk,
+    passed: overallOk && perDirectionOk && coverageOk,
     // 第二條門檻存在的理由：整體 85% 可以由「七個方向全對、一個全錯」達成，
     // 而那個全錯的方向在真實使用中就是永遠讀不出來。
-    reason: overallOk
-      ? perDirectionOk
-        ? '通過'
-        : `整體達標但「${worst.label}」只有 ${worst.pct.toFixed(1)}%，低於 ${THRESHOLD_PER_DIRECTION_PCT}%`
-      : `整體 ${overallPct.toFixed(1)}%，低於 ${THRESHOLD_OVERALL_PCT}%`,
+    reason: !coverageOk
+      ? `有 ${missing.length} 個方向從頭到尾沒被問到（${missing.map((c) => DIRECTION_LABELS[c]).join('、')}）—— 這不是通過也不是不通過，是這一輪不算數`
+      : overallOk
+        ? perDirectionOk
+          ? '通過'
+          : `整體達標但「${worst.label}」只有 ${worst.pct.toFixed(1)}%，低於 ${THRESHOLD_PER_DIRECTION_PCT}%`
+        : `整體 ${overallPct.toFixed(1)}%，低於 ${THRESHOLD_OVERALL_PCT}%`,
   };
 }

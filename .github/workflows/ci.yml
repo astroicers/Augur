@@ -51,6 +51,23 @@ jobs:
       - name: sprite 工具自測
         run: node tools/check-sprite-sheets.selftest.mjs
 
+      # ⚠️ 本機閘門有這道而 CI 先前沒有 —— 於是「PR 把 compose 的 Grafana 版本升上去
+      # 但沒動 VERIFIED-GRAFANA.txt」會一路綠燈合併，而 G-ADR004-4（漸進降級，
+      # 本專案唯一 unsupported 的部分）根本沒重跑。
+      - name: Grafana 版本觸發器
+        run: |
+          LINES=$(grep -nE '^[[:space:]]*image:[[:space:]]*"?grafana/grafana:' monitoring/docker-compose.yml || true)
+          COUNT=$(printf '%s' "$LINES" | grep -c . || true)
+          TAG=$(printf '%s' "$LINES" | head -1 | sed -E 's/.*grafana\/grafana:([0-9][0-9.]*).*/\1/')
+          VERIFIED=$(head -1 monitoring/VERIFIED-GRAFANA.txt | tr -d '[:space:]')
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::monitoring/docker-compose.yml 有 $COUNT 個未註解的 grafana image 宣告"; exit 1
+          fi
+          if [ "$TAG" != "$VERIFIED" ]; then
+            echo "::error::Grafana 由 $VERIFIED 變成 $TAG，需重跑 G-ADR004-4 並更新 monitoring/VERIFIED-GRAFANA.txt"; exit 1
+          fi
+          echo "grafana $TAG（與 G-ADR004-4 通過時相同）"
+
       - name: 單元測試
         run: npm run test:unit
 

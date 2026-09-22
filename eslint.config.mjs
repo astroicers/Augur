@@ -1,4 +1,5 @@
 import { defineConfig } from 'eslint/config';
+import tsParser from '@typescript-eslint/parser';
 import baseConfig from './.config/eslint.config.mjs';
 
 export default defineConfig([
@@ -43,4 +44,21 @@ export default defineConfig([
     ],
   },
   ...baseConfig,
+  {
+    /**
+     * ⚠️ `tests/` 與根層的 playwright config 先前**完全不被 lint** ——
+     * 實測 `npx eslint --stdin --stdin-filename tests/probe.spec.ts` 回
+     * 「File ignored because no matching configuration was supplied」。
+     * 它們也不在 tsc 的 program 裡（`npm run typecheck` 看不到），
+     * 也不被任何 gate 執行（e2e 需要 live Grafana，不在 commit 閘裡）。
+     * 三者相加：把 testid 改名、panel 標題打錯、或留下一半的編輯，
+     * commit 閘綠、CI 綠、PR 合併，而破壞只有在有人手動跑 e2e 時才浮出來。
+     * 這一段至少把 lint 接上去。
+     */
+    files: ['tests/**/*.ts', 'playwright.config.ts'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+    },
+  },
 ]);

@@ -35,7 +35,14 @@ import {
 } from './lib/png.mjs';
 import { encodeGif } from './lib/gif.mjs';
 import { buildManifest, buildSheets, S, SHEET } from './lib/syntheticSheet.mjs';
-import { CENTER_CELL, buildQuestions, score, verdict } from './blind-test/scoring.mjs';
+import {
+  CENTER_CELL,
+  MIN_QUESTIONS_PER_CELL,
+  buildQuestions,
+  cellToBackgroundPosition,
+  score,
+  verdict,
+} from './blind-test/scoring.mjs';
 import * as C from './lib/spriteChecks.mjs';
 const { CELL_COUNT } = C;
 import { runCheck, SENTINEL, ToolError } from './check-sprite-sheets.mjs';
@@ -902,12 +909,39 @@ console.log('\n[7] SP-V.1 盲測的出題與計分');
     seed = (seed * 1103515245 + 12345) % 2147483648;
     return seed / 2147483648;
   };
-  const q = buildQuestions(rnd);
   const per = {};
+  const q = buildQuestions(rnd);
   q.forEach((c) => (per[c] = (per[c] || 0) + 1));
-  ok('每個非中央格 4 題、共 32 題', q.length === 32 && Object.values(per).every((n) => n === 4));
+  const expectTotal = MIN_QUESTIONS_PER_CELL * 8;
+  ok(
+    `每個非中央格 ${MIN_QUESTIONS_PER_CELL} 題、共 ${expectTotal} 題`,
+    q.length === expectTotal && Object.values(per).every((n) => n === MIN_QUESTIONS_PER_CELL),
+    `${q.length} 題 / ${JSON.stringify(per)}`
+  );
   ok('中央格不出題（它沒有正確答案）', !(CENTER_CELL in per));
-  ok('題序被洗過（不是逐格連排）', q.slice(0, 8).some((c, i) => i > 0 && c !== q[i - 1]));
+
+  // ⚠️ **洗牌要用分佈檢定，不是「相鄰兩題不同」。**
+  // 原本的斷言是 `q.slice(0,8).some((c,i) => i>0 && c !== q[i-1])` —— 實測把整個
+  // Fisher-Yates 迴圈刪掉（buildQuestions 回傳 [0,0,...,1,1,...] 逐格連排），
+  // 那條斷言**照樣通過**，因為未洗牌的陣列第 0 與第 1 項也可能不同。它是裝飾。
+  // 改成：跑 3000 輪，看每個非中央格出現在**第一題**的次數是否接近 1/8。
+  // 未洗牌時第一題恆為格 0，這個檢定必定紅。
+  {
+    const ROUNDS = 3000;
+    const first = {};
+    for (let i = 0; i < ROUNDS; i++) {
+      const qq = buildQuestions(rnd);
+      first[qq[0]] = (first[qq[0]] || 0) + 1;
+    }
+    const cells = Object.keys(first);
+    const expectEach = ROUNDS / 8;
+    const worst = Math.max(...Object.values(first).map((n) => Math.abs(n - expectEach) / expectEach));
+    ok(
+      `洗牌均勻：${ROUNDS} 輪裡第一題落在 8 個方向的分佈，最大偏離 ${(worst * 100).toFixed(1)}%`,
+      cells.length === 8 && worst < 0.25,
+      `出現過的首題格：${cells.join(',')}；分佈 ${JSON.stringify(first)}`
+    );
+  }
 
   ok('全對 → 通過', score(q, q.slice()).passed);
 
@@ -916,17 +950,53 @@ console.log('\n[7] SP-V.1 盲測的出題與計分');
   ok('「不確定」計為答錯（SP-V.1 明文）', rNull.overallPct === 50 && !rNull.passed);
   ok('誤判去向記錄「不確定」', rNull.confusion.some((c) => c.gotLabel === '不確定'));
 
-  // 第二條門檻存在的理由：七個方向全對、一個全錯 → 整體 87.5% 仍須未通過
+  // 第二條門檻存在的理由：七個方向全對、一個全錯 → 整體仍達標但必須未通過
   const oneBad = q.map((c) => (c === 6 ? 7 : c));
   const rBad = score(q, oneBad);
-  ok('整體 87.5% 但單一方向 0% → 未通過', rBad.overallOk && !rBad.perDirectionOk && !rBad.passed,
+  ok('整體達標但單一方向 0% → 未通過', rBad.overallOk && !rBad.perDirectionOk && !rBad.passed,
     `整體 ${rBad.overallPct}% / 最弱 ${rBad.worst.pct}%`);
   ok('回饋說得出「被誤判成什麼」', rBad.confusion[0].wantLabel === '左下' && rBad.confusion[0].gotLabel === '正下');
 
-  // 門檻邊界：規格寫的是「≥85%」與「低於 60%」，所以 85.0 與 60.0 都是通過
+  // ⚠️ **沒被問到的方向必須 fail-closed。** 原本 perDirection 以「被問到的格」為 key，
+  // 所以漏掉的方向不會出現在 directions 裡，也就永遠不會讓門檻失敗 ——
+  // 一份在該方向完全讀不出來的交付會拿到「通過」。
+  {
+    const partial = q.filter((c) => c !== 6);
+    const rp = score(partial, partial.slice());
+    ok('漏問一個方向且其餘全對 → 不得通過', rp.overallPct === 100 && !rp.passed && !rp.coverageOk,
+      `passed=${rp.passed} coverageOk=${rp.coverageOk}`);
+    ok('報告指名漏掉哪一個方向', rp.missingLabels.join() === '左下', rp.missingLabels.join());
+    const only = [0, 0, 0, 0];
+    ok('只問一個方向且全對 → 不得通過', !score(only, only.slice()).passed);
+  }
+
+  // 門檻邊界：規格寫「≥85%」與「低於 60%」，所以 85.0 與 60.0 都通過
   const w = (pct) => ({ pct, label: 'x' });
   ok('整體 85.0 過 / 84.9 不過', verdict(85.0, w(100)).overallOk && !verdict(84.9, w(100)).overallOk);
   ok('單方向 60.0 過 / 59.9 不過', verdict(100, w(60.0)).perDirectionOk && !verdict(100, w(59.9)).perDirectionOk);
+
+  // 每方向題數決定「實際生效的門檻」是 ceil(0.6n)/n。n=4 時那是 75% 而不是 60%。
+  {
+    const need = Math.min(...Array.from({ length: MIN_QUESTIONS_PER_CELL + 1 }, (_, k) => k).filter(
+      (k) => k / MIN_QUESTIONS_PER_CELL >= 0.6
+    ));
+    ok(
+      `每方向 ${MIN_QUESTIONS_PER_CELL} 題時實際門檻正好是 60%（不是量化後的更高值）`,
+      Math.abs(need / MIN_QUESTIONS_PER_CELL - 0.6) < 1e-9,
+      `需答對 ${need}/${MIN_QUESTIONS_PER_CELL} = ${((need / MIN_QUESTIONS_PER_CELL) * 100).toFixed(1)}%`
+    );
+  }
+
+  // 格號→background-position：頁面與計分共用同一支，頁面不自己抄
+  ok('cellToBackgroundPosition 語意正確（row-major）',
+    cellToBackgroundPosition(0) === '0% 0%' && cellToBackgroundPosition(4) === '50% 50%' && cellToBackgroundPosition(8) === '100% 100%',
+    [0, 4, 8].map(cellToBackgroundPosition).join(' / '));
+  {
+    const html = fs.readFileSync(path.join(ROOT, 'tools/blind-test/index.html'), 'utf8');
+    ok('index.html 不自己抄一份格號算式', !/\(cell % 3\)\s*\*\s*50/.test(html));
+    ok('index.html 載圖失敗時不開始出題', html.includes('probe.onerror'));
+    ok('index.html 有點擊防抖（一次雙擊不得吃掉兩題）', html.includes('lastAnswerAt'));
+  }
 
   let threw = false;
   try {

@@ -15,7 +15,7 @@ import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import type { AvatarController } from '../avatar/AvatarController';
 import { CENTER_CELL, DEFAULT_GAZE, gazeCell } from '../avatar/gaze';
 import { createFlapDriver, type FlapDriver } from '../avatar/flap';
-import { gazeDeadZonePx, spriteSide } from '../avatar/spriteSheet';
+import { gazeDeadZonePx, reactionFor, spriteSide } from '../avatar/spriteSheet';
 
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
@@ -155,12 +155,16 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [pending, setPending] = useState(0);
   const [scope, setScope] = useState<{ cross: boolean; reason: string }>({ cross: false, reason: '偵測中' });
   const [lastClick, setLastClick] = useState<string | null>(null);
+  /** 點擊回饋是**事件**：翻一個 state，420ms 後翻回來。要顯示什麼由反應層依優先序決定。 */
+  const [clicking, setClicking] = useState(false);
   const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1));
   // ⚠️ speaking 先前**只經 avatarRef.setSpeaking 送出去，React 側沒留** ——
   // 而 pending 的顯示條件含「未播報」，沒有這個 state 就判不出來。
   const [speaking, setSpeaking] = useState(false);
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
-  const pendingShownRef = useRef(false);
+  /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
+  const reactionRef = useRef<'click' | 'pending' | null>(null);
+  const clickTimerRef = useRef(0);
   const lastRawStateRef = useRef<string | null>(null);
 
   /**
@@ -225,35 +229,52 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       flapRef.current = null;
       a.dispose();
       avatarRef.current = null;
+      // ⚠️ 守門旗標必須跟著 avatar 一起重置，否則 StrictMode 的第二次 mount
+      // 會以為「已經送過了」而讓新的 avatar 永遠停在 null。
+      reactionRef.current = null;
+      window.clearTimeout(clickTimerRef.current);
     };
   }, []);
 
   /**
-   * pending 反應。三個條件缺一不可：
-   *  - `state === 'pending'`：alert rule 的 `for` duration 期間
-   *  - `emotion === 'calm'`：它不該跟 critical 搶同一張臉
-   *  - `!speaking`：播報當下嘴與眉都在動，再疊一張緊繃臉只會互相打架
+   * 反應層（click / pending）。**一個 effect 決定一切**，不是兩處各自呼叫 `setReaction`。
    *
-   * **只在轉換時呼叫 `setReaction`**（`pendingShownRef`）。每次依賴變動都無條件
-   * 呼叫 `setReaction(null)` 會把正在顯示的 click 反應（420ms）掃掉。
+   * 優先序來自 SP-4.0，實作在 `spriteSheet.ts` 的 `reactionFor()`：
+   * click > 非 calm 情緒 > pending > 無。pending 額外要求「未播報」——
+   * 播報當下嘴與眉都在動，再疊一張緊繃臉只會互相打架。
+   *
+   * ⚠️ **先前是兩處各自呼叫 `setReaction`，而那有三個各自獨立的錯：**
+   * 1. click 的 420ms 計時器到期時**無條件**送 `setReaction(null)`。若當時 pending 仍成立，
+   *    pending 表情就**永久**消失 —— 因為 pending 那邊的守門旗標還記著「已顯示」，
+   *    依賴不變就不會再送一次。使用者點一下 panel（這個 panel 唯一提供的互動）
+   *    就足以讓 pending 從此不再出現。
+   * 2. 守門旗標不隨 avatar 的 effect cleanup 重置。React 18 StrictMode 會
+   *    mount→unmount→mount：第一個（已 dispose 的）avatar 收到 'pending'，
+   *    而真正在畫面上的第二個永遠是 null。任何人工驗證 pending 都會得到錯誤結論。
+   * 3. click 的計時器沒有在 unmount 時清掉。
    *
    * ⚠️ **這個 effect 必須宣告在上面的 avatar mount effect 之後。** React 依宣告順序
    * 跑 effect，放在前面的話第一次 mount 時 `avatarRef.current` 還是 null 而提早 return，
-   * 之後依賴沒再變就**永遠不會補跑** —— 症狀是 pending 表情整個功能靜默失效。
-   * 這是實作時真的犯過的錯，由 MascotPanel.test.tsx 的第一條 pending 測試抓到。
+   * 之後依賴沒再變就**永遠不會補跑** —— 症狀是整個反應層靜默失效。
+   * 這是實作時真的犯過的錯，由 MascotPanel.test.tsx 的 pending 測試抓到。
    */
   useEffect(() => {
     const a = avatarRef.current;
     if (!a?.setReaction) {
       return;
     }
-    const show = rawAlertState === 'pending' && emotion === 'calm' && !speaking;
-    if (show === pendingShownRef.current) {
+    const want = reactionFor({
+      clicking,
+      pending: rawAlertState === 'pending',
+      emotion,
+      speaking,
+    });
+    if (want === reactionRef.current) {
       return;
     }
-    pendingShownRef.current = show;
-    a.setReaction(show ? 'pending' : null);
-  }, [rawAlertState, emotion, speaking]);
+    reactionRef.current = want;
+    a.setReaction(want);
+  }, [clicking, rawAlertState, emotion, speaking]);
 
 
   // 情緒衰減。沒有這個，一則 resolved 播完後臉會頂著閃光停到下一次告警。
@@ -325,9 +346,11 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       } else {
         return;
       }
-      // 點擊回饋。420ms 後自動回復 —— 它是事件不是狀態。
-      avatarRef.current?.setReaction?.('click');
-      window.setTimeout(() => avatarRef.current?.setReaction?.(null), 420);
+      // 不直接碰 setReaction —— 由上面的反應層依優先序決定。
+      // 所以 click 結束時若 pending 仍成立，它會自己回到 pending 而不是 null。
+      window.clearTimeout(clickTimerRef.current);
+      setClicking(true);
+      clickTimerRef.current = window.setTimeout(() => setClicking(false), 420);
     };
 
     target.addEventListener('pointermove', onMove, { passive: true });
@@ -527,6 +550,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         <div
           ref={hostRef}
           className={styles.stage}
+          data-testid="mascot-stage"
           style={{ color: chipColor, width: side, height: side }}
         />
 

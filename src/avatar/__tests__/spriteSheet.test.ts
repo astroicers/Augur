@@ -50,7 +50,7 @@ test('SP-8.9 嘴型幀選擇器：用 flap.ts 實際會吐的值', () => {
 
 test('SP-4.0 expr 優先序：click > 非 calm 情緒 > pending > 隱藏', () => {
   const s = (reaction: 'click' | 'pending' | null, emotion: 'calm' | 'warning' | 'critical' | 'resolved', speaking = false) =>
-    exprCell({ reaction, emotion, speaking });
+    exprCell({ clicking: reaction === 'click', pending: reaction === 'pending', emotion, speaking });
 
   // 路徑 1：click 壓過一切，含 critical
   expect(s('click', 'critical')).toBe(ReactionCell.CLICK);
@@ -71,6 +71,12 @@ test('SP-4.0 expr 優先序：click > 非 calm 情緒 > pending > 隱藏', () =>
 });
 
 test('SP-8.8 眨眼：序列、間隔、抑制條件', () => {
+  // ⚠️ **常數本身要斷言。** 原本只驗了「random 回 0 得到 MIN、回 1 得到 MAX」——
+  // 那對常數值零鑑別力：把 2800/6500 改成 500/900（吉祥物每 0.5–0.9 秒眨一次，
+  // 肉眼是抽搐，直接牴觸 SP-8.8 的「間隔於 2.8–6.5 秒間隨機」）測試照樣全綠。
+  expect(BLINK_INTERVAL_MIN_MS).toBe(2800);
+  expect(BLINK_INTERVAL_MAX_MS).toBe(6500);
+
   expect(BLINK_SEQUENCE.map((f) => f.cell)).toEqual([
     ReactionCell.EYES_HALF,
     ReactionCell.EYES_CLOSED,
@@ -95,6 +101,10 @@ test('SP-1.8 side：四檔尺寸與「不得放大」', () => {
 
   expect(at(300, 400)).toBe(126); // < 128
   expect(shouldRenderSprite(at(300, 400))).toBe(false);
+  // ⚠️ **下限那一格要釘住。** 原本只驗 305→128，而 `Math.floor` 被拿掉時
+  // 304 會從 127 變成 128，渲染門檻整個下移一個 CSS 像素而測試全綠。
+  expect(at(304, 400)).toBe(127);
+  expect(shouldRenderSprite(at(304, 400))).toBe(false);
   expect(at(305, 400)).toBe(128); // 規格說「實際生效門檻約 width ≥ 305」——這一行就是它
   expect(shouldRenderSprite(at(305, 400))).toBe(true);
   expect(at(381, 400)).toBe(160);
@@ -107,8 +117,29 @@ test('SP-1.8 side：四檔尺寸與「不得放大」', () => {
   expect(at(4000, 4000)).toBe(256);
   // dpr 3 時來源只有 512/3 = 170.67 CSS px 可用，上限跟著降
   expect(at(4000, 4000, 3)).toBeCloseTo(170.667, 2);
-  // 對齊裝置像素：dpr 2 下結果必為 0.5 的倍數
-  expect((at(333, 400, 2) * 2) % 1).toBe(0);
+  // ⚠️ **對齊裝置像素這一步要在「真的會動到值」的地方斷言。**
+  // 原本寫的是「dpr 2 下結果必為 0.5 的倍數」—— 那在 dpr 2 下恆成立（floor 已經給整數），
+  // 所以把整行 `Math.round(side * dpr) / dpr` 刪掉、改成 `return side`，測試照樣 6/6 全綠。
+  // dpr 1.5 才會真的咬到：floor 給的整數未必落在 1/1.5 的格點上。
+  // dpr 1.5 且 floor 給出**奇數**時，`side * dpr` 不是整數，對齊步驟才真的會改動數值。
+  // w=398 → floor(min(167.16, 320)) = 167（奇數）→ 167×1.5 = 250.5 → Math.round 給 251
+  // （JS 對正數的 .5 是向上）→ 251/1.5 = 167.3333。
+  // 把 `Math.round(side * dpr) / dpr` 整行刪掉的話，這一條會得到 167 而紅。
+  expect(at(398, 400, 1.5)).toBeCloseTo(167.3333, 4);
+  expect(at(399, 400, 1.5)).toBeCloseTo(167.3333, 4);
+  expect(at(400, 400, 1.5)).toBe(168); // floor 給 168（偶數），對齊不動它
+  // 不論哪一組，對齊之後乘上 dpr 都必須是整數 —— 那才是「對齊裝置像素」的定義。
+  for (const [w, h, dpr] of [
+    [398, 400, 1.5],
+    [399, 400, 1.5],
+    [400, 400, 1.5],
+    [403, 400, 1.5],
+    [517, 900, 2.5],
+    [333, 400, 2],
+  ] as const) {
+    const v = at(w, h, dpr);
+    expect(Math.abs(v * dpr - Math.round(v * dpr))).toBeLessThan(1e-9);
+  }
 
   expect(at(300, 400, 0)).toBe(126); // dpr 為 0 時當 1，不得回 Infinity
 });

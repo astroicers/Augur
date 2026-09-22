@@ -30,6 +30,13 @@ export default defineConfig<PluginOptions>(baseConfig, {
     baseURL: process.env.GRAFANA_URL ?? 'http://127.0.0.1:3002',
   },
   testDir: './tests',
+  /**
+   * ⚠️ **必須抬高。** playwright 的預設 test timeout 是 30 秒，而 `tests/panel-speaks.spec.ts`
+   * 寫了兩個 60 秒的 expect 預算來吸收「stack 剛起來 / panel 在摺線下方而 scenes 延後渲染 /
+   * provisioned rule 還沒評估」這些情形 —— 那兩個預算**永遠到不了**，測試會在第 30 秒
+   * 被殺掉並報成失敗，而失敗訊息指向 expect 而不是 timeout。
+   */
+  timeout: 120_000,
   // Add your own configuration here.
   // See https://grafana.com/developers/plugin-tools/how-to-guides/extend-configurations#extend-the-playwright-config for further info.
 });

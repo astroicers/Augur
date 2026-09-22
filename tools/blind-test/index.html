@@ -44,6 +44,7 @@
   <section id="setup" class="setup">
     <p><strong>選一張 directions sheet</strong>（1536×1536、3×3）：</p>
     <input type="file" id="file" accept="image/png" />
+    <p class="fail" id="loadErr" hidden></p>
     <p class="sub" style="margin:10px 0 0">
       也可以直接測 <button type="button" id="useRepo">repo 內的 src/img/sprite/directions.png</button>
       或 <button type="button" id="useFixture">編號假 sheet（驗這個頁面本身）</button>
@@ -61,23 +62,55 @@
 </main>
 
 <script type="module">
-  import { DIRECTION_LABELS, CENTER_CELL, buildQuestions, score } from './scoring.mjs';
+  import {
+    DIRECTION_LABELS,
+    CENTER_CELL,
+    buildQuestions,
+    cellToBackgroundPosition,
+    score,
+  } from './scoring.mjs';
 
   const $ = (id) => document.getElementById(id);
   let questions = [];
   let answers = [];
   let url = null;
 
+  /**
+   * ⚠️ **先確認圖真的載得進來再開始出題。**
+   * 原本不論載不載得到都直接進入測驗：素材不存在時（`/sprite/directions.png` → 404）
+   * 受測者會對著一個**空白框**答完整整一輪，然後拿到一份「未通過、整體 0.0%」的報告 ——
+   * 那份報告看起來跟「畫師交了一份讀不出方向的素材」一模一樣。
+   * 也順便擋下尺寸不對的檔（3×3 的 sheet 必須是正方形）。
+   */
   function start(imageUrl) {
-    url = imageUrl;
-    $('setup').hidden = true;
-    $('quiz').hidden = false;
-    $('result').hidden = true;
-    questions = buildQuestions(Math.random);
-    answers = [];
-    $('stage').style.backgroundImage = `url(${url})`;
-    renderChoices();
-    next();
+    const probe = new Image();
+    probe.onerror = () => {
+      $('setup').hidden = false;
+      $('quiz').hidden = true;
+      $('loadErr').hidden = false;
+      $('loadErr').textContent = `載不到 ${imageUrl} —— 素材還沒交付，或路徑不對。沒有開始出題。`;
+    };
+    probe.onload = () => {
+      if (probe.naturalWidth !== probe.naturalHeight || probe.naturalWidth % 3 !== 0) {
+        $('setup').hidden = false;
+        $('quiz').hidden = true;
+        $('loadErr').hidden = false;
+        $('loadErr').textContent =
+          `這張圖是 ${probe.naturalWidth}×${probe.naturalHeight} —— 3×3 的 sheet 必須是正方形且邊長可被 3 整除。沒有開始出題。`;
+        return;
+      }
+      url = imageUrl;
+      $('loadErr').hidden = true;
+      $('setup').hidden = true;
+      $('quiz').hidden = false;
+      $('result').hidden = true;
+      questions = buildQuestions(Math.random);
+      answers = [];
+      $('stage').style.backgroundImage = `url(${url})`;
+      renderChoices();
+      next();
+    };
+    probe.src = imageUrl;
   }
 
   function renderChoices() {
@@ -99,6 +132,13 @@
     u.textContent = '不確定（計為答錯）';
     u.onclick = () => answer(null);
     box.appendChild(u);
+
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'wide';
+    back.textContent = '← 上一題（手滑了）';
+    back.onclick = undo;
+    box.appendChild(back);
   }
 
   function next() {
@@ -107,13 +147,35 @@
       return finish();
     }
     const cell = questions[i];
-    $('stage').style.backgroundPosition = `${(cell % 3) * 50}% ${Math.trunc(cell / 3) * 50}%`;
+    // 算式共用自 scoring.mjs —— 頁面不自己抄一份（抄的那份沒有任何測試涵蓋）。
+    $('stage').style.backgroundPosition = cellToBackgroundPosition(cell);
     $('progress').style.width = `${(i / questions.length) * 100}%`;
     $('count').textContent = `第 ${i + 1} / ${questions.length} 題 —— 他在看哪個方向？（不告知對錯）`;
   }
 
+  /**
+   * ⚠️ **防抖。** 實測一次真實的 `dblclick` 手勢會讓計數從「第 1」跳到「第 3」——
+   * 兩題被吃掉，而第二題的圖只顯示了幾微秒。對一份 100% 正確的交付來說，
+   * 一次手滑就會憑空製造一個錯答。250ms 內的重複點擊一律忽略。
+   */
+  let lastAnswerAt = 0;
   function answer(cell) {
+    const now = performance.now();
+    if (now - lastAnswerAt < 250) {
+      return;
+    }
+    lastAnswerAt = now;
     answers.push(cell);
+    next();
+  }
+
+  /** 上一題。手滑答錯時的唯一補救 —— 沒有它，一次誤點就污染整輪。 */
+  function undo() {
+    if (answers.length === 0) {
+      return;
+    }
+    answers.pop();
+    lastAnswerAt = 0;
     next();
   }
 
@@ -122,7 +184,7 @@
     const r = score(questions, answers);
     const cls = (ok) => (ok ? 'pass' : 'fail');
     const rows = r.directions
-      .map((d) => `<tr><td>${d.label}</td><td class="n">${d.correct}/${d.asked}</td>
+      .map((d) => `<tr><td>${d.label}</td><td class="n">${d.asked}</td><td class="n">${d.correct}/${d.asked}</td>
         <td class="n ${cls(d.pct >= 60)}">${d.pct.toFixed(1)}%</td></tr>`)
       .join('');
     const conf = r.confusion.length
@@ -136,7 +198,8 @@
       <p class="sub">整體 ${r.correct}/${r.total} = <strong class="${cls(r.overallOk)}">${r.overallPct.toFixed(1)}%</strong>
         （門檻 85%）；最弱方向「${r.worst.label}」
         <strong class="${cls(r.perDirectionOk)}">${r.worst.pct.toFixed(1)}%</strong>（門檻 60%）</p>
-      <table><tr><th>方向</th><th class="n">正確</th><th class="n">正確率</th></tr>${rows}</table>
+      <table><tr><th>方向</th><th class="n">出題</th><th class="n">正確</th><th class="n">正確率</th></tr>${rows}</table>
+      ${r.missing.length ? `<p class="fail">⚠️ 有 ${r.missing.length} 個方向沒被問到：${r.missingLabels.join('、')}</p>` : ''}
       ${conf}
       <p class="sub" style="margin-top:18px">沒過不是 18 格重畫 —— 四層疊合保證其餘部分不受影響，
         畫師只改被誤判的那幾格。</p>

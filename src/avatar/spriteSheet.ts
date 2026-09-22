@@ -70,8 +70,18 @@ const EMOTION_TO_CELL: Record<Emotion, number | null> = {
 // ---------------------------------------------------------------------------
 
 export interface ExprState {
-  /** 非告警反應。來自 `AvatarController.setReaction`。 */
-  reaction: 'click' | 'pending' | null;
+  /**
+   * 使用者剛點了某個 panel（約 420ms 的短暫事件）。
+   *
+   * ⚠️ **click 與 pending 必須是兩個獨立的欄位，不能合成一個 `reaction` 槽。**
+   * 兩者會**同時成立**：alert rule 的 `for` duration 典型 1–5 分鐘，而使用者隨時可能點擊。
+   * 合成一個槽的話「click 期間 pending 還在」這件事就表達不出來 ——
+   * SP-4.0 的優先序「click > 非 calm 情緒 > pending」本身就預設了它們可以重疊，
+   * 否則「優先序」三個字沒有意義。
+   */
+  clicking: boolean;
+  /** alert rule 的 `for` duration 進行中。可持續數分鐘。 */
+  pending: boolean;
   /** 告警表情。來自 `AvatarController.setEmotion`。 */
   emotion: Emotion;
   /** 是否正在播報。pending 不與播報同時出現。 */
@@ -91,15 +101,32 @@ export interface ExprState {
  *   也不該在播報中冒出來 —— 播報當下嘴與眉都在動，再疊一張緊繃臉只會互相打架。
  */
 export function exprCell(state: ExprState): number | null {
-  if (state.reaction === 'click') {
+  if (state.clicking) {
     return ReactionCell.CLICK;
   }
   const byEmotion = EMOTION_TO_CELL[state.emotion];
   if (byEmotion !== null) {
     return byEmotion;
   }
-  if (state.reaction === 'pending' && !state.speaking) {
+  if (state.pending && !state.speaking) {
     return ReactionCell.PENDING;
+  }
+  return null;
+}
+
+/**
+ * 同一組狀態要送給 `AvatarController.setReaction` 的值。
+ *
+ * `exprCell` 回傳的是**格號**（給 sprite 用），這一支回傳的是**契約的反應種類**
+ * （給目前的 `DiagnosticAvatar` 與未來的 `SpriteController` 用）。兩者共用同一組優先序，
+ * 所以 click 結束時若 pending 仍成立，它會自己回到 `'pending'` 而不是 `null`。
+ */
+export function reactionFor(state: ExprState): 'click' | 'pending' | null {
+  if (state.clicking) {
+    return 'click';
+  }
+  if (state.pending && !state.speaking && state.emotion === 'calm') {
+    return 'pending';
   }
   return null;
 }
