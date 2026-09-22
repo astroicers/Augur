@@ -628,7 +628,7 @@ export function checkGazeBinding(directions, manifest) {
 // ---------------------------------------------------------------------------
 
 /** master frame 的臉部皮膚遮罩（SP-6.6 的產權上界）。以膚色 ± 容差取。 */
-export function skinMask(directions, manifest) {
+export function skinMask(directions, manifest, flag) {
   const geom = manifest.sheet;
   const { cellPx } = geom;
   const v = cellView(directions, 4, geom);
@@ -652,7 +652,7 @@ export function skinMask(directions, manifest) {
     }
   }
   const filled = fillHoles(mask, cellPx);
-  return faceComponent(filled, cellPx, manifest);
+  return faceComponent(filled, cellPx, manifest, flag);
 }
 
 /**
@@ -661,12 +661,19 @@ export function skinMask(directions, manifest) {
  * 眼窗中心是**臉**的定義性位置 —— 若連它都不在遮罩裡（例如整張臉被瀏海蓋住），
  * 就退回原遮罩而不是回傳空的：空遮罩會讓 SP-6.6 把**每一個**覆蓋像素都判成越界，
  * 那是把一個量測失敗變成一場素材災難。
+ *
+ * ⚠️ 但那個退路**不能是靜默的**。退回原遮罩等於把 SP-6.6 從「臉部皮膚」放寬成
+ * 「整格所有膚色像素」—— 脖子、鎖齊、耳朵、手全部變成合法的覆蓋區，
+ * 而那正是 2026-09-22 才剛修掉的缺陷。`degraded` 讓呼叫端把它報成 warn。
  */
-function faceComponent(mask, cellPx, manifest) {
+function faceComponent(mask, cellPx, manifest, flag) {
   const E = windowRect(manifest.windows.E, cellPx);
   const seedX = Math.round((E.x0 + E.x1) / 2);
   const seedY = Math.round((E.y0 + E.y1) / 2);
   if (!mask[seedY * cellPx + seedX]) {
+    if (flag) {
+      flag.degraded = true;
+    }
     return mask;
   }
   const keep = new Uint8Array(cellPx * cellPx);
@@ -831,7 +838,19 @@ export function checkOverlayOwnership(sheets, manifest) {
   const out = [];
   const geom = manifest.sheet;
   const { cellPx } = geom;
-  const skin = skinMask(sheets.directions, manifest);
+  const skinFlag = {};
+  const skin = skinMask(sheets.directions, manifest, skinFlag);
+  if (skinFlag.degraded) {
+    // 退回「整格所有膚色像素」——脖子、鎖骨、耳朵、手都變成合法覆蓋區，
+    // 也就是 2026-09-22 才剛修掉的那個缺陷。不能讓它靜默發生。
+    out.push({
+      id: 'SP-6.6/臉部遮罩降級',
+      severity: 'warn',
+      sheet: 'directions',
+      cell: 4,
+      message: '眼窗中心不是膚色（整張臉被遮住？），臉部皮膚遮罩退回「整格所有膚色像素」—— SP-6.6 本輪以放寬的定義執行，脖子與鎖骨不會被擋下',
+    });
+  }
   const B = windowRect(manifest.windows.B, cellPx);
   const emptyCells = new Set(declaredEmpty(manifest).filter((e) => e.sheet === 'reactions').map((e) => e.cell));
 
@@ -1068,7 +1087,16 @@ export function headBox(directions, manifest) {
   let y0 = Infinity;
   let y1 = -Infinity;
   let n = 0;
-  for (let y = 0; y < cellPx; y++) {
+  // ⚠️ **只取下巴以上。** 胸上構圖的脖子、鎖骨、裸露的肩膀都是膚色，
+  // 而整格的膚＋髮 bbox 寬度量到的是**肩寬**不是頭寬 —— 實測在裸肩的構圖上
+  // 量到 0.5742·S（真實頭寬 0.3984），而且**把頭加寬 30px 之後那個數字完全不變**：
+  // 肩膀撐滿了 bbox，頭再怎麼變都影響不到它。
+  //
+  // 分界用 `chinY` 而不是 `shoulderY`：下巴以上是頭（顱骨＋頭髮），以下是脖子與身體。
+  // `shoulderY`（0.85）遠低於肩膀實際開始的位置（緊接在下巴 0.60 之下），擋不到東西。
+  // `skinMask` 用的也是 `chinY`，兩處保持同一個分界。
+  const chinLimit = manifest.anchors.chinY * cellPx;
+  for (let y = 0; y < chinLimit; y++) {
     for (let x = 0; x < cellPx; x++) {
       const [r, g, b, a] = v.px(x, y);
       if (a < 128) {
@@ -1104,7 +1132,10 @@ export function silhouetteAxis(directions, manifest) {
       }
     }
     if (lo >= 0) {
-      rows.push((lo + hi) / 2);
+      // 像素 i 覆蓋 [i, i+1)，中心在 i+0.5；跨度 lo..hi 覆蓋 [lo, hi+1)，
+      // 中心是 (lo + hi + 1) / 2。用 (lo + hi) / 2 會有固定 −0.5 px 偏差 ——
+      // 對 ±0.004·S（S=512 時 ±2.048 px）的容差來說是 24% 的預算，白白送掉。
+      rows.push((lo + hi + 1) / 2);
     }
   }
   if (!rows.length) {
@@ -1202,14 +1233,37 @@ export function checkAnchors(directions, manifest, centroids) {
       a.crownY,
       `SP-2.3：髮/呆毛最高 ${hairTopMin}·S、顱骨頂 ${a.crownY}·S，而 bbox 量到的是前者`
     );
-    range(
-      'SP-7.5/頭寬',
-      '皮膚＋髮 bbox 寬',
-      box.x1 - box.x0 + 1,
-      a.headWidth,
-      maxSilWidth,
-      `SP-2.9：顱骨最寬 ${a.headWidth}·S、剪影最寬 ${maxSilWidth}·S，而 bbox 含側髮`
-    );
+    // ⚠️ **上界 0.840 是 SP-2.9 的「剪影最寬處」（含斗篷與肩膀），當頭寬上界太鬆。**
+    // headBox 自 2026-09-22 起以 chinY 為界、只量頭部，所以上界應該跟著收 ——
+    // 但「側髮可以比顱骨寬多少」規格沒有凍結，所以那個數字**只能是猜的**。
+    // 實測記錄：把頭加寬 30px（0.0586·S，遠超過 ±0.004·S 的容差）之後量到
+    // 0.4570·S，落在舊的 [0.400, 0.840] 內而完全不紅。
+    // 折衷：**下界維持硬失敗**（頭比顱骨還窄是不可能的，這一側量得準）；
+    // 上界降為 warn 並以 `headWidth × 1.25` 為門檻，訊息寫明它未經校準。
+    // 要恢復雙側精度，規格必須凍結一個**量得到**的橫向錨點（例如「側髮最外緣 X」）——
+    // 那是規格修訂不是程式修正，已記進 ROADMAP。
+    const headW = box ? (box.x1 - box.x0 + 1) / cellPx : NaN;
+    if (Number.isFinite(headW) && headW < a.headWidth - manifest.anchorToleranceS) {
+      out.push({
+        id: 'SP-7.5/頭寬',
+        severity: 'error',
+        sheet: 'directions',
+        cell: 4,
+        message: `頭部 bbox 寬 ${headW.toFixed(4)}·S 比宣告的頭寬 ${a.headWidth}·S 還窄 —— 顱骨不可能比宣告的窄（量測已以 chinY 為界，不含肩膀）`,
+        measured: headW,
+        limit: a.headWidth,
+      });
+    } else if (Number.isFinite(headW) && headW > a.headWidth * 1.1) {
+      out.push({
+        id: 'SP-7.5/頭寬偏寬',
+        severity: 'warn',
+        sheet: 'directions',
+        cell: 4,
+        message: `頭部 bbox 寬 ${headW.toFixed(4)}·S 是宣告頭寬 ${a.headWidth}·S 的 ${(headW / a.headWidth).toFixed(2)} 倍。側髮會讓它合法變寬，但 1.1 這個門檻**未經真素材校準**，首版僅記錄（門檻取 1.25 時，加寬 30px 的頭連 warn 都不會發）`,
+        measured: headW / a.headWidth,
+        limit: 1.1,
+      });
+    }
     // 下巴：SP-7.5 指名要驗，而 headBox 早就算出 y1 卻被丟掉。
     // 它比頭頂乾淨 —— 下巴以下通常不是膚色也不是髮色，bbox 底端就是下巴。
     // ⚠️ 但胸上構圖的脖子與鎖骨也是膚色，所以這裡只能是**警告**：
@@ -1382,13 +1436,15 @@ export function eyeCentroids(directions, cell, manifest) {
       if (alpha < 128 || !colourNear(r, g, b, iris, tol)) {
         continue;
       }
+      // 像素中心是 (x + 0.5, y + 0.5)；用索引平均會讓每個質心固定偏 −0.5 px。
+      // 瞳距與兩眼高差是**差值**，偏差會抵銷；但絕對值（眼線 Y、單眼 X）不會。
       if (x < mid) {
-        lx += x;
-        ly += y;
+        lx += x + 0.5;
+        ly += y + 0.5;
         ln++;
       } else {
-        rx += x;
-        ry += y;
+        rx += x + 0.5;
+        ry += y + 0.5;
         rn++;
       }
     }

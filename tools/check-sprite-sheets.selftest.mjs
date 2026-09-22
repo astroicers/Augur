@@ -1219,6 +1219,69 @@ function materialise(dir, sheets, patch = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// SP-7.5/頭寬：量的必須是**頭**，不是肩膀。
+//
+// ⚠️ headBox 原本掃整格。胸上構圖的脖子、鎖骨、裸露肩膀都是膚色，於是 bbox 寬度
+// 量到的是肩寬 —— 實測裸肩構圖 0.5742·S（真實頭寬 0.3984），而且**把頭加寬 30px
+// 之後那個數字完全不變**：肩膀撐滿了 bbox，頭再怎麼變都影響不到它。
+// 現在以 chinY 為界（與 skinMask 同一個分界）。
+// ---------------------------------------------------------------------------
+{
+  const cp = manifest.sheet.cellPx;
+  const SKIN = C.hexToRgb(manifest.colours.skin);
+  const bare = clone(base);
+  const y0 = Math.round(0.62 * cp);
+  const y1 = Math.round(0.84 * cp);
+  const x0 = Math.round(0.11 * cp);
+  const x1 = Math.round(0.89 * cp);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const ox = (c % 3) * S;
+    const oy = Math.floor(c / 3) * S;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const o = ((oy + y) * SHEET + (ox + x)) * 4;
+        if (bare.directions.data[o + 3] !== 255) {
+          continue;
+        }
+        bare.directions.data[o] = SKIN[0];
+        bare.directions.data[o + 1] = SKIN[1];
+        bare.directions.data[o + 2] = SKIN[2];
+      }
+    }
+  }
+  const wClean = (() => {
+    const b = C.headBox(base.directions, manifest);
+    return (b.x1 - b.x0 + 1) / cp;
+  })();
+  const wBare = (() => {
+    const b = C.headBox(bare.directions, manifest);
+    return (b.x1 - b.x0 + 1) / cp;
+  })();
+  // ⚠️ **數值釘樁，不是區間斷言。**
+  // 像素 i 覆蓋 [i, i+1)、中心在 i+0.5；跨度 lo..hi 的中心是 (lo+hi+1)/2。
+  // 原本用 (lo+hi)/2，有固定 −0.5 px 偏差 —— 那是 ±0.004·S（±2.048 px）容差的 24%，
+  // 白白送掉四分之一的預算。而 0.5 px 遠在容差內，所以**沒有任何 id 層級的斷言
+  // 會發現它**（實測：把修正改回去，112 條全綠）。這種系統性偏差只有釘住實測值才擋得住。
+  {
+    const cpx = manifest.sheet.cellPx;
+    const axis = C.silhouetteAxis(base.directions, manifest) / cpx;
+    ok(`對稱剪影的臉中軸必須正好落在宣告值上（實測 ${axis.toFixed(5)}）`,
+      Math.abs(axis - manifest.anchors.faceAxisX) < 1e-6,
+      `差 ${(axis - manifest.anchors.faceAxisX).toFixed(5)}·S —— 像素索引 vs 像素中心？`);
+    const eyes = C.eyeCentroids(base.directions, 4, manifest);
+    const mid = (eyes.left + eyes.right) / 2 / cpx;
+    ok(`左右瞳心中點必須正好落在臉中軸上（實測 ${mid.toFixed(5)}）`,
+      Math.abs(mid - manifest.anchors.faceAxisX) < 1e-6,
+      `差 ${(mid - manifest.anchors.faceAxisX).toFixed(5)}·S`);
+  }
+
+  ok('裸露膚色肩膀不得影響量到的頭寬（headBox 以 chinY 為界）',
+    Math.abs(wClean - wBare) < 1e-9, `乾淨 ${wClean.toFixed(4)} vs 裸肩 ${wBare.toFixed(4)}`);
+  ok('（不得誤紅）裸露膚色肩膀不得觸發 SP-7.5/頭寬',
+    !ids(runAll(bare, manifest)).includes('SP-7.5/頭寬'));
+}
+
+// ---------------------------------------------------------------------------
 // SP-7.3：能被偽造的量不該當硬失敗，不能被偽造的量才該當。
 //
 // 本機重現的攻擊：把格 3（應看左）的眼窗內容換成格 5（看右），再於眼窗最左端塗
