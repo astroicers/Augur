@@ -37,7 +37,7 @@
 <main>
   <h1>SP-V.1 方向辨識盲測</h1>
   <p class="sub">
-    directions 9 格的交付驗收。128 CSS px、<code>#181b1f</code> 底、每個非中央格 4 題隨機交錯。
+    directions 9 格的交付驗收。128 CSS px、<code>#181b1f</code> 底、每個非中央格 <span id="perCell"></span> 題隨機交錯，共 <span id="totalQ"></span> 題。
     <strong>「不確定」計為答錯</strong>。門檻：整體 ≥85% <strong>且</strong>沒有任何單一方向低於 60%。
   </p>
 
@@ -66,6 +66,7 @@
   import {
     DIRECTION_LABELS,
     CENTER_CELL,
+    MIN_QUESTIONS_PER_CELL,
     buildQuestions,
     cellToBackgroundPosition,
     preflightError,
@@ -73,6 +74,11 @@
   } from './scoring.mjs';
 
   const $ = (id) => document.getElementById(id);
+  // ⚠️ 從常數填，不要寫死在 HTML 裡。副標原本寫死「4 題」，
+  // 而 MIN_QUESTIONS_PER_CELL 在 2026-09-22 就改成 10 了 ——
+  // 頁面自己顯示「第 1 / 80 題」而副標說 4 題，對一個講求持續專注的任務少報 2.5 倍。
+  $('perCell').textContent = String(MIN_QUESTIONS_PER_CELL);
+  $('totalQ').textContent = String(MIN_QUESTIONS_PER_CELL * 8);
   let questions = [];
   let answers = [];
   let url = null;

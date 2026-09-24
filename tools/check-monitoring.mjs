@@ -50,10 +50,16 @@ for (const f of ['windows/windows_exporter-install.ps1', 'windows/alloy-install.
   const buf = read(M(f));
   const hasBom = buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
   const nonAscii = buf.some((b) => b > 0x7f);
+  // ⚠️ 三路，不是兩路。原本的 `else` 分支無條件印「有 BOM」，而它有兩條進入路徑：
+  // 真的有 BOM、以及**純 ASCII 且沒有 BOM**。後者會讓報表聲稱驗過一件它沒驗的事。
+  // 今天兩個檔都有 BOM 所以不會印錯，但只要有人把腳本改寫成純英文，
+  // checked 裡就會出現一行假話 —— 而 checked 正是「這道檢查做了什麼」的唯一憑據。
   if (nonAscii && !hasBom) {
     problems.push(`${f}：含非 ASCII 但沒有 UTF-8 BOM —— Windows PowerShell 5.1 會以 ANSI codepage 解碼而無法解析`);
-  } else {
+  } else if (hasBom) {
     checked.push(`${f} 有 BOM`);
+  } else {
+    checked.push(`${f} 純 ASCII，不需要 BOM`);
   }
 }
 

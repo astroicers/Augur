@@ -43,9 +43,25 @@ export const MAX_RGBA_BYTES = 256 * 1024 * 1024;
  * 這些值是照 PNG spec §6.6 的虛擬碼手算的，**不是**從本檔的實作產生的 ——
  * 從實作產生的「期望值」對實作的錯誤永遠是零鑑別力。
  *
- * 前四組是平凡情形；後面六組專挑 tie-break：spec 的判定是
- * `if (pa <= pb && pa <= pc) a; else if (pb <= pc) b; else c`，
- * 把任何一個 `<=` 改成 `<` 都會在這些組上翻掉。
+ * 前四組是平凡情形；其餘專挑 tie-break。spec 的判定是
+ * `if (pa <= pb && pa <= pc) a; else if (pb <= pc) b; else c`。
+ *
+ * ⚠️ **「把任何一個 `<=` 改成 `<` 都會翻掉」是錯的，這裡逐條說清楚**（2026-09-24 實測）：
+ *
+ * | 突變 | 本表翻掉幾組 |
+ * |---|---|
+ * | `pa <= pb` → `pa < pb` | **0 / 11** |
+ * | `pa <= pc` → `pa < pc` | 1 / 11 |
+ * | `pb <= pc` → `pb < pc` | 1 / 11 |
+ *
+ * 第一列不是覆蓋缺口，是**數學上不可觀測**：窮舉全部 256³ = 16,777,216 組
+ * （其中 98,048 組滿足 `pa === pb`），改成 `<` 之後結果不同的組數是 **0** ——
+ * `pa === pb` 時必然 `a === b`，選哪一個都一樣。
+ * 所以本表對這個位置**不可能**有鑑別力，而不是漏了幾組沒寫。
+ *
+ * 表的長度是 **11**（註解原本寫「四 + 六 = 十」，數錯了）。
+ * 這種註解比沒有更危險：它讓下一個人以為某幾列是承重的，
+ * 於是重構時放心地刪掉它們。
  */
 export const PAETH_SPEC_VECTORS = [
   // 平凡情形（三個距離互不相同）
@@ -110,6 +126,16 @@ function crc32(buf) {
  * CRC 不符即丟錯 —— 交付物是二進位資產，靜默吃掉損毀比紅一次糟得多。
  */
 function readChunks(buf) {
+  // ⚠️ 先正規化成 Buffer。呼叫端傳純 `Uint8Array` 時 `.equals()` 不存在，
+  // 丟的會是 `TypeError` 而不是 `PngFormatError` —— CLI 會把它當成 CRASH
+  // 而不是 SP-7.11 的 exit 2（「工具或格式錯誤」），分級整個錯掉。
+  // 目前九個呼叫點都傳 Buffer，所以這是潛伏的，但入口便宜。
+  if (!Buffer.isBuffer(buf)) {
+    if (!(buf instanceof Uint8Array)) {
+      throw new PngFormatError(`decodePng 需要 Buffer 或 Uint8Array，收到 ${typeof buf}`);
+    }
+    buf = Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
   if (buf.length < 8 || !buf.subarray(0, 8).equals(SIGNATURE)) {
     throw new PngFormatError('不是 PNG（簽章不符）');
   }

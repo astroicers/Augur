@@ -21,7 +21,11 @@ cd "$(dirname "$0")/.." || exit 1
 # ⚠️ **第一件事就是刪掉上一輪的結果檔。**
 # 腳本檔頭第 11–14 行講的正是這個失敗模式，但當時只對 .jest-result.json 做了，
 # 對它自己寫的 .asp-test-result.json 沒做。後果是**每一條 abort 路徑都留著上一輪的判決**：
-# jq 不存在、cd 失敗、set -u 中止、操作者 Ctrl-C、CI step timeout、OOM、磁碟滿。
+# jq 不存在、set -u 中止、操作者 Ctrl-C、CI step timeout、OOM、磁碟滿。
+# ⚠️ **不含「cd 失敗」** —— 這行 rm 在上面的 `cd ... || exit 1` 之後才執行，
+# cd 失敗時腳本已經走了，舊的綠色結果檔原封不動留在原地。註解原本把它列進來，
+# 那是假的。要涵蓋它得把 rm 移到 cd 之前並用絕對路徑，但那又會在
+# 「從別的目錄呼叫本腳本」時刪錯檔案 —— 目前接受這個缺口，但不假裝它不存在。
 # 實際的利用路徑不需要惡意：跑過一次綠 → 改壞某個檔 → 再跑閘門但它中途 abort
 # → 結果檔還是上一輪的綠、而且比 .git/index 新 → commit 直接放行。
 # 實測：注入兩個 typecheck 錯誤後在第 3 秒 kill -9，結果檔原封不動是綠的。
@@ -82,7 +86,12 @@ SPRITE_OUT=$(node tools/check-sprite-sheets.mjs 2>&1) || { GATE_OK=false; FAILED
 #   - FAIL 的 sentinel 活得下來，但 SP-7.10 要求的逐格表格與「超出多少」全被砍。
 # gate 判定、case 分類與 .asp-test-result.json 讀的都是未截斷的變數，所以這只影響人看到什麼。
 case "$SPRITE_OUT" in
-  *'SPRITE-CHECK: PASS'*|*'SPRITE-CHECK: NOT-DELIVERED'*) echo "$SPRITE_OUT" | tail -3 ;;
+  # NOT-DELIVERED 只有一行，tail 是為了省版面。
+  *'SPRITE-CHECK: NOT-DELIVERED'*) echo "$SPRITE_OUT" | tail -3 ;;
+  # ⚠️ **PASS 也要印完整。** 素材交付之後，綠燈的輸出含 SP-7.10 的逐格診斷表
+  # 與所有 warn 記錄 —— 而好幾條檢查（SP-7.3/虹膜遮罩大小、SP-7.5/頭寬偏寬、
+  # SP-7.1/覆蓋率、SP-7.6/可讀性）**刻意降成 warn「僅記錄」**，理由是門檻未經真素材校準。
+  # 綠燈時把記錄丟掉，等於那些降級完全白做：既不擋、也沒人看得到。
   *) echo "$SPRITE_OUT" ;;
 esac
 # 四種結局各自有字，不要用「已驗」概括 —— 「manifest 壞掉」與「素材通過」
