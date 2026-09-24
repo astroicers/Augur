@@ -173,6 +173,17 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
     // episode 結束就忘掉它。這不是「記我播過了沒」（那是 dedup 的事），
     // 是「這一段燒完了」；再燒起來就是新的 episode。
     episodes.clear();
+    // ⚠️ **快取也要一起清。**
+    // `alertState` 回到 `ok` 代表這個 panel 已經沒有任何規則在燒，
+    // 所以手上那份 rules 清單在定義上就是過期的。不清的話，10 秒的快取窗內
+    // 只要再有任何規則燒起來，這一輪拿到的是**含著剛恢復那些告警**的舊清單 ——
+    // 於是一個從來沒有再燒過的告警會被當成又燒起來、播一次 firing，
+    // 快取到期後再播一次 resolved。實測（ruleCacheSec: 10）：
+    // A 燒 → A 恢復 → 1 秒後 B 燒 → 播出的是 A/firing 而不是 B/firing。
+    //
+    // 順帶一提，這個缺陷先前測不到，因為**每一條測試都傳 `ruleCacheSec: 0`**，
+    // 等於把快取整個關掉 —— 而 production 用的是預設的 10 秒。
+    cache = null;
     return out;
   }
 

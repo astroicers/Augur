@@ -190,7 +190,7 @@ JEST_EXIT=$?
 
 # MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 15 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 + components/MascotPanel 8）。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=60
+MIN_TESTS=63
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \

@@ -209,9 +209,11 @@ test('一個 panel 綁多條規則時，部分恢復要當場播報而不是等�
   // A5-4 把 3 條效能規則綁 panel 4、5 條安全規則綁 panel 5 之後，這條路徑才會被走到。
   // 情境：兩條同時燒 → 其中一條恢復，但 panel 的 alertState 仍是 alerting
   //（因為還有另一條在燒），所以 resolvedAll() 不會被呼叫。
+  // ⚠️ `value` 一定要有。下面那條「恢復時不得帶 value」的斷言**沒有它就不可能失敗** ——
+  // 實測：把 resolved 路徑的 strip 整段拿掉，17 個測試照樣全綠。
   let rules: RuleDetail[] = [
-    { alertname: 'WindowsAccountLockout', severity: 'critical', summary: '帳號被鎖定' },
-    { alertname: 'WindowsFailedLogonBurst', severity: 'warning', summary: '連續登入失敗' },
+    { alertname: 'WindowsAccountLockout', severity: 'critical', summary: '帳號被鎖定', value: 3 },
+    { alertname: 'WindowsFailedLogonBurst', severity: 'warning', summary: '連續登入失敗', value: 7 },
   ];
   const src = createPanelAlertSource({
     panelId: 5,
@@ -231,7 +233,9 @@ test('一個 panel 綁多條規則時，部分恢復要當場播報而不是等�
   const resolved = second.filter((a) => a.status === 'resolved');
   expect(resolved).toHaveLength(1);
   expect(resolved[0]!.name).toBe('WindowsAccountLockout');
-  // 恢復時不得帶 value —— 那是 firing 當時的數字，念出來是錯的
+  // 恢復時不得帶 value —— 那是 firing 當時的數字，念出來是錯的。
+  // 先確認 firing 那邊真的有 value，否則這條斷言是空的。
+  expect(first.find((a) => a.name === 'WindowsAccountLockout')!.value).toBe(3);
   expect(resolved[0]).not.toHaveProperty('value');
   // 還在燒的那條照常吐（抑制交給 dedup）
   expect(second.filter((a) => a.status === 'firing').map((a) => a.name)).toEqual(['WindowsFailedLogonBurst']);
@@ -324,4 +328,59 @@ test('端點恢復讓泛用 episode 被取代後，下一次降級仍然播得�
   clock.t += 60_000;
   await tick('alerting');
   expect(spoken.filter((s) => s === '告警/firing')).toHaveLength(2);
+});
+
+/**
+ * 迴歸：`ok` 之後必須清掉 rules 快取，否則會播出一個**從來沒燒過**的告警的恢復。
+ *
+ * ⚠️ 這條刻意用**真實的快取窗**（10 秒，production 預設）。
+ * 其餘測試一律傳 `ruleCacheSec: 0`，等於快取在測試裡 100% 關閉 ——
+ * 而這個缺陷只在快取真的生效時存在。
+ */
+test('全部恢復之後必須清掉 rules 快取（否則會念一個沒燒過的告警的恢復）', async () => {
+  const clock = { t: 1_000_000 };
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+  let detail: RuleDetail[] = [{ alertname: 'A', severity: 'critical' }];
+  let fetches = 0;
+  const src = createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules: async () => {
+      fetches++;
+      return detail;
+    },
+    fallbackSeverity: 'critical',
+    ruleCacheSec: 10, // ← production 預設，不是 0
+    now: () => clock.t,
+    onSupersede: (fp) => dedup.forget(fp),
+  });
+
+  const spoken: string[] = [];
+  const tick = async (state: string) => {
+    for (const ev of await src.evaluate({ state }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+
+  // A 燒起來、播報
+  await tick('alerting');
+  expect(spoken).toEqual(['A/firing']);
+
+  // A 恢復
+  clock.t += 1_000;
+  await tick('ok');
+  expect(spoken).toEqual(['A/firing', 'A/resolved']);
+
+  // 一秒後 B 燒起來（仍在 10 秒快取窗內）。
+  // 沒清快取的話這一輪拿到的是含著 A 的舊清單 —— A 會被當成又燒起來。
+  clock.t += 1_000;
+  detail = [{ alertname: 'B', severity: 'warning' }];
+  await tick('alerting');
+  expect(spoken).toEqual(['A/firing', 'A/resolved', 'B/firing']);
+
+  // 快取到期後也不該冒出一句 A 的恢復
+  clock.t += 12_000;
+  await tick('alerting');
+  expect(spoken).toEqual(['A/firing', 'A/resolved', 'B/firing']);
 });

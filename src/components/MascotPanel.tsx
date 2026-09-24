@@ -479,7 +479,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         if (!plans.length) {
           return;
         }
-        setFeed((prev) => [...plans.reverse(), ...prev].slice(0, 20));
+        // ⚠️ **不要 `plans.reverse()`** —— 它就地改動陣列，而後面兩處都讀 `plans`：
+        //  1. `setEmotion(plans[0])` 會拿到**最後**一則的情緒而不是第一則；
+        //  2. `sp.enqueue()` 的迴圈會照**反序**播報。
+        // 另外它在 setState 的 updater 裡，StrictMode 的雙呼叫會反轉兩次而抵銷，
+        // 於是開發模式與正式模式的 feed 順序不一樣 —— 最難查的那種。
+        // feed 要新的在上，所以用一份複本反轉；播報與情緒維持時間順序。
+        const newestFirst = [...plans].reverse();
+        setFeed((prev) => [...newestFirst, ...prev].slice(0, 20));
         setEmotion(plans[0]!.plan.emotion);
         avatarRef.current?.setEmotion(plans[0]!.plan.emotion);
         const sp = speakerRef.current;

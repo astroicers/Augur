@@ -300,3 +300,62 @@ test('StrictMode 重複 mount 時，真正在畫面上的那個 avatar 收得到
     jest.restoreAllMocks();
   }
 });
+
+/**
+ * 迴歸：一次來多則時，**播報順序必須是時間順序**，而 feed 是新的在上。
+ *
+ * ⚠️ 原本寫的是 `setFeed((prev) => [...plans.reverse(), ...prev])` ——
+ * `reverse()` 就地改動陣列，而它後面兩處都讀同一個 `plans`：
+ *   1. `setEmotion(plans[0])` 拿到的是**最後**一則的情緒而不是第一則；
+ *   2. `sp.enqueue()` 的迴圈照**反序**播報。
+ * 而且它在 setState 的 updater 裡，StrictMode 的雙呼叫會反轉兩次而抵銷 ——
+ * 開發模式與正式模式的 feed 順序不一樣，是最難查的那種。
+ */
+test('一次來多則時播報照時間順序，且 feed 是新的在上', async () => {
+  mockedFetch.mockResolvedValue([
+    { alertname: 'First', severity: 'critical', summary: '第一則', value: 1 },
+    { alertname: 'Second', severity: 'warning', summary: '第二則', value: 2 },
+  ]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThanOrEqual(2));
+
+  // 播報照來的順序，不是反序
+  const texts = spoken.map((p) => p.text);
+  const iFirst = texts.findIndex((t) => t.includes('第一則'));
+  const iSecond = texts.findIndex((t) => t.includes('第二則'));
+  expect(iFirst).toBeGreaterThanOrEqual(0);
+  expect(iSecond).toBeGreaterThanOrEqual(0);
+  expect(iFirst).toBeLessThan(iSecond);
+
+  // feed 是新的在上 —— 最後一則排在最前
+  const feedText = view.container.textContent ?? '';
+  expect(feedText).toContain('第一則');
+  expect(feedText).toContain('第二則');
+  expect(feedText.indexOf('第二則')).toBeLessThan(feedText.indexOf('第一則'));
+});
+
+/**
+ * 同一件事的 StrictMode 面。
+ *
+ * ⚠️ 上一條測不到 `plans.reverse()` 的就地改動 —— `setFeed` 的 updater 是**惰性**的，
+ * React 可能在後續 render 才執行它，那時 enqueue 早就跑完了，於是播報順序「碰巧」是對的。
+ * 真正看得見差異的是 StrictMode：updater 被呼叫兩次 → 反轉兩次 → 抵銷，
+ * feed 變成舊的在上，而正式模式是新的在上。**開發與正式行為不一致**，最難查的那種。
+ */
+test('StrictMode 下 feed 順序必須與正式模式相同（updater 不得就地改動）', async () => {
+  mockedFetch.mockResolvedValue([
+    { alertname: 'First', severity: 'critical', summary: '第一則', value: 1 },
+    { alertname: 'Second', severity: 'warning', summary: '第二則', value: 2 },
+  ]);
+
+  const view = render(
+    <React.StrictMode>
+      <MascotPanel {...props({ alertState: ALERTING })} />
+    </React.StrictMode>
+  );
+  await waitFor(() => expect(view.container.textContent ?? '').toContain('第二則'));
+
+  const feedText = view.container.textContent ?? '';
+  expect(feedText.indexOf('第二則')).toBeLessThan(feedText.indexOf('第一則'));
+});
