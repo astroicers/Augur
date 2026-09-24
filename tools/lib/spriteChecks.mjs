@@ -1392,7 +1392,14 @@ export function checkAnchors(directions, manifest, centroids) {
     // (c) 左右可見面積明顯不對稱 → 一眼被遮，(b) 的數字不可信。
     const lo = Math.min(eyes.leftN, eyes.rightN);
     const hi = Math.max(eyes.leftN, eyes.rightN);
-    const occluded = lo / hi < 0.6;
+    // ⚠️ 門檻 0.9 不是 0.6。`checkAnchors` **只跑 master frame**（中性正視），
+    // 兩隻眼睛在那一格本來就該對稱 —— 任何超過 10% 的面積差就代表有東西遮著，
+    // 而遮住之後質心會移動、瞳距與對稱性都不可信。
+    //
+    // 0.6 留下一條誤紅帶：實測用側髮從外側蓋住左眼，可見比 0.80 與 0.65
+    // 都**硬失敗 SP-7.5/瞳距**（瞳孔幾何完全正確），而 0.55 以下反而被這個 warn
+    // 正確接手。也就是 15–40% 的遮擋剛好漏在縫裡 —— 而那是側髮最常見的幅度。
+    const occluded = lo / hi < 0.9;
     if (occluded) {
       out.push({
         id: 'SP-7.5/單眼被遮',

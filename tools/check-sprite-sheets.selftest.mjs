@@ -1272,6 +1272,83 @@ function materialise(dir, sheets, patch = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// SP-7.5：單眼被側髮遮住時，瞳心幾何不可信 —— 但門檻要對。
+//
+// ⚠️ 門檻原本是 0.6，留下一條誤紅帶：實測用髮色從**外側**蓋住左眼，
+// 可見比 0.80 與 0.65 都**硬失敗 SP-7.5/瞳距**（瞳孔幾何完全正確），
+// 而 0.55 以下反而被 `單眼被遮` 的 warn 正確接手 ——
+// 15–40% 的遮擋剛好漏在縫裡，而那是側髮最常見的幅度。
+// checkAnchors 只跑 master frame（中性正視），兩眼本來就該對稱，所以門檻拉到 0.9。
+// ---------------------------------------------------------------------------
+{
+  const cp = manifest.sheet.cellPx;
+  const E = C.windowRect(manifest.windows.E, cp);
+  const IRIS = C.hexToRgb(manifest.colours.iris);
+  const HAIR = C.hexToRgb(manifest.colours.hair);
+  const coverLeft = (sh, keep) => {
+    const hits = [];
+    for (let y = E.y0; y < E.y1; y++) {
+      for (let x = E.x0; x < manifest.anchors.faceAxisX * cp; x++) {
+        const o = ((Math.floor(4 / 3) * S + y) * SHEET + ((4 % 3) * S + x)) * 4;
+        const d = sh.directions.data;
+        if (Math.abs(d[o] - IRIS[0]) <= 40 && Math.abs(d[o + 1] - IRIS[1]) <= 40 && Math.abs(d[o + 2] - IRIS[2]) <= 40) {
+          hits.push([x, o]);
+        }
+      }
+    }
+    if (!hits.length) {
+      return;
+    }
+    const xs = hits.map(([x]) => x);
+    const cut = Math.min(...xs) + (Math.max(...xs) - Math.min(...xs) + 1) * (1 - keep);
+    for (const [x, o] of hits) {
+      if (x < cut) {
+        const d = sh.directions.data;
+        d[o] = HAIR[0];
+        d[o + 1] = HAIR[1];
+        d[o + 2] = HAIR[2];
+      }
+    }
+  };
+  const errsFor = (sh) => ids(runAll(sh, manifest));
+  for (const keep of [0.85, 0.75, 0.65]) {
+    const sh = clone(base);
+    coverLeft(sh, keep);
+    const got = errsFor(sh);
+    ok(`（不得誤紅）側髮遮住左眼 ${Math.round((1 - keep) * 100)}% 時瞳孔幾何仍正確，不得硬失敗`,
+      !got.includes('SP-7.5/瞳距') && !got.includes('SP-7.5/瞳心不對稱'), `紅了 [${got.join(', ')}]`);
+  }
+  // ⚠️ 反向：門檻拉高不能把真缺陷一起放掉。**兩眼都沒被遮**而瞳孔真的畫錯時仍須紅。
+  {
+    const sh = clone(base);
+    const iris = C.hexToRgb(manifest.colours.iris);
+    const skin = C.hexToRgb(manifest.colours.skin);
+    // 把左虹膜整塊往右平移 8px（瞳距變窄），兩眼面積不變
+    const moved = [];
+    for (let y = E.y0; y < E.y1; y++) {
+      for (let x = E.x0; x < manifest.anchors.faceAxisX * cp; x++) {
+        const o = ((Math.floor(4 / 3) * S + y) * SHEET + ((4 % 3) * S + x)) * 4;
+        const d = sh.directions.data;
+        if (Math.abs(d[o] - iris[0]) <= 8 && Math.abs(d[o + 1] - iris[1]) <= 8 && Math.abs(d[o + 2] - iris[2]) <= 8) {
+          moved.push([x, y]);
+        }
+      }
+    }
+    for (const [x, y] of moved) {
+      const o = ((Math.floor(4 / 3) * S + y) * SHEET + ((4 % 3) * S + x)) * 4;
+      sh.directions.data.set([skin[0], skin[1], skin[2]], o);
+    }
+    for (const [x, y] of moved) {
+      const o = ((Math.floor(4 / 3) * S + y) * SHEET + ((4 % 3) * S + x + 8)) * 4;
+      sh.directions.data.set([iris[0], iris[1], iris[2]], o);
+    }
+    const got = errsFor(sh);
+    ok('門檻拉到 0.9 之後，兩眼都沒被遮而瞳距真的錯 8px 仍須硬失敗',
+      got.includes('SP-7.5/瞳距'), `實際紅的是 [${got.join(', ')}]`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SP-7.5/頭寬：量的必須是**頭**，不是肩膀。
 //
 // ⚠️ headBox 原本掃整格。胸上構圖的脖子、鎖骨、裸露肩膀都是膚色，於是 bbox 寬度
@@ -1533,13 +1610,33 @@ function runWith(name, patch) {
   // ⚠️ `SP-7.3/色盤相撞` 是一條硬失敗，但**出貨時沒有任何變異體**：
   // 色值清單寫錯、colourNear 的引數順序顛倒、或 push 被移進一個永遠走不到的分支，
   // 77 條斷言沒有一條會發現。這裡補上 —— 三個色鍵各驗一次。
+  const base2 = buildManifest();
+  const irisRgb = C.hexToRgb(base2.colours.iris);
+  const tol = base2.colours.irisToleranceRgb;
+  const hex = (rgb) => '#' + rgb.map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')).join('');
   for (const key of ['lineart', 'skin', 'hair']) {
-    const base2 = buildManifest();
     const r = runWith('clash-' + key, {
       colours: { ...base2.colours, [key]: base2.colours.iris },
     });
     ok(`SP-7.3 colours.${key} 撞上虹膜色 → 硬失敗`,
       r.code === 1 && r.out.includes('SP-7.3/色盤相撞'), `code=${r.code}`);
+  }
+  {
+    // ⚠️ **用「近但不等」的顏色，否則容差本身零覆蓋。**
+    // 上面三條都是「顏色完全相等」，於是把 irisToleranceRgb 換成字面 0 之後
+    // `colourNear(x, x, 0)` 仍然成立 —— 整個檢查存在的理由（容差）沒有被測到。
+    // 實測：把 irisTol 改成 0，116 條斷言全綠。
+    // 這裡取「每個通道差 tol-2」，在容差內但不相等。
+    const near = hex(irisRgb.map((n) => n + (tol - 2)));
+    const r = runWith('clash-near', { colours: { ...base2.colours, hair: near } });
+    ok(`SP-7.3 髮色落在虹膜色容差內（${near}，差 ${tol - 2} < ${tol}）→ 硬失敗`,
+      r.code === 1 && r.out.includes('SP-7.3/色盤相撞'), `code=${r.code} out=${r.out.slice(0, 160)}`);
+
+    // 反向：剛好在容差外的不得誤紅。
+    const far = hex(irisRgb.map((n) => n + (tol + 6)));
+    const r2 = runWith('clash-far', { colours: { ...base2.colours, hair: far } });
+    ok(`（不得誤紅）髮色在容差外（${far}，差 ${tol + 6} > ${tol}）不得報色盤相撞`,
+      !r2.out.includes('SP-7.3/色盤相撞'), `out=${r2.out.slice(0, 160)}`);
   }
 }
 
