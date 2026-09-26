@@ -67,7 +67,10 @@
     "tolerance": 0.002,
     "luminanceMin": 0.18,
     "luminanceMax": 0.24,
-    "luminanceSlack": 0.03
+    "luminanceSlack": 0.03,
+    "_note_colour": "SP-6.4 的參考色。亮度帶是第一道篩、顏色是第二道 —— 少了它，任何亮度剛好落在帶內又貼著輪廓的【合法】填色都會讓描邊量爆掉（實測 #7c7c7c 的衣物讓九格由 8.525 變 17.132）。",
+    "colour": "#6E7681",
+    "colourToleranceRgb": 12
   },
 
   "gaze": {

@@ -775,6 +775,31 @@ function erode(mask, cellPx, n) {
   return cur;
 }
 
+/** 二值遮罩的形態學膨脹，`n` 次 4-連通。與 erode 成對，用來做開運算。 */
+function dilate(mask, cellPx, n) {
+  let cur = mask;
+  for (let i = 0; i < n; i++) {
+    const next = Uint8Array.from(cur);
+    for (let y = 0; y < cellPx; y++) {
+      for (let x = 0; x < cellPx; x++) {
+        if (cur[y * cellPx + x]) {
+          continue;
+        }
+        if (
+          (y > 0 && cur[(y - 1) * cellPx + x]) ||
+          (y < cellPx - 1 && cur[(y + 1) * cellPx + x]) ||
+          (x > 0 && cur[y * cellPx + (x - 1)]) ||
+          (x < cellPx - 1 && cur[y * cellPx + (x + 1)])
+        ) {
+          next[y * cellPx + x] = 1;
+        }
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 function fillHoles(mask, cellPx) {
   const outside = new Uint8Array(cellPx * cellPx);
   const stack = [];
@@ -1684,10 +1709,33 @@ export function measureStrokeWidths(directions, manifest) {
     //
     // 改成從 depth 0 的帶內像素往內 flood，只穿過帶內鄰居：得到的就是真正貼著
     // 外緣的那一圈，內部另一塊帶內色即使距離很近也不會被併進來。
+    /**
+     * ⚠️ **亮度帶不足以界定描邊，必須加上顏色。**
+     *
+     * SP-6.4 把 `#6E7681` 只列為**參考色**、規範的是亮度帶 [0.18, 0.24]，
+     * 於是任何**合法**的填色只要亮度落在帶內又貼著輪廓，環狀 flood 就會灌進去：
+     * 實測把衣物改成 `#7c7c7c`（相對亮度 0.2016，在 SP-6.2 的 [0.047, 0.61] 內，
+     * 不會觸發任何亮度告警），九格的描邊寬度由 8.525 跳到 **17.132**，
+     * 九條硬失敗，而畫師收到的訊息是「你的 8px 描邊量到 17px」——
+     * 完全沒有線索指向真正的原因是他挑的衣服顏色。
+     *
+     * 解法是讓描邊色成為 manifest 的**宣告值**（`stroke.colour`，預設取 SP-6.4 的參考色），
+     * 與既有的 `colours.lineart / iris / skin / hair` 同一個慣例 ——
+     * 那些也都是「宣告色 + 容差」。亮度帶保留為第一道篩，顏色是第二道。
+     *
+     * 參考色由**完全不透明**的像素取（alpha = 255），不從最外圈取 ——
+     * SP-2.14 強制的抗鋸齒讓最外圈是混色，拿它當基準會讓容差被迫放寬到沒有鑑別力。
+     */
+    const strokeRef = hexToRgb(stroke.colour ?? '#6E7681');
+    const strokeColTol = stroke.colourToleranceRgb ?? 12;
     const inBand = (x, y) => {
-      const [r, g, b] = v.px(x, y);
+      const [r, g, b, a] = v.px(x, y);
       const L = relativeLuminance(r, g, b);
-      return L >= lo && L <= hi;
+      if (L < lo || L > hi) {
+        return false;
+      }
+      // 半透明的邊緣像素放寬顏色判定（它們是混色），不透明的必須貼近宣告色。
+      return a >= 250 ? colourNear(r, g, b, strokeRef, strokeColTol) : true;
     };
     const ring = new Uint8Array(cellPx * cellPx);
     const stack = [];
