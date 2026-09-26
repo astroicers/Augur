@@ -2,10 +2,11 @@
 export type AlertLang = 'zh' | 'en'
 
 /**
- * 來源中立的核心型別 — 這是整個架構唯一的抽象邊界（SPEC §3 / §9.2）。
+ * 來源中立的核心型別 — 這是整個架構唯一的抽象邊界。
  *
- * 每個來源 adapter（目前只有 sources/grafana.ts）負責把該來源的原始格式
- * 轉成 ParsedAlert[]。core/ 與 airi.ts 只認得 ParsedAlert，不知道任何來源細節。
+ * 來源層負責把該來源的原始格式轉成 ParsedAlert[]；core/ 只認得 ParsedAlert，
+ * 不知道任何來源細節。ADR-004 之後的來源是 panel 自己的 `props.data`
+ * （alertState 為主、fieldConfig.thresholds 為輔），來源層屬 P4 範圍、尚未實作。
  */
 export interface ParsedAlert {
   /** 告警狀態 */
@@ -30,7 +31,7 @@ export interface ParsedAlert {
   panelURL?: string
 }
 
-/** 表情狀態 — 對映 Live2D template spec §6（severity/status → 表情）。 */
+/** 表情狀態 — 對映 `live2d/_archive/live2d-template-spec-v1.md` §6（severity/status → 表情）。 */
 export type Emotion = 'calm' | 'warning' | 'critical' | 'resolved'
 
 /**

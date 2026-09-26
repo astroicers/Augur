@@ -1,0 +1,116 @@
+{
+  "_note": [
+    "SP-7.15 要求的 manifest 樣板。交付時複製到 src/img/sprite/sprite-manifest.json 並填完所有 TBD。",
+    "這個檔在不在，決定 tools/check-sprite-sheets.mjs 是強制檢查還是印 NOT-DELIVERED 跳過（SP-7.14）——",
+    "用版控的 manifest 當開關而不是『PNG 在不在』，是為了讓關閘成為一筆看得見的 diff。",
+    "不記錄兩張 sheet 的路徑，只記 sha256（SP-7.15）：webpack 會把它們改成 hash 檔名，記路徑必然過期。",
+    "所有容差與門檻都住在這裡，不是寫死在腳本裡 —— SP-7.12 不提供旁路，要放寬只能改這個檔，",
+    "而改這個檔會被 sha256 連帶影響、視同規格變更須經 review。"
+  ],
+  "version": 1,
+  "sheet": { "width": 1536, "height": 1536, "cellPx": 512, "cols": 3, "rows": 3 },
+
+  "anchors": {
+    "_source": "§2（SP-2.2 ~ SP-2.9），開畫前凍結，改動需升 v2 = 18 格全部重畫",
+    "faceAxisX": 0.5,
+    "crownY": 0.08,
+    "chinY": 0.6,
+    "eyeLineY": 0.38,
+    "pupilLeftX": 0.41,
+    "pupilRightX": 0.59,
+    "mouthCentreY": 0.53,
+    "shoulderY": 0.85,
+    "headWidth": 0.4,
+    "_note_range": "下面兩個讓 SP-7.5 的頭頂/頭寬用區間比對 —— 量測法量到的是含髮的 bbox，而 crownY/headWidth 描述的是顱骨，兩者量的不是同一個東西。數字取自 SP-2.3 與 SP-2.9，不是新發明的。",
+    "hairTopMinY": 0.048,
+    "maxSilhouetteWidth": 0.84
+  },
+  "anchorToleranceS": 0.004,
+
+  "windows": {
+    "_source": "SP-2.11 三個互斥視窗 —— 覆蓋層的產權邊界。視窗是外框上界，不是必須填滿的區域。",
+    "E": { "x0": 0.28, "x1": 0.72, "y0": 0.33, "y1": 0.445 },
+    "B": { "x0": 0.28, "x1": 0.72, "y0": 0.255, "y1": 0.33 },
+    "M": { "x0": 0.395, "x1": 0.605, "y0": 0.475, "y1": 0.585 }
+  },
+
+  "margins": {
+    "_source": "SP-2.1 三層留白",
+    "opaqueFree": 0.02,
+    "featherOuter": 0.04,
+    "silhouetteBox": [0.04, 0.96]
+  },
+
+  "colours": {
+    "_source": "SP-6.0 / SP-6.1 / SP-6.2。線稿色與虹膜色必須明文記錄 —— SP-7.3 的方向綁定檢查要拿虹膜色做遮罩。",
+    "lineart": "#000010",
+    "iris": "TBD-虹膜色值，SP-6.1 要求明文記錄；由畫師決定後填入",
+    "irisToleranceRgb": 40,
+    "skin": "#E2C8B1",
+    "skinToleranceRgb": 24,
+    "hair": "TBD-見 SP-6.2 的髮色待裁定項（實測 #C0D0E0 的 L = 0.617 超出夾制上限 0.61）",
+    "hairToleranceRgb": 24,
+    "exemptToleranceRgb": 24
+  },
+  "luminanceExemptColours": [],
+
+  "luminance": {
+    "_source": "SP-6.2 亮度夾制。豁免：線稿、虹膜高光、鞏膜、腮紅（前兩者由 colours 自動豁免，L ≥ 0.85 自動視為鞏膜/高光）。",
+    "min": 0.047,
+    "max": 0.61,
+    "minAreaFraction": 0.01
+  },
+
+  "stroke": {
+    "_source": "SP-6.4 中性描邊。寬度以『描邊帶面積 ÷ 剪影周長』量測，凸曲率偏差約 +0.2~0.3 px。",
+    "width": 0.016,
+    "tolerance": 0.002,
+    "luminanceMin": 0.18,
+    "luminanceMax": 0.24,
+    "luminanceSlack": 0.03
+  },
+
+  "gaze": {
+    "_source": "SP-7.3 第 4 點（2026-09-20 改寫版）：應為零的軸，以同一格自己的非零軸為基準。",
+    "zeroAxisRatio": 0.2,
+    "_note_mask": "虹膜遮罩大小相對 master frame 的容許比率。上下界不對稱：虹膜只會被眼瞼遮小、不會變大，所以污染只往上跑。⚠️ 這兩個值未經真素材校準，第一批到貨後必須重量。",
+    "maskRatioMin": 0.35,
+    "maskRatioMax": 1.25
+  },
+  "blink": {
+    "_source": "SP-4.7 的『不足』失敗模式：半透明的閉眼會讓底下的瞳孔透出來。",
+    "featherS": 0.004
+  },
+  "readability": {
+    "_source": "SP-7.6，首版為警告；第一批交付後以實測校準再改硬失敗。",
+    "targetPx": 128,
+    "minBrowContrast": 0.25
+  },
+
+  "cells": {
+    "_source": "SP-3（directions，沿用 gaze.ts 的 row-major 0–8）與 §4（reactions，格號語意與 gaze.ts 無關）",
+    "directions": ["左上", "上", "右上", "左", "中性(master)", "右", "左下", "下", "右下"],
+    "reactions": ["click", "warning", "critical", "resolved", "半開嘴", "大開嘴", "全閉眼", "半閉眼", "pending"]
+  },
+  "reactionOwnership": ["EBMK", "BMK", "BMK", "BMK", "M", "M", "E", "E", "BMK"],
+
+  "_note_empty": "規格、SP-7.1/SP-7.4/SP-7.15 與工具印的錯誤訊息用的都是【底線】寫法。這裡跟著用底線，不要改成駝峰 intentionallyEmpty —— 兩種拼法同時存在且內容不同時工具會報錯要你收斂成一種。下面是一個填好的範例，沒有空格時留空陣列即可。",
+  "intentionally_empty": [],
+  "_example_empty": [{ "sheet": "reactions", "cell": 8 }],
+  "irisCentroids": {
+    "_note": "SP-3.3 的標稱 Δx/Δy 已廢除。這裡改記【交付後實測】的逐格虹膜質心（格內像素座標），供日後回歸比對。腳本的診斷表會印出來，直接抄。",
+    "directions": []
+  },
+
+  "budget": {
+    "_source": "SP-7.8。超標時的退路是改用 S = 384（1152×1152）重新匯出 —— 降 S 不影響任何容差推導。",
+    "perSheetBytes": 921600,
+    "totalBytes": 1258291
+  },
+
+  "sha256": {
+    "_note": "兩張 PNG 的 sha256。腳本先比對再做像素檢查 —— 換圖而不更新 manifest 必須是紅的（SP-7.15）。",
+    "directions": "TBD",
+    "reactions": "TBD"
+  }
+}

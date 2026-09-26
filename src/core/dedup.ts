@@ -1,20 +1,36 @@
 /**
- * 去重 / 防洪 + resolved 綁狀態(SPEC §12 Phase 2)。
+ * 去重 / 防洪 + resolved 綁狀態。
  *
  * 兩個職責,共用一張 `Map<fingerprint, 上次「播過 firing」的時間戳>`:
- *  1. 防洪:同 fingerprint 的 firing 在 `windowSec` 內只播一次(Grafana 會週期重送 firing)。
+ *  1. 防洪:同 fingerprint 的 firing 在 `windowSec` 內只播一次。
  *  2. resolved 綁狀態:只有「先前真的播過 firing」的 fingerprint,其 resolved 才播「已恢復」;
  *     播完即刪該 key。沒播過 firing 的孤兒 resolved 直接吞掉(避免重啟/補送時亂報恢復)。
  *
+ * 為什麼 pull 模型下更需要它(ADR-004):push 模型防的是「Grafana 週期重送 firing」;
+ * panel plugin 是 pull —— 每個 refresh interval(預設 30s)都會重新評估告警狀態,
+ * 沒有防洪就會每 30 秒把同一則念一次。
+ *
  * 記憶體:防洪窗(`windowSec`)只決定「多久內不重播」,不等於保留期。
  * resolved 追蹤需要在告警「持續 firing」期間一直記得 → 保留期取一個遠大於防洪窗的值,
- * 由週期清理回收真正過期(長時間沒再出現)的 key。清理 timer 以 .unref() 不擋程式關閉。
+ * 由週期清理回收真正過期(長時間沒再出現)的 key。
  */
-import type { ParsedAlert } from './types.js'
+import type { ParsedAlert } from './types'
 
 export interface Dedup {
   /** 此告警是否該播報(已套用防洪 + resolved 綁狀態)。 */
   shouldSpeak(alert: ParsedAlert): boolean
+  /**
+   * 忘掉某個 fingerprint 的狀態,**不播任何東西**。
+   *
+   * 給「episode 被取代而不是恢復」用 —— 例如降級路徑先以 `alert:panel:N` 播了一句
+   * 泛用「告警」,稍後 rules 端點恢復、拿到具名規則之後,那個泛用 episode 就該無聲消失。
+   *
+   * ⚠️ **沒有這個方法的話那條路徑會永久靜音。** `lastFiring` 只在「播出 resolved」時
+   * 才刪 key,而預設 `repeatFiringMin: 0` → 窗是 `Infinity` → `t - last < Infinity` 恆真,
+   * 於是同一個 fingerprint 再也不會被播報。症狀是**告警真的在燒而面板一聲不吭**,
+   * 且不留任何錯誤訊息。
+   */
+  forget(fingerprint: string): void
   /** 停掉清理 timer(關閉流程呼叫)。 */
   close(): void
 }
@@ -60,20 +76,22 @@ export function createDedup(windowSec: number, opts: DedupOptions = {}): Dedup {
   function prune(): void {
     const t = now()
     for (const [key, ts] of lastFiring) {
-      if (t - ts > retentionMs) lastFiring.delete(key)
+      if (t - ts > retentionMs) {lastFiring.delete(key)}
     }
   }
 
   let timer: ReturnType<typeof setInterval> | undefined
   if (opts.startCleanup !== false) {
     timer = setInterval(prune, Math.max(windowMs, 60_000))
-    timer.unref?.()
   }
 
   return {
     shouldSpeak,
+    forget(fingerprint: string) {
+      lastFiring.delete(fingerprint)
+    },
     close() {
-      if (timer) clearInterval(timer)
+      if (timer) {clearInterval(timer)}
     },
   }
 }

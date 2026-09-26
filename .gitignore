@@ -2,3 +2,65 @@ node_modules/
 dist/
 .env
 *.log
+.asp-session-briefing.json
+.asp-audit-baseline.json
+.asp-bypass-log.ndjson
+.asp-telemetry.jsonl
+.asp-fact-check.md
+.asp-review-calibration.jsonl
+.asp-orch-state.json
+.asp-compiled-profile.md
+.asp-test-result.json
+
+# Python 快取（.claude/skills/ 下的輔助腳本產生）
+__pycache__/
+*.pyc
+
+# namei 匯出的娜美風角色美術 —— 零出處、零授權記錄，而本 repo 是公開的 Apache-2.0。
+# 已於 review 後從 branch 歷史中移除（只保留 layout.json / manifest.json 兩個純座標檔）。
+# 原檔仍在本機備份，需要時可取回，但**不要再進版控**，除非先補齊出處與授權。
+namei-exports.zip
+live2d/_archive/nami/*.png
+live2d/_archive/nami/library/
+live2d/_archive/nami/parts/
+
+# A1 生成式素材 —— 產生它的服務、以及該服務對輸出歸屬的條款，已查不可考
+# （調查全文見 docs/asset-provenance.md）。角色本身是本專案原創，風險不在侵權而在條款未知；
+# 已於 sprite-sheet-spec SP-6.0 把色票萃取成資料，角色設定不再依附這些圖檔。
+# 本機保留供參考，但**不要再進版控**，除非出處補得回來。
+assets/a1-augur-calm.png
+assets/a1-augur-calm-cutout.png
+assets/layers/
+live2d/_archive/layerwork/_source.png
+live2d/_archive/layerwork/_cutout.png
+
+# ---- 以下由 @grafana/create-plugin 7.11.0 腳手架帶入（P2 合併）----
+# yarn / pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+/logs
+/pids
+*.pid
+*.seed
+*.pid.lock
+/lib-cov
+/coverage
+/artifacts/
+/work/
+/ci/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+.idea
+.eslintcache
+# ---- P2 新增：jest --json 的中繼輸出（tools/asp-test.sh 用）----
+.jest-result.json
+# ---- A3 新增：sprite 檢查的診斷產出（SP-7.10 明文要求不得寫進 src/）----
+.sprite-check/

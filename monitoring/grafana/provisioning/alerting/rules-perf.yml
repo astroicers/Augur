@@ -1,0 +1,125 @@
+apiVersion: 1
+
+# Windows 主機效能告警（查 Prometheus / windows_exporter）。
+# 每條 rule：A = Prometheus 即時查詢，B = math 門檻（condition）。
+# 門檻可自行調整；noData/execErr 設 OK，避免 exporter 還沒裝時狂噴。
+groups:
+  - orgId: 1
+    name: perf
+    folder: Augur Windows
+    interval: 1m
+    rules:
+      - uid: augur-win-cpu
+        title: WindowsHighCPU
+        condition: B
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: Windows host CPU usage is high (above 85 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: '100 - (avg by (instance) (rate(windows_cpu_time_total{mode="idle"}[5m])) * 100)'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A > 85'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200
+
+      - uid: augur-win-mem
+        title: WindowsLowMemory
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: Windows host available memory is low (below 10 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              # ⚠️ 分母不是 windows_cs_physical_memory_bytes —— 那個 metric 隨 `cs` collector
+              # 一起從 windows_exporter v0.31.8 移除了（2026-09-22 實查該 tag 的 docs/）。
+              # 用不存在的 metric 做除法會回空集合，規則**永遠停在 Normal/NoData**：
+              # 主機記憶體掉到 3% 一小時，吉祥物一聲不吭。
+              expr: 'windows_memory_available_bytes / windows_memory_physical_total_bytes * 100'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A < 10'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200
+
+      - uid: augur-win-disk
+        title: WindowsLowDisk
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+          severity: warning
+        annotations:
+          summary: Windows host disk free space is low (below 10 percent)
+          # alertState 到得了 panel 的四個硬前提之一（ADR-004 決策 2）。
+          # 缺這兩行的話 props.data.alertState 恆為 undefined，而且**沒有任何錯誤訊息**；
+          # rules 端點的第二道註解比對也會把這條規則整個濾掉。
+          __dashboardUid__: augur-poc
+          __panelId__: "4"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: 'min by (instance, volume) (windows_logical_disk_free_bytes{volume!~"HarddiskVolume.*"} / windows_logical_disk_size_bytes * 100)'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A < 10'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200

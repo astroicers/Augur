@@ -1,0 +1,235 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>SP-V.1 方向辨識盲測</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px; background: #0e0f12; color: #d8d9da;
+    font: 14px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: .6; font-size: 12px; margin: 0 0 20px; }
+  /* SP-V.1：顯示尺寸固定 128 CSS px，底色 Grafana dark panel #181b1f。
+     兩者都不是可調的 —— 128px 是 SP-1.7 的最小值，也是唯一會失敗的尺寸。 */
+  #stage {
+    width: 128px; height: 128px; background-color: #181b1f;
+    background-size: 300% 300%; background-repeat: no-repeat;
+    image-rendering: auto; margin: 0 auto 20px; border-radius: 4px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 360px; margin: 0 auto; }
+  button {
+    font: inherit; padding: 10px 4px; border-radius: 4px; cursor: pointer;
+    border: 1px solid #3d4046; background: #1f2126; color: inherit;
+  }
+  button:hover { background: #2b2e34; }
+  button:disabled { opacity: .3; cursor: default; }
+  .wide { grid-column: 1 / -1; border-style: dashed; }
+  .bar { height: 4px; background: #2b2e34; border-radius: 2px; overflow: hidden; margin: 18px 0 6px; }
+  .bar > i { display: block; height: 100%; background: #3d71d7; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 14px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #26282d; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .pass { color: #6ccf8e; } .fail { color: #e0737d; }
+  .setup { border: 1px dashed #3d4046; border-radius: 6px; padding: 16px; }
+  code { background: #1f2126; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+<main>
+  <h1>SP-V.1 方向辨識盲測</h1>
+  <p class="sub">
+    directions 9 格的交付驗收。128 CSS px、<code>#181b1f</code> 底、每個非中央格 <span id="perCell"></span> 題隨機交錯，共 <span id="totalQ"></span> 題。
+    <strong>「不確定」計為答錯</strong>。門檻：整體 ≥85% <strong>且</strong>沒有任何單一方向低於 60%。
+  </p>
+
+  <section id="setup" class="setup">
+    <p><strong>選一張 directions sheet</strong>（1536×1536、3×3）：</p>
+    <input type="file" id="file" accept="image/png" />
+    <p class="fail" id="loadErr" hidden></p>
+    <p id="sizeNote" hidden style="color:#b8860b;font-size:13px"></p>
+    <p class="sub" style="margin:10px 0 0">
+      也可以直接測 <button type="button" id="useRepo">repo 內的 src/img/sprite/directions.png</button>
+      或 <button type="button" id="useFixture">編號假 sheet（驗這個頁面本身）</button>
+    </p>
+  </section>
+
+  <section id="quiz" hidden>
+    <div id="stage"></div>
+    <div class="grid" id="choices"></div>
+    <div class="bar"><i id="progress" style="width:0"></i></div>
+    <p class="sub" id="count"></p>
+  </section>
+
+  <section id="result" hidden></section>
+</main>
+
+<script type="module">
+  import {
+    DIRECTION_LABELS,
+    CENTER_CELL,
+    MIN_QUESTIONS_PER_CELL,
+    buildQuestions,
+    cellToBackgroundPosition,
+    preflightError,
+    score,
+  } from './scoring.mjs';
+
+  const $ = (id) => document.getElementById(id);
+  // ⚠️ 從常數填，不要寫死在 HTML 裡。副標原本寫死「4 題」，
+  // 而 MIN_QUESTIONS_PER_CELL 在 2026-09-22 就改成 10 了 ——
+  // 頁面自己顯示「第 1 / 80 題」而副標說 4 題，對一個講求持續專注的任務少報 2.5 倍。
+  $('perCell').textContent = String(MIN_QUESTIONS_PER_CELL);
+  $('totalQ').textContent = String(MIN_QUESTIONS_PER_CELL * 8);
+  let questions = [];
+  let answers = [];
+  let url = null;
+
+  /**
+   * ⚠️ **先確認圖真的載得進來再開始出題。**
+   * 原本不論載不載得到都直接進入測驗：素材不存在時（`/sprite/directions.png` → 404）
+   * 受測者會對著一個**空白框**答完整整一輪，然後拿到一份「未通過、整體 0.0%」的報告 ——
+   * 那份報告看起來跟「畫師交了一份讀不出方向的素材」一模一樣。
+   * 也順便擋下尺寸不對的檔（3×3 的 sheet 必須是正方形）。
+   */
+  function start(imageUrl) {
+    const probe = new Image();
+    probe.onerror = () => {
+      $('setup').hidden = false;
+      $('quiz').hidden = true;
+      $('loadErr').hidden = false;
+      $('loadErr').textContent = `載不到 ${imageUrl} —— 素材還沒交付，或路徑不對。沒有開始出題。`;
+    };
+    probe.onload = () => {
+      // 判斷本身在 scoring.mjs 的 preflightError() —— 搬出去是為了讓 selftest
+      // 測得到**行為**而不是字串拼法。這裡只負責把結果畫到畫面上。
+      const pre = preflightError(probe.naturalWidth, probe.naturalHeight);
+      if (pre.fatal) {
+        $('setup').hidden = false;
+        $('quiz').hidden = true;
+        $('loadErr').hidden = false;
+        $('loadErr').textContent = pre.fatal;
+        return;
+      }
+      $('sizeNote').textContent = pre.note;
+      $('sizeNote').hidden = pre.note === '';
+      url = imageUrl;
+      $('loadErr').hidden = true;
+      $('setup').hidden = true;
+      $('quiz').hidden = false;
+      $('result').hidden = true;
+      questions = buildQuestions(Math.random);
+      answers = [];
+      $('stage').style.backgroundImage = `url(${url})`;
+      renderChoices();
+      next();
+    };
+    probe.src = imageUrl;
+  }
+
+  function renderChoices() {
+    const box = $('choices');
+    box.textContent = '';
+    for (let c = 0; c < 9; c++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = DIRECTION_LABELS[c];
+      // 中央格不出題，但選項留著且停用 —— 拿掉整個格子會讓九宮格塌成 8 個，
+      // 方位對應關係就斷了，而那正是受測者用來作答的空間線索。
+      b.disabled = c === CENTER_CELL;
+      b.onclick = () => answer(c);
+      box.appendChild(b);
+    }
+    const u = document.createElement('button');
+    u.type = 'button';
+    u.className = 'wide';
+    u.textContent = '不確定（計為答錯）';
+    u.onclick = () => answer(null);
+    box.appendChild(u);
+
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'wide';
+    back.textContent = '← 上一題（手滑了）';
+    back.onclick = undo;
+    box.appendChild(back);
+  }
+
+  function next() {
+    const i = answers.length;
+    if (i >= questions.length) {
+      return finish();
+    }
+    const cell = questions[i];
+    // 算式共用自 scoring.mjs —— 頁面不自己抄一份（抄的那份沒有任何測試涵蓋）。
+    $('stage').style.backgroundPosition = cellToBackgroundPosition(cell);
+    $('progress').style.width = `${(i / questions.length) * 100}%`;
+    $('count').textContent = `第 ${i + 1} / ${questions.length} 題 —— 他在看哪個方向？（不告知對錯）`;
+  }
+
+  /**
+   * ⚠️ **防抖。** 實測一次真實的 `dblclick` 手勢會讓計數從「第 1」跳到「第 3」——
+   * 兩題被吃掉，而第二題的圖只顯示了幾微秒。對一份 100% 正確的交付來說，
+   * 一次手滑就會憑空製造一個錯答。250ms 內的重複點擊一律忽略。
+   */
+  let lastAnswerAt = 0;
+  function answer(cell) {
+    const now = performance.now();
+    if (now - lastAnswerAt < 250) {
+      return;
+    }
+    lastAnswerAt = now;
+    answers.push(cell);
+    next();
+  }
+
+  /** 上一題。手滑答錯時的唯一補救 —— 沒有它，一次誤點就污染整輪。 */
+  function undo() {
+    if (answers.length === 0) {
+      return;
+    }
+    answers.pop();
+    lastAnswerAt = 0;
+    next();
+  }
+
+  function finish() {
+    $('quiz').hidden = true;
+    const r = score(questions, answers);
+    const cls = (ok) => (ok ? 'pass' : 'fail');
+    const rows = r.directions
+      .map((d) => `<tr><td>${d.label}</td><td class="n">${d.asked}</td><td class="n">${d.correct}/${d.asked}</td>
+        <td class="n ${cls(d.pct >= 60)}">${d.pct.toFixed(1)}%</td></tr>`)
+      .join('');
+    const conf = r.confusion.length
+      ? `<h3 style="font-size:14px;margin:20px 0 4px">誤判去向（回饋給畫師的主體）</h3>
+         <table>${r.confusion.map((c) => `<tr><td>${c.wantLabel} 被讀成 <strong>${c.gotLabel}</strong></td>
+           <td class="n">${c.count} 次</td></tr>`).join('')}</table>`
+      : '';
+    $('result').hidden = false;
+    $('result').innerHTML = `
+      <h2 style="font-size:16px" class="${cls(r.passed)}">${r.passed ? '通過' : '未通過'} —— ${r.reason}</h2>
+      <p class="sub">整體 ${r.correct}/${r.total} = <strong class="${cls(r.overallOk)}">${r.overallPct.toFixed(1)}%</strong>
+        （門檻 85%）；最弱方向「${r.worst.label}」
+        <strong class="${cls(r.perDirectionOk)}">${r.worst.pct.toFixed(1)}%</strong>（門檻 60%）</p>
+      <table><tr><th>方向</th><th class="n">出題</th><th class="n">正確</th><th class="n">正確率</th></tr>${rows}</table>
+      ${r.missing.length ? `<p class="fail">⚠️ 有 ${r.missing.length} 個方向沒被問到：${r.missingLabels.join('、')}</p>` : ''}
+      ${conf}
+      <p class="sub" style="margin-top:18px">沒過不是 18 格重畫 —— 四層疊合保證其餘部分不受影響，
+        畫師只改被誤判的那幾格。</p>
+      <button type="button" style="margin-top:12px" onclick="location.reload()">再測一輪</button>`;
+  }
+
+  $('file').onchange = (e) => {
+    const f = e.target.files[0];
+    // ⚠️ **一定要清掉 value。** 不清的話重選**同一個路徑**不會觸發 change
+    // （瀏覽器認為值沒變），於是畫師把修正版存回同一個檔名、操作者重選一次 ——
+    // 什麼都不會發生，畫面上還留著**上一個檔**算出來的錯誤訊息，
+    // 一張已經修好的圖被回報成還是壞的。唯一的脫身方式是改檔名或重新整理，
+    // 而頁面不會告訴你這件事。
+    e.target.value = '';
+    if (f) {
+      start(URL.createObjectURL(f));
+    }
+  };
+  $('useRepo').onclick = () => start('/sprite/directions.png');
+  $('useFixture').onclick = () => start('/fixture.png');
+</script>

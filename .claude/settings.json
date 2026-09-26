@@ -1,0 +1,67 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Bash(mkdir -p /tmp/namei)",
+      "Bash(node --import tsx --test test/*.test.ts)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 .claude/skills/image-layer-split/scripts/gen_prompts.py assets/a1-augur-calm.png --out live2d/layerwork)",
+      "Edit(/.claude/skills/image-layer-split/**)"
+    ],
+    "deny": [
+      "Bash(docker deploy *)",
+      "Bash(docker push *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr merge)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push origin main *)",
+      "Bash(git push origin main)",
+      "Bash(git rebase *)",
+      "Bash(git rebase)",
+      "Bash(rm -r *)",
+      "Bash(rm -rf *)"
+    ],
+    "ask": [
+      "Bash(docker deploy *)",
+      "Bash(docker push *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr merge)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push origin main *)",
+      "Bash(git push origin main)",
+      "Bash(git rebase *)",
+      "Bash(git rebase)",
+      "Bash(rm -r *)",
+      "Bash(rm -rf *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/ubuntu/.claude/asp/hooks/clean-allow-list.sh"
+          },
+          {
+            "type": "command",
+            "command": "/home/ubuntu/.claude/asp/hooks/session-audit.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/ubuntu/.claude/asp/hooks/pretooluse-ship-gate.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,15 +1,25 @@
-<!-- ADR-002 | Status: Accepted -->
+<!-- ADR-002 | Status: Superseded -->
 # ADR-002：表情導播 + lip-sync + `AvatarController` 可換 avatar 介面
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `Accepted` |
+| **狀態** | `Superseded`（被 ADR-004 取代） |
 | **日期** | 2026-07-18 |
 | **決策者** | astroicers（待人類審核） |
 
 > **狀態說明**：`Draft`（禁止生產代碼）→ `FIRM`（POC）→ `Accepted`。**AI 不可自行升級**。承 ADR-001,聚焦「AIRI 免費給的 TTS/lip-sync/表情/idle,現在由誰、如何擁有」。
 
 > ⬆️ **由 `Draft` 升 `Accepted`（2026-07-18）**：使用者顯式授權 Accept。升級依據 = **POC gate 全綠**:G-ADR002-1 `AvatarController` 可換性 PASS(同一 pipeline 僅換 `?avatar`,VRM↔Live2D 皆講話+換表情,`SWAP_PROVEN=true`)、G-ADR002-2 Edge TTS→振幅 lip-sync PASS(見 Verification Evidence)。**人類顯式授權,非 AI 自行升級**。剩餘:viseme v1、正式版把 `AvatarController` 移入 Augur 生產前端。
+
+> 🔻 **由 `Accepted` 轉 `Superseded`（2026-09-18）**：被 **ADR-004** 取代。
+> ⚠️ **但 §1 與 §2 被 ADR-004 決策 5 明文繼承，並未作廢**：
+> `BroadcastPlan` 事件契約原樣沿用（見 `src/core/types.ts`）；
+> `AvatarController` avatar-agnostic 介面沿用其抽象方向，
+> 但三處簽章已改（`mount` 放寬為 `HTMLElement`、`setMouth` 換成 `setSpeaking`、
+> 新增 `setGaze`），現行定義在 `src/avatar/AvatarController.ts`。
+> **失效的是 §3 與 §4**：振幅 lip-sync 與 Edge TTS——Web Speech 不吐 audio buffer，
+> 接不上 `AnalyserNode`。
+> ⚠️ 本檔引用的 `broadcaster-spikes/` 在 repo 中**已不存在**，證據無法複驗。
 
 ## 痛點 / 需求
 

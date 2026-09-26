@@ -1,0 +1,13 @@
+# P2：lint:fix 的第二段是 `prettier --write --list-different .`，會掃整棵樹。
+# 實測未設限時有 33 個檔會被重排，含 docs/adr/ADR-001~004 四份 ADR。
+# 在 ASP 治理下讓 prettier 批次重排 ADR 是不可接受的副作用。
+docs/
+monitoring/
+live2d/
+avatar/
+assets/
+.claude/
+*.md
+!src/README.md
+CHANGELOG.md
+LICENSE

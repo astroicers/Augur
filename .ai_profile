@@ -1,0 +1,11 @@
+type: system
+level: loose
+mode: auto
+workflow: standard
+hitl: standard
+rag: disabled
+autonomous: disabled
+orchestrator: disabled
+autopilot: disabled
+coding_style: disabled
+name: Augur

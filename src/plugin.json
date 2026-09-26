@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "panel",
+  "name": "Mascot",
+  "id": "augur-mascot-panel",
+  "info": {
+    "keywords": [
+      "panel",
+      "mascot",
+      "alert",
+      "speech",
+      "tts",
+      "avatar",
+      "accessibility"
+    ],
+    "description": "Puts a 2D sprite mascot on your dashboard that watches the cursor, reacts to clicks, and reads the panel alert state out loud using the browser Web Speech API. No backend required.",
+    "author": {
+      "name": "Augur"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=12.3.0",
+    "plugins": []
+  }
+}

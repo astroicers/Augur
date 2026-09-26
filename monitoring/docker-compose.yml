@@ -1,0 +1,80 @@
+# Augur 監控 stack：監控 Windows 主機（效能 + 安全）→ 告警灌進 Augur bridge → AIRI 語音。
+#
+# Port 刻意避開本機既有的 fh-lgtm（3000/3100/9090）：
+#   Grafana 3002、Prometheus 9091、Loki 3101（皆綁 127.0.0.1）。
+# 容器 → Windows 上的服務（windows_exporter:9182、AIRI:6121、bridge:3001）走 host.docker.internal。
+# Windows 上的 Alloy → Loki 走 Windows 的 localhost:3101（mirrored + Docker Desktop publish）。
+name: augur-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: augur-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # 安全那半（Windows Event Log）才需要 Loki → 設為 security profile，預設不啟。
+  # 預設 `docker compose up -d` = 只起效能（Grafana+Prometheus）。
+  # 要安全：`docker compose --profile security up -d`（會一併起 Loki，再去 Windows 裝 Alloy）。
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: augur-loki
+    restart: unless-stopped
+    profiles: ["security"]
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3101:3100"
+
+  grafana:
+    # 13.2.x：ADR-004 的目標執行期版本，也滿足 src/plugin.json 的 grafanaDependency >=12.3.0。
+    # 11.4.0 載不動本 plugin，而在舊兩個大版本上測到的 alertState 也不能代表 13.x。
+    image: grafana/grafana:13.2.2
+    container_name: augur-grafana
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
+      # provisioning 用 ${WEBHOOK_SECRET} 內插到 contact point 的 Bearer 憑證。
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      # 本 plugin 未簽署。Grafana 預設不載入未簽署 plugin，必須逐一列名放行。
+      # ⚠️ plugin 目錄裡若殘留過期的 MANIFEST.txt，即使列名也不會載入
+      #    （官方原文：Plugins with modified signatures are never loaded）。
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=augur-mascot-panel
+      # G-ADR004-4 的開關：Plugin Frontend Sandbox（Grafana >=11.5）。
+      # 開啟後 plugin 碰不到自己區域以外的 DOM，跨 panel 視線追蹤與點擊偵測會失效。
+      # ADR-004 決策 6 要求「漸進降級而非崩潰」，這就是驗那件事的方法：
+      #   SANDBOX_PLUGINS=augur-mascot-panel docker compose -f monitoring/docker-compose.yml up -d
+      # ADR 要求每次 Grafana minor 升版都重跑一次，所以做成可切換而不是手改再改回來。
+      - GF_SECURITY_ENABLE_FRONTEND_SANDBOX_FOR_PLUGINS=${SANDBOX_PLUGINS:-}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # plugin 掛的是 **建置產物 dist/**，不是原始碼。Grafana 掃的是「含 plugin.json
+      # 的子目錄」，而原始碼裡 plugin.json 在 src/ 底下，掛原始碼掃不到。
+      # 先 `npm run build` 再 up；npm run server 已把兩步串好。
+      - ../dist:/var/lib/grafana/plugins/augur-mascot-panel:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3002:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 只硬相依 Prometheus（效能）；Loki 是選用（security profile），不在這裡相依以免被迫啟動。
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:

@@ -1,0 +1,74 @@
+// Augur 安全監控 — Windows Event Log → Augur 的 Loki（Docker，publish 在 127.0.0.1:3101）。
+// 收 Security / System / Application / Defender 四個頻道，攤平訊息、標上 channel/job/instance，推給 Loki。
+// Grafana 的安全告警規則用 LogQL 片語比對（見 monitoring/grafana/.../rules-security.yml）。
+//
+// 落地後在 Grafana(:3002) → Explore → Loki 查 {job="windows-eventlog"} 看真實 log，
+// 若片語對不上再回頭調 rules-security.yml。
+
+loki.source.windowsevent "security" {
+  eventlog_name          = "Security"
+  use_incoming_timestamp = true
+  forward_to             = [loki.process.windows.receiver]
+}
+
+loki.source.windowsevent "system" {
+  eventlog_name          = "System"
+  use_incoming_timestamp = true
+  forward_to             = [loki.process.windows.receiver]
+}
+
+loki.source.windowsevent "application" {
+  eventlog_name          = "Application"
+  use_incoming_timestamp = true
+  forward_to             = [loki.process.windows.receiver]
+}
+
+loki.source.windowsevent "defender" {
+  eventlog_name          = "Microsoft-Windows-Windows Defender/Operational"
+  use_incoming_timestamp = true
+  forward_to             = [loki.process.windows.receiver]
+}
+
+loki.process "windows" {
+  forward_to = [loki.write.augur.receiver]
+
+  // windowsevent 來的每行是 JSON：取出 message 與 channel。
+  stage.json {
+    expressions = {
+      message = "",
+      channel = "",
+    }
+  }
+
+  // 把 Windows 事件訊息攤平成可讀文字（讓 LogQL |= "An account failed to log on" 之類比對得到）。
+  stage.eventlogmessage {
+    source             = "message"
+    overwrite_existing = true
+  }
+
+  // channel 當標籤（安全規則用來挑頻道，如 Defender）。
+  stage.labels {
+    values = {
+      channel = "channel",
+    }
+  }
+
+  // 固定標籤：job 給規則 selector、instance 給分組顯示。
+  stage.static_labels {
+    values = {
+      job      = "windows-eventlog",
+      instance = "windows-host",
+    }
+  }
+
+  // 最終 log 行 = 攤平後的事件訊息。
+  stage.output {
+    source = "message"
+  }
+}
+
+loki.write "augur" {
+  endpoint {
+    url = "http://localhost:3101/loki/api/v1/push"
+  }
+}

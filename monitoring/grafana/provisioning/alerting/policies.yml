@@ -1,0 +1,11 @@
+apiVersion: 1
+
+# 根通知政策：全部告警路由到 augur-bridge（送進 Augur → AIRI 語音）。
+# 注意：provisioning policies 會覆蓋整棵政策樹（這是專屬此 stack 的 Grafana，OK）。
+policies:
+  - orgId: 1
+    receiver: augur-bridge
+    group_by: ['alertname', 'instance']
+    group_wait: 15s        # 初次成組前的緩衝
+    group_interval: 1m     # 同組有新告警時的最短再送間隔
+    repeat_interval: 4h    # 仍 firing 的重送間隔（bridge 端另有 DEDUP_WINDOW_SEC 防洪）

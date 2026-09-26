@@ -1,0 +1,92 @@
+apiVersion: 1
+
+# ADR-004 POC 專用告警規則。
+#
+# 為什麼用 vector(1) 而不是真的 Windows 指標：G-ADR004-2 要驗的是
+# 「panel 收得到 alertState 嗎」，不是「Windows CPU 會不會高」。
+# 真實指標需要 Windows 側裝 windows_exporter（實查 9182 無 listener），
+# 而 vector(1) 是合法 PromQL 且恆為 1，給的是一條**真的 Grafana alert rule**
+# 與一個**真的 alertState**，完全繞開那個前置。
+#
+# ⚠️ 兩個 __ 開頭的 annotation 是 alertState 能出現在 panel 上的**硬前提**：
+#    Grafana 靠它們把 rule 綁到 panel，缺任一個 props.data.alertState 恆為空。
+#    數字型 __panelId__ 必須與 dashboards/augur-poc.json 裡那個 panel 的 id 一致。
+groups:
+  - orgId: 1
+    name: poc
+    folder: Augur POC
+    interval: 10s
+    rules:
+      - uid: augur-poc-always-firing
+        title: PocAlwaysFiring
+        condition: B
+        # for: 0 → 立刻進 Alerting，不必等。要觀察 Pending 狀態時改成 1m。
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: POC 用的恆定告警，用來確認 panel 收得到 alertState
+          __dashboardUid__: augur-poc
+          __panelId__: "1"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: 'vector(1)'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A > 0'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200
+
+      # 會翻轉的規則：minute() % 2 —— 奇數分鐘為真、偶數分鐘為假，每分鐘翻一次。
+      # 配 for: 20s，一個「為真」的 60 秒窗內可觀察到：
+      #   Pending(20s) → Alerting(40s) → 下一分鐘 Normal(60s)
+      # 這是唯一能測到 resolved / pending 的辦法 —— always-firing 規則只看得到 alerting，
+      # 而 dedup.ts 的 resolved 綁狀態語意完全建立在能正確辨識「恢復」之上。
+      - uid: augur-poc-flapping
+        title: PocFlapping
+        condition: B
+        for: 20s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 每分鐘翻轉一次，用來觀察 pending / alerting / normal 三態轉換
+          __dashboardUid__: augur-poc
+          __panelId__: "3"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: 'minute() % 2'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: math
+              expression: '$A > 0.5'
+              datasource: { type: __expr__, uid: __expr__ }
+              intervalMs: 1000
+              maxDataPoints: 43200

@@ -1,0 +1,82 @@
+# 事後偵測，**不是門檻**。
+#
+# 依 user-level 治理紀錄的實查（2026-08-26）：本帳號是 GitHub free 方案，
+# 分支保護與 rulesets 都拿不到，所以這個 workflow **無法設為 required**。
+# 它買到的是「壞掉時看得見」，不是「壞的推不上來」。驗收文字不要寫成門檻。
+#
+# node 版本矩陣的理由：repo 裡三處記載不一致 —— `.nvmrc` 寫 24、
+# `package.json` 的 engines 寫 `>=22`、實際開發跑的是 22.13。
+# 與其挑一個宣稱它是真的，不如兩個都跑；哪天它們真的分岔，這裡會先紅。
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint
+        # ⚠️ 覆蓋範圍有洞：`tests/` 與其他 tsconfig project 之外的 .ts **完全不被 lint**
+        # （實測 eslint 回「File ignored because no matching configuration was supplied」）。
+        # 這一步保護的是 src/ 與 tools/，不是整個 repo。
+
+      - name: .js 副檔名守門
+        run: bash tools/check-js-suffix.sh
+
+      - name: monitoring 設定自洽性
+        run: node tools/check-monitoring.mjs
+
+      - name: sprite 素材驗收
+        run: node tools/check-sprite-sheets.mjs
+
+      - name: sprite 工具自測
+        run: node tools/check-sprite-sheets.selftest.mjs
+
+      # ⚠️ 本機閘門有這道而 CI 先前沒有 —— 於是「PR 把 compose 的 Grafana 版本升上去
+      # 但沒動 VERIFIED-GRAFANA.txt」會一路綠燈合併，而 G-ADR004-4（漸進降級，
+      # 本專案唯一 unsupported 的部分）根本沒重跑。
+      - name: Grafana 版本觸發器
+        run: |
+          LINES=$(grep -nE '^[[:space:]]*image:[[:space:]]*"?grafana/grafana:' monitoring/docker-compose.yml || true)
+          COUNT=$(printf '%s' "$LINES" | grep -c . || true)
+          TAG=$(printf '%s' "$LINES" | head -1 | sed -E 's/.*grafana\/grafana:([0-9][0-9.]*).*/\1/')
+          VERIFIED=$(head -1 monitoring/VERIFIED-GRAFANA.txt | tr -d '[:space:]')
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::monitoring/docker-compose.yml 有 $COUNT 個未註解的 grafana image 宣告"; exit 1
+          fi
+          if [ "$TAG" != "$VERIFIED" ]; then
+            echo "::error::Grafana 由 $VERIFIED 變成 $TAG，需重跑 G-ADR004-4 並更新 monitoring/VERIFIED-GRAFANA.txt"; exit 1
+          fi
+          echo "grafana $TAG（與 G-ADR004-4 通過時相同）"
+
+      - name: 單元測試
+        run: npm run test:unit
+
+      # ⚠️ **build 不能省。** 本 repo 有整整一段文件在講「只有 build 會炸、
+      # typecheck 永遠綠」的失敗模式（相對 import 帶 .js 後綴）。同類的還有
+      # SP-8.3 的 WebP 陷阱（typecheck 過、bundle 爆）與未來 spriteAssets.ts 的
+      # 兩行 png import。CI 不跑 build 等於把最會出事的一關留在外面。
+      - name: build
+        run: npm run build
