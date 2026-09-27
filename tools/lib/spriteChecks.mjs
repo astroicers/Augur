@@ -142,6 +142,7 @@ function colourNear(r, g, b, target, tol) {
 export function checkFormatAndHygiene(sheets, manifest) {
   /** @type {Finding[]} */
   const out = [];
+  const stroke = manifest.stroke;
   const geom = manifest.sheet;
   const { width: W, height: H, cellPx } = geom;
 
@@ -190,6 +191,71 @@ export function checkFormatAndHygiene(sheets, manifest) {
         });
       }
 
+      /**
+       * SP-2.14：剪影邊緣必須有 ≥ 0.004·S 的 alpha 漸層，**禁止 1-bit alpha 硬邊**
+       * （硬邊在降取樣時會鋸齒）。
+       *
+       * ⚠️ **這條規格先前在 `tools/` 裡完全沒有機械承接**，而那不只是「少一條檢查」——
+       * 它是好幾個缺陷的共同根源：合成基準 `syntheticSheet.mjs` 畫的就是 1-bit 硬邊
+       * （實測整格只有 2 個 alpha 值、**零個**半透明像素），於是**整個閘門是對著一張
+       * 規格自己會退的圖校準的**。2026-09-22 的複審因此抓到兩條門檻在合規（抗鋸齒）
+       * 素材上算術達不到：眨眼的 90% 不透明比例、以及描邊的環狀 flood。
+       *
+       * 量測法：`半透明像素數 ÷ 剪影周長`，也就是**平均過渡寬度**（px）。
+       * 實測校準（合成基準，周長 1330）：
+       *
+       *   羽化 h    半透明px   比值
+       *     0          0      0.00   ← 1-bit，SP-2.14 明文禁止
+       *     1       1330      1.00   ← 1px 過渡，不足
+       *     2       3990      3.00   ← 合規
+       *     4       9296      6.99
+       *
+       * 關係是 `比值 = 2h − 1`，分離度很乾淨。分兩級：
+       *  - **零個半透明像素 → 硬失敗。** 這是無歧義的 1-bit，不需要任何門檻。
+       *  - **過渡寬度 < 2.0 → warn。** 那個門檻**未經真素材校準**，
+       *    而猜一個數字放進硬失敗，第一次交付就會紅在一個沒有根據的值上（SP-7.6 的前例）。
+       */
+      let semiCount = 0;
+      let perimeter = 0;
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          const a = v.px(x, y)[3];
+          if (a > 0 && a < 255) {
+            semiCount++;
+          }
+          if (a >= 128) {
+            const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+            if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
+              perimeter++;
+            }
+          }
+        }
+      }
+      if (perimeter > 0) {
+        const rampPx = semiCount / perimeter;
+        if (semiCount === 0) {
+          out.push({
+            id: 'SP-2.14/1-bit硬邊',
+            severity: 'error',
+            sheet: name,
+            cell: c,
+            message: `剪影邊緣完全沒有半透明像素（${perimeter} px 的周長上一個都沒有）—— 1-bit alpha 硬邊，SP-2.14 明文禁止，降取樣時會鋸齒`,
+            measured: 0,
+            limit: 1,
+          });
+        } else if (rampPx < 2) {
+          out.push({
+            id: 'SP-2.14/漸層過窄',
+            severity: 'warn',
+            sheet: name,
+            cell: c,
+            message: `剪影邊緣的平均過渡寬度 ${rampPx.toFixed(2)} px，SP-2.14 要求 ≥ 0.004·S（S=512 時 2px）。此門檻**未經真素材校準**，首版僅記錄`,
+            measured: rampPx,
+            limit: 2,
+          });
+        }
+      }
+
       // 黑邊 matte：半透明且 RGB 純黑 —— 對**黑底**合成過的指紋。
       //
       // ⚠️ **這一條抓不到預乘 alpha，而先前的註解宣稱它抓得到。**
@@ -199,14 +265,26 @@ export function checkFormatAndHygiene(sheets, manifest) {
       // 所以**預乘的抗鋸齒交付先前完全偵測不到**，而 SP-7.4 移除一條檢查時
       // 寫的理由正是「預乘由本條以正確極性接住」—— 那句話是錯的。
       //
-      // 預乘真正的數學指紋是 **max(R,G,B) ≤ alpha**（因為 RGB_pre = RGB × alpha/255 ≤ alpha）。
-      // 實測分離度：直通 alpha **0.0%**、預乘 **100.0%**。
-      // 而且它在 alpha 很低時特別可靠 —— 預乘把 RGB 乘成 ~0 所以恆成立，
-      // 直通 alpha 在 alpha=1 時任何非黑色都不成立，於是永遠到不了 100%。
+      // ⚠️ **判準是「RGB 隨 alpha 縮放」，不是「RGB ≤ alpha」。**
+      // 我第一版用 `max(R,G,B) ≤ alpha`（預乘的代數性質），在合成基準上分得很乾淨
+      // （直通 0.0% vs 預乘 100.0%）—— 但它**不通用**：任何比 alpha 暗的顏色都滿足它。
+      // 實測：把 fixture 的預設改成 SP-2.14 合規的抗鋸齒之後，線稿色（近乎全黑）的
+      // 覆蓋格讀到 **100%** 而它是直通的，四格誤殺。
+      //
+      // 正確的判準來自 SP-2.15：它強制「半透明／透明像素的 RGB 必須等於最近不透明
+      // 像素的 RGB」。**那條規定同時就是直通 alpha 的可驗證後果** ——
+      // 合規素材的殘差是 0，而對底色合成過的素材有系統性殘差。實測中位數：
+      //
+      //   直通（兩張表）        0
+      //   黑 matte directions   64
+      //   白 matte directions   72
+      //   黑 matte reactions     8   ← 近黑素材配黑底本來就難分，這一格抓不到
+      //
+      // 門檻取 `colourToleranceRgb`（12）：直通的 0 與 directions 的 64/72 之間有很寬的餘裕。
       let matte = 0;
       let opaque = 0;
       let semi = 0;
-      let underAlpha = 0;
+      const residuals = [];
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
           const [r, g, b, a] = v.px(x, y);
@@ -215,25 +293,43 @@ export function checkFormatAndHygiene(sheets, manifest) {
           }
           if (a > 0 && a < 255) {
             semi++;
-            if (Math.max(r, g, b) <= a) {
-              underAlpha++;
-            }
             if (r === 0 && g === 0 && b === 0) {
               matte++;
+            }
+            // 最近的不透明鄰居（5×5 內）的 RGB —— SP-2.15 保證直通時兩者相等。
+            let nb = null;
+            for (let dy = -2; dy <= 2 && !nb; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const px = x + dx;
+                const py = y + dy;
+                if (px < 0 || py < 0 || px >= cellPx || py >= cellPx) {
+                  continue;
+                }
+                const q = v.px(px, py);
+                if (q[3] >= 250) {
+                  nb = q;
+                  break;
+                }
+              }
+            }
+            if (nb) {
+              residuals.push(Math.max(Math.abs(r - nb[0]), Math.abs(g - nb[1]), Math.abs(b - nb[2])));
             }
           }
         }
       }
       // 樣本太少時不判（1-bit alpha 的圖沒有半透明像素 —— 那是 SP-2.14 的事，不是本條的）。
-      if (semi >= 200 && underAlpha / semi >= 0.98) {
+      residuals.sort((p, q) => p - q);
+      const residMed = residuals.length ? residuals[residuals.length >> 1] : 0;
+      if (residuals.length >= 200 && residMed > (stroke?.colourToleranceRgb ?? 12)) {
         out.push({
           id: 'SP-7.1/預乘alpha',
           severity: 'error',
           sheet: name,
           cell: c,
-          message: `半透明像素 ${semi} 個裡有 ${(underAlpha / semi * 100).toFixed(1)}% 滿足 max(R,G,B) ≤ alpha —— 那是預乘（premultiplied）alpha 的指紋，SP-2.13 要求非預乘（straight）`,
-          measured: underAlpha / semi,
-          limit: 0.98,
+          message: `半透明像素的 RGB 與最近不透明像素的 RGB 差距中位數 ${residMed}（${residuals.length} 個樣本）—— SP-2.15 強制兩者相等，有系統性差距代表匯出時對底色合成過（matte）。SP-2.13 要求非預乘（straight）alpha`,
+          measured: residMed,
+          limit: stroke?.colourToleranceRgb ?? 12,
         });
       }
       const matteRatio = matte / (cellPx * cellPx);
@@ -683,7 +779,17 @@ export function skinMask(directions, manifest, flag) {
       }
     }
   }
-  const filled = fillHoles(mask, cellPx);
+  // ⚠️ **按 SP-2.14 強制的羽化寬度膨脹回去。**
+  // 上面用 `alpha >= 128` 收集膚色像素，而 SP-2.14 強制剪影邊緣要有 ≥ 0.004·S 的
+  // alpha 漸層 —— 2px 羽化的最外圈是 alpha 64，會被那個門檻排除，
+  // 於是遮罩比真實的皮膚**內縮**，而 SP-6.6 的上限是 **0 個**越界像素：
+  // 畫在臉上、但貼近臉部邊緣的覆蓋層會被硬失敗，而它完全合規。
+  // 複審實測真實畫稿上內縮 2–3.3 px。
+  //
+  // SP-2.15 保證羽化帶帶著最近不透明像素的真實顏色，所以那一圈**本來就是臉**。
+  // 膨脹的量取 SP-2.14 的下限，不是猜的值。
+  const feather = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
+  const filled = fillHoles(dilate(mask, cellPx, feather), cellPx);
   return faceComponent(filled, cellPx, manifest, flag);
 }
 
@@ -1017,7 +1123,34 @@ export function checkOverlayOwnership(sheets, manifest) {
       // reactions[c] over directions[4]，然後找還讀得出來的虹膜色像素。
       // 這同時對格 6（全閉，虹膜應完全消失）與格 7（半閉，可見的虹膜在眼瞼**之外**、
       // 不在核心裡）都成立，而且量的與規格描述的是同一個量。
-      const feather = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
+      // ⚠️ **侵蝕深度要量出來，不能用宣告的下限。**
+      // `blink.featherS`（0.004·S = 2px）是 SP-2.14 的**下限**，而 4px 羽化同樣合規 ——
+      // 固定侵蝕 2px 對 4px 羽化永遠不夠，核心裡會留下羽化像素、把平均 alpha 拉低。
+      // 實測（門檻 98%）：固定 2px 時，2px 羽化讀 96.9%/94.5%、4px 羽化讀 81.4%/71.3%，
+      // **全部誤紅，而它們都是合規素材**。（這條門檻我上一次「修好」時是對著
+      // 1-bit 素材校準的 —— 那時核心全是 255，所以看不出來。）
+      //
+      // 改成量這一塊自己的過渡寬度（半透明像素數 ÷ 周長，與 SP-2.14 檢查同一個統計量），
+      // 再按它侵蝕。下限仍取宣告值，避免 1-bit 修補塊算出 0。
+      let patchSemi = 0;
+      let patchPerim = 0;
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          const a = v.px(x, y)[3];
+          if (a > 0 && a < 255) {
+            patchSemi++;
+          }
+          if (a >= 128) {
+            const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+            if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
+              patchPerim++;
+            }
+          }
+        }
+      }
+      const declared = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
+      const measured = patchPerim > 0 ? Math.ceil(patchSemi / patchPerim) : 0;
+      const feather = Math.max(declared, measured) + 1;
       const core = erode(filled, cellPx, feather);
       const master = cellView(sheets.directions, 4, geom); // master frame（與本檔 :277 / :503 同一個常數）
       const iris = hexToRgb(manifest.colours.iris);

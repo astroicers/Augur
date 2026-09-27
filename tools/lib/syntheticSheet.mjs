@@ -542,11 +542,22 @@ export function buildSheets(opts = {}) {
     if (opts.fillBleedPx) {
       applyFillBleed(directions, ox, oy, opts.fillBleedPx);
     }
-    if (opts.alphaRampPx) {
-      applyAlphaRamp(directions, ox, oy, opts.alphaRampPx);
+    // ⚠️ **預設是 2px 羽化，不是 1-bit 硬邊。**
+    // 先前預設沒有羽化，於是整個閘門是對著一張**規格自己會退的圖**校準的
+    // （SP-2.14 明文禁止 1-bit alpha）。那不是理論問題 ——
+    // 2026-09-22 的複審因此抓到兩條門檻在合規素材上算術達不到：
+    // 眨眼的 90% 不透明比例、以及描邊的環狀 flood。
+    // 要刻意測 1-bit（例如驗 SP-2.14 檢查本身）就傳 `alphaRampPx: 0`。
+    const ramp = opts.alphaRampPx === undefined ? 2 : opts.alphaRampPx;
+    if (ramp) {
+      applyAlphaRamp(directions, ox, oy, ramp);
+      // 覆蓋層的邊緣同樣會被降取樣，SP-2.14 對它們一樣適用 ——
+      // 眨眼的修補塊邊緣就是一例（見 SP-7.4 的 blink.featherS）。
+      applyAlphaRamp(reactions, ox, oy, ramp);
     }
     if (opts.matte) {
       applyMatte(directions, ox, oy, opts.matte);
+      applyMatte(reactions, ox, oy, opts.matte);
     }
   }
   return {
