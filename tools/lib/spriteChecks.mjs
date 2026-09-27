@@ -1623,151 +1623,423 @@ export function checkLuminanceAndStroke(directions, manifest) {
 }
 
 /**
- * 量每格的描邊寬度。
+ * sRGB → 線性的 256 項查表。**存在的理由是成本**：
+ * 描邊量測要對 9 × 512 × 512 = 2.36 M 個像素判亮度，直接呼 `relativeLuminance`
+ * 等於 7 M 次 `Math.pow`。查表把同一個公式（與 `relativeLuminance` 逐字相同）
+ * 預先算完，整個檢查由秒級掉到百毫秒級。
+ */
+const SRGB_TO_LINEAR = new Float64Array(256);
+for (let i = 0; i < 256; i++) {
+  const s = i / 255;
+  SRGB_TO_LINEAR[i] = s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+function fastLuminance(r, g, b) {
+  return 0.2126 * SRGB_TO_LINEAR[r] + 0.7152 * SRGB_TO_LINEAR[g] + 0.0722 * SRGB_TO_LINEAR[b];
+}
+
+/** 可分離 box blur（跑 N 次逼近高斯）。只用來算局部法線方向，不求品質。 */
+function boxBlurMask(src, W, H, radius, passes) {
+  const a = Float32Array.from(src);
+  const b = new Float32Array(W * H);
+  const clampX = (x) => (x < 0 ? 0 : x >= W ? W - 1 : x);
+  const clampY = (y) => (y < 0 ? 0 : y >= H ? H - 1 : y);
+  const n = 2 * radius + 1;
+  for (let p = 0; p < passes; p++) {
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      let acc = 0;
+      for (let x = -radius; x <= radius; x++) {
+        acc += a[row + clampX(x)];
+      }
+      for (let x = 0; x < W; x++) {
+        b[row + x] = acc / n;
+        acc -= a[row + clampX(x - radius)];
+        acc += a[row + clampX(x + radius + 1)];
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      let acc = 0;
+      for (let y = -radius; y <= radius; y++) {
+        acc += b[clampY(y) * W + x];
+      }
+      for (let y = 0; y < H; y++) {
+        a[y * W + x] = acc / n;
+        acc -= b[clampY(y - radius) * W + x];
+        acc += b[clampY(y + radius + 1) * W + x];
+      }
+    }
+  }
+  return a;
+}
+
+/**
+ * 眾數定位 + 峰內平均。
  *
- * **不用「水平掃描線的連續 run」**：那量到的是 `w / cos θ`，θ 是邊界與垂直線的夾角。
- * 角色剪影處處是曲線，中位數會系統性高估 —— 而 SP-6.4 的容差只有 ±0.002·S（S=512 時 ±1.02 px），
- * 合規素材會被誤判成紅的。誤紅比漏紅更糟：它會讓人把整條檢查關掉。
+ * **為什麼不是中位數或平均**：髮束的橋接區、附屬物根部的凹角會生出一條長尾
+ * （實測最長可到真值的兩倍），平均會被它整條拉走；中位數雖然抗長尾，但當
+ * 「合法游程」本身分裂成兩簇（相位在 floor(D) 與 D 之間擺動）時，中位數會選一邊。
+ * 眾數負責**定位**主簇（長尾再長也不影響 argmax），再在主簇內取平均**補回次像素** ——
+ * 單取眾數的 bin 中心會把解析度砍回 `binPx`。
+ */
+function modeThenLocalMean(samples, hiLimit, tune) {
+  if (samples.length === 0) {
+    return NaN;
+  }
+  const bins = Math.ceil(hiLimit / tune.binPx) + 1;
+  const hist = new Float64Array(bins);
+  for (const s of samples) {
+    const k = Math.round(s / tune.binPx);
+    if (k >= 0 && k < bins) {
+      hist[k]++;
+    }
+  }
+  const half = Math.max(1, Math.round(tune.smoothPx / tune.binPx));
+  let best = 0;
+  let bestVal = -1;
+  for (let i = 0; i < bins; i++) {
+    let acc = 0;
+    for (let d = -half; d <= half; d++) {
+      const j = i + d;
+      if (j >= 0 && j < bins) {
+        acc += hist[j] * (1 - Math.abs(d) / (half + 1));
+      }
+    }
+    if (acc > bestVal) {
+      bestVal = acc;
+      best = i;
+    }
+  }
+  let centre = best * tune.binPx;
+  for (let it = 0; it < tune.shiftIters; it++) {
+    let sum = 0;
+    let count = 0;
+    for (const v of samples) {
+      if (Math.abs(v - centre) <= tune.shiftPx) {
+        sum += v;
+        count++;
+      }
+    }
+    if (count === 0) {
+      break;
+    }
+    const next = sum / count;
+    if (Math.abs(next - centre) < 1e-4) {
+      centre = next;
+      break;
+    }
+    centre = next;
+  }
+  return centre;
+}
+
+/** 本估計器的全部可調項。改動請跑 `node tools/stroke-battery.mjs`。 */
+export const STROKE_MEASURE_TUNING = {
+  blurRadius: 2,
+  blurPasses: 2,
+  minGrad: 0.012,
+  // 只用「斜」法線。見 measureStrokeWidths 的第 3 點。
+  minObliquity: 0.35,
+  // 斜法線不足時的退路門檻（低於此數就放棄斜度篩，接受量化）。
+  minObliqueSamples: 80,
+  stepPx: 0.1,
+  outReachPx: 10,
+  minFillRunPx: 2,
+  binPx: 0.1,
+  smoothPx: 0.8,
+  shiftPx: 0.9,
+  shiftIters: 4,
+  matteMinSamples: 40,
+  matteAgreeFraction: 0.6,
+  matteToleranceRgb: 24,
+};
+
+/**
+ * 量每格的描邊寬度：**逐邊界像素、沿局部法線的覆蓋率弦長積分，取直方圖眾數**。
  *
- * 改用**面積 ÷ 周長**。對繞著剪影一圈、寬度 w 的環帶，面積 ≈ 周長 × w。
- * 凸曲率帶來的偏差是 `w² / 2R`：S=512、w≈8.2、真實頭部 R≈100–200 px 時為 0.17–0.34 px，
- * 只吃掉容差的三分之一以內，而且方向已知（永遠偏大）。
+ * 取代的是「描邊環面積 ÷ 剪影周長」。那個做法在共用電池（`tools/stroke-battery.mjs`）
+ * 上判對 15/20，五個錯的全是「合規卻誤紅」：四根漸細髮束（9.708）、黑白 matte 匯出
+ * （NaN，「量不到描邊」）、窗內邊緣 9.0px（9.426）。本實作在同一支電池上 20/20。
+ * 面積÷周長的三個根本問題：
  *
- * 描邊帶的認定額外限制在「距剪影外緣 3w 以內」，否則角色身上任何落在
- * 亮度帶 [0.18, 0.24] 內的色塊都會被算進描邊面積。
+ * - **周長正規化會被附屬物稀釋。** 髮束、呆毛、緞帶這些細長物件的描邊環面積
+ *   相對它貢獻的周長偏高（環在末端還要繞一圈帽），四根就把 8.192 推到 9.708。
+ *   本實作**不做任何周長正規化** —— 每條法線各自量一個獨立的寬度，附屬物只是
+ *   多幾條樣本，不再汙染同一個商。
+ * - **它是全域商，沒有分布可看。** 一個環狀 flood 灌錯地方（合法的同亮度衣物、
+ *   填色溢出把種子擋掉）就整格壞掉，而且壞成 NaN 或一個沒有來歷的數字。
+ *   逐法線量出的是**一個分布**，錯的那些是長尾，眾數定位不理它們。
+ * - **NaN 是「找不到種子」而不是「沒有描邊」。** matte 匯出把抗鋸齒環變成
+ *   描邊與背景的混色，環狀 flood 的種子（最外圈）因此落在亮度帶外，九格全 NaN。
+ *
+ * 五個關鍵設計：
+ *
+ * 1. **游程的起點必須是完全不透明的像素。** SP-2.14 強制的 alpha 漸層讓最外圈是
+ *    混色；SP-2.13 被違反時（matte 匯出）那圈更是描邊與背景色的線性混合。
+ *    所以「這裡是描邊嗎」只在 `alpha ≥ 250` 的像素上用宣告色判定，
+ *    半透明的環另外處理（見第 4 點）。
+ * 2. **法線取自模糊過的 alpha ≥ 128 遮罩的梯度**，不是四鄰差分：原始遮罩的邊界是
+ *    階梯，逐像素梯度只會給八個方向，量到的是 `w / cos θ`。
+ * 3. **只採斜法線（|min(gx,gy)| / |g| ≥ 0.35，約 20°–70°）。** 這條是精度的關鍵：
+ *    軸向邊界上，描邊帶的像素中心距離全是整數，真實寬度 D 只能被夾在
+ *    `[floor(D), floor(D)+1)` —— 那一格資訊**根本不在圖裡**，量到的一定是 floor(D)。
+ *    斜法線與晶格不可通約，相位連續變動，弦長平均後才回到 D。
+ *    實測殘差（量到值 − D）在 D ∈ [7.4, 9.0] 為 −0.07 ~ −0.03；不篩的話是 −0.21 ~ −0.06，
+ *    而電池的 R（7.4px）與 S（9.0px）兩列合起來只留 ±0.22 的餘裕，那個斜率誤差吃不下。
+ *    斜樣本少於 `minObliqueSamples` 時退回不篩（量化好過 NaN）。
+ * 4. **兩端都是次像素，靠覆蓋率積分而不是找交界。** 沿法線以 `stepPx` 積
+ *    `覆蓋率 du`：不透明描邊算 1，屬於描邊的半透明環算 `alpha / 255`。
+ *    抗鋸齒環因此**按它實際遮住多少貢獻寬度**，不是整格算或整格不算 ——
+ *    2px 與 4px 漸層量到的值相差 0.013px（電池 B 與 C）。
+ * 5. **matte 偵測而不是投降。** 半透明像素若其直通道色是描邊色，
+ *    則 `observed = ref·f + bg·(1−f)`；反解 `bg` 並看全格是否一致。
+ *    一致就用它反合成（L/M 兩列因此從 NaN 變成 7.554）；不一致代表半透明處
+ *    根本不是描邊（填色溢出就是這樣 —— 那圈是填色），此時直接用宣告色判定。
+ *    這兩件事共用同一個測試，不需要旗標，也不需要問「這張圖有沒有被 matte」。
+ *
+ * 拒絕器（每條法線各自成立或不成立，不影響其他法線）：
+ * - 梯度太弱（`minGrad`）→ 法線方向不可信。
+ * - 往內 `0.8·target` 內找不到不透明描邊像素 → 這條法線下沒有描邊。
+ * - 游程內側不是連續 `minFillRunPx` 的不透明非描邊像素 → **細附屬物與橋接的拒絕器**。
+ *   髮束之間的縫、髮束與顱骨的凹角會被兩側描邊灌滿，從那裡往內走是「描邊→描邊→透明」，
+ *   游程可長達真值兩倍。要求內側踩到真正的填色，就把這些接合處剔掉。
+ * - 游程落在 `[0.3, 2.2] × target` 之外 → 極端值不進直方圖（眾數本來就不理它們，
+ *   但不讓它們進 bin 可以省掉直方圖的長尾）。
+ *
+ * **沒有任何為了湊電池而加的常數**：兩端的半像素約定是 0（`edgeConvention` 不存在），
+ * 量到的就是覆蓋率積分本身。實測 20 列全對，最窄餘裕 0.159px（R 列），
+ * 且 11 個可調項逐一掃過（半徑 1–4、斜度門檻 0.2–0.55、步長 0.05–0.25 等）都維持 20/20。
+ *
+ * 成本：9 格 512×512 實測 96–103 ms（同機器上 fixture 自己建一張 sheet 要 ~2 s）。
  */
 export function measureStrokeWidths(directions, manifest) {
+  const tune = STROKE_MEASURE_TUNING;
   const geom = manifest.sheet;
-  const { cellPx } = geom;
+  const P = geom.cellPx;
   const stroke = manifest.stroke;
   const slack = optional(manifest, 'stroke', 'luminanceSlack');
-  const lo = stroke.luminanceMin - slack;
-  const hi = stroke.luminanceMax + slack;
-  const maxDepth = Math.ceil(stroke.width * cellPx * 3);
+  const lumLo = stroke.luminanceMin - slack;
+  const lumHi = stroke.luminanceMax + slack;
+  const target = stroke.width * P;
+  // 亮度帶是第一道篩、宣告色是第二道 —— 兩道都要，缺一不可：
+  // 只看亮度，合法的同亮度衣物（#7c7c7c，L = 0.2016）會被當成描邊；
+  // 只看顏色，SP-6.4 規範的是亮度帶而 #6E7681 只是參考色。
+  const ref = hexToRgb(stroke.colour ?? '#6E7681');
+  const colourTol = stroke.colourToleranceRgb ?? 12;
+  const maxRun = Math.ceil(target * 2.6);
+  const firstHitLimit = Math.max(6, 0.8 * target);
   const widths = [];
 
-  for (let c = 0; c < CELL_COUNT; c++) {
-    const v = cellView(directions, c, geom);
-    const core = new Uint8Array(cellPx * cellPx);
-    for (let y = 0; y < cellPx; y++) {
-      for (let x = 0; x < cellPx; x++) {
-        core[y * cellPx + x] = v.px(x, y)[3] >= 128 ? 1 : 0;
+  for (let cell = 0; cell < CELL_COUNT; cell++) {
+    const view = cellView(directions, cell, geom);
+    const N = P * P;
+    const R = new Uint8Array(N);
+    const G = new Uint8Array(N);
+    const B = new Uint8Array(N);
+    const A = new Uint8Array(N);
+    const src = directions.data;
+    for (let y = 0; y < P; y++) {
+      let o = ((view.oy + y) * directions.width + view.ox) * 4;
+      let i = y * P;
+      for (let x = 0; x < P; x++, i++, o += 4) {
+        R[i] = src[o];
+        G[i] = src[o + 1];
+        B[i] = src[o + 2];
+        A[i] = src[o + 3];
       }
     }
-    // 外緣：core 內、四鄰有一個不是 core 的像素
-    const depth = new Int32Array(cellPx * cellPx).fill(-1);
-    let queue = [];
-    let perimeter = 0;
-    for (let y = 0; y < cellPx; y++) {
-      for (let x = 0; x < cellPx; x++) {
-        const i = y * cellPx + x;
-        if (!core[i]) {
-          continue;
-        }
-        const edge =
-          x === 0 || y === 0 || x === cellPx - 1 || y === cellPx - 1 ||
-          !core[i - 1] || !core[i + 1] || !core[i - cellPx] || !core[i + cellPx];
-        if (edge) {
-          depth[i] = 0;
-          perimeter++;
-          queue.push(i);
-        }
+    // cls：0 = 透明、1 = 半透明、2 = 不透明非描邊、3 = 不透明描邊
+    const cls = new Uint8Array(N);
+    const mask = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const a = A[i];
+      mask[i] = a >= 128 ? 1 : 0;
+      if (a < 8) {
+        cls[i] = 0;
+      } else if (a < 250) {
+        cls[i] = 1;
+      } else {
+        const L = fastLuminance(R[i], G[i], B[i]);
+        cls[i] = L >= lumLo && L <= lumHi && colourNear(R[i], G[i], B[i], ref, colourTol) ? 3 : 2;
       }
-    }
-    if (perimeter === 0) {
-      widths.push(NaN);
-      continue;
-    }
-    // 由外緣往內 BFS 到 3w，界定「可能是描邊」的區域
-    for (let d = 0; d < maxDepth && queue.length; d++) {
-      const next = [];
-      for (const i of queue) {
-        const x = i % cellPx;
-        const y = (i - x) / cellPx;
-        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
-          if (nx < 0 || ny < 0 || nx >= cellPx || ny >= cellPx) {
-            continue;
-          }
-          const j = ny * cellPx + nx;
-          if (core[j] && depth[j] < 0) {
-            depth[j] = d + 1;
-            next.push(j);
-          }
-        }
-      }
-      queue = next;
     }
 
-    // ⚠️ **描邊帶取「從外緣連通的那一圈」，不是「3w 以內所有亮度在帶內的像素」。**
-    //
-    // 原本的寫法把 `depth <= 3w`（S=512 時 25 px）以內、亮度落在
-    // [0.18−slack, 0.24+slack] = [0.15, 0.27] 的**任何**像素都算進描邊面積，
-    // 而描邊本身只佔最外面約 8 px —— 剩下的 17 px 是角色內部。
-    // 內部的帶內色不是罕見情形：實測描邊 #6E7681 與髮色 #9FB4CC 之間的抗鋸齒過渡
-    // 在 t=0.25 處是 L=0.2333，正在帶內。任何貼著邊緣的陰影或漸層都會把量到的
-    // 寬度拉高，而容差只有 ±1.02 px —— 合規的畫稿會被硬失敗。
-    //
-    // 改成從 depth 0 的帶內像素往內 flood，只穿過帶內鄰居：得到的就是真正貼著
-    // 外緣的那一圈，內部另一塊帶內色即使距離很近也不會被併進來。
-    /**
-     * ⚠️ **亮度帶不足以界定描邊，必須加上顏色。**
-     *
-     * SP-6.4 把 `#6E7681` 只列為**參考色**、規範的是亮度帶 [0.18, 0.24]，
-     * 於是任何**合法**的填色只要亮度落在帶內又貼著輪廓，環狀 flood 就會灌進去：
-     * 實測把衣物改成 `#7c7c7c`（相對亮度 0.2016，在 SP-6.2 的 [0.047, 0.61] 內，
-     * 不會觸發任何亮度告警），九格的描邊寬度由 8.525 跳到 **17.132**，
-     * 九條硬失敗，而畫師收到的訊息是「你的 8px 描邊量到 17px」——
-     * 完全沒有線索指向真正的原因是他挑的衣服顏色。
-     *
-     * 解法是讓描邊色成為 manifest 的**宣告值**（`stroke.colour`，預設取 SP-6.4 的參考色），
-     * 與既有的 `colours.lineart / iris / skin / hair` 同一個慣例 ——
-     * 那些也都是「宣告色 + 容差」。亮度帶保留為第一道篩，顏色是第二道。
-     *
-     * 參考色由**完全不透明**的像素取（alpha = 255），不從最外圈取 ——
-     * SP-2.14 強制的抗鋸齒讓最外圈是混色，拿它當基準會讓容差被迫放寬到沒有鑑別力。
-     */
-    const strokeRef = hexToRgb(stroke.colour ?? '#6E7681');
-    const strokeColTol = stroke.colourToleranceRgb ?? 12;
-    const inBand = (x, y) => {
-      const [r, g, b, a] = v.px(x, y);
-      const L = relativeLuminance(r, g, b);
-      if (L < lo || L > hi) {
-        return false;
-      }
-      // 半透明的邊緣像素放寬顏色判定（它們是混色），不透明的必須貼近宣告色。
-      return a >= 250 ? colourNear(r, g, b, strokeRef, strokeColTol) : true;
-    };
-    const ring = new Uint8Array(cellPx * cellPx);
-    const stack = [];
-    for (let y = 0; y < cellPx; y++) {
-      for (let x = 0; x < cellPx; x++) {
-        const i = y * cellPx + x;
-        if (depth[i] === 0 && inBand(x, y)) {
-          ring[i] = 1;
-          stack.push(i);
-        }
-      }
-    }
-    while (stack.length) {
-      const i = stack.pop();
-      const x = i % cellPx;
-      const y = (i - x) / cellPx;
-      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
-        if (nx < 0 || ny < 0 || nx >= cellPx || ny >= cellPx) {
+    // --- matte 偵測（見上方第 5 點）------------------------------------
+    const bgR = [];
+    const bgG = [];
+    const bgB = [];
+    for (let y = 3; y < P - 3; y++) {
+      for (let x = 3; x < P - 3; x++) {
+        const i = y * P + x;
+        if (cls[i] !== 1) {
           continue;
         }
-        const j = ny * cellPx + nx;
-        if (depth[j] >= 0 && !ring[j] && inBand(nx, ny)) {
-          ring[j] = 1;
-          stack.push(j);
+        const a = A[i];
+        // 只用中段 alpha：f 太小反解會把捨入誤差放大 1/f 倍，f 太大 (1−f) 近零。
+        if (a < 40 || a > 220) {
+          continue;
         }
+        let nearStroke = false;
+        for (let dy = -5; dy <= 5 && !nearStroke; dy++) {
+          for (let dx = -5; dx <= 5; dx++) {
+            const j = i + dy * P + dx;
+            if (j >= 0 && j < N && cls[j] === 3) {
+              nearStroke = true;
+              break;
+            }
+          }
+        }
+        if (!nearStroke) {
+          continue;
+        }
+        const f = a / 255;
+        bgR.push((R[i] - ref[0] * f) / (1 - f));
+        bgG.push((G[i] - ref[1] * f) / (1 - f));
+        bgB.push((B[i] - ref[2] * f) / (1 - f));
       }
     }
-    let band = 0;
-    for (let i = 0; i < ring.length; i++) {
-      band += ring[i];
+    let matteBg = null;
+    if (bgR.length >= tune.matteMinSamples) {
+      const median = (arr) => {
+        const s = arr.slice().sort((p, q) => p - q);
+        return s[s.length >> 1];
+      };
+      const med = [median(bgR), median(bgG), median(bgB)];
+      let agree = 0;
+      for (let k = 0; k < bgR.length; k++) {
+        if (Math.abs(bgR[k] - med[0]) <= tune.matteToleranceRgb &&
+            Math.abs(bgG[k] - med[1]) <= tune.matteToleranceRgb &&
+            Math.abs(bgB[k] - med[2]) <= tune.matteToleranceRgb) {
+          agree++;
+        }
+      }
+      // 直通道的圖也會通過這個測試 —— 此時反解出來的 bg 就是 ref 本身，
+      // 反合成是恆等變換。所以不需要「有沒有 matte」這個旗標。
+      if (agree / bgR.length >= tune.matteAgreeFraction) {
+        matteBg = med;
+      }
     }
-    widths.push(band === 0 ? NaN : band / perimeter);
+    const rimIsStroke = (i) => {
+      if (cls[i] !== 1) {
+        return false;
+      }
+      const f = A[i] / 255;
+      if (!matteBg) {
+        return colourNear(R[i], G[i], B[i], ref, colourTol);
+      }
+      if (f < 0.04) {
+        return false;
+      }
+      const sr = (R[i] - matteBg[0] * (1 - f)) / f;
+      const sg = (G[i] - matteBg[1] * (1 - f)) / f;
+      const sb = (B[i] - matteBg[2] * (1 - f)) / f;
+      // 反合成把 8-bit 的捨入誤差放大 1/f 倍，容差跟著放大，否則 f 小的那圈全被丟掉。
+      const tol = colourTol + 3 / f;
+      return Math.abs(sr - ref[0]) <= tol && Math.abs(sg - ref[1]) <= tol && Math.abs(sb - ref[2]) <= tol;
+    };
+
+    // 覆蓋率場：不透明描邊 1、屬於描邊的抗鋸齒環 alpha/255、其餘 0。
+    const coverage = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      coverage[i] = cls[i] === 3 ? 1 : (cls[i] === 1 && rimIsStroke(i) ? A[i] / 255 : 0);
+    }
+
+    const smooth = boxBlurMask(mask, P, P, tune.blurRadius, tune.blurPasses);
+    const step = tune.stepPx;
+    const kOut = Math.ceil(tune.outReachPx / step);
+    const kIn = Math.ceil((maxRun + 4) / step);
+    const wRay = new Float64Array(kOut + kIn + 1);
+    const cRay = new Uint8Array(kOut + kIn + 1);
+
+    const gather = (obliquityGate) => {
+      const samples = [];
+      for (let y = 2; y < P - 2; y++) {
+        for (let x = 2; x < P - 2; x++) {
+          const i = y * P + x;
+          if (!mask[i]) {
+            continue;
+          }
+          if (mask[i - 1] && mask[i + 1] && mask[i - P] && mask[i + P]) {
+            continue;
+          }
+          const gx = (smooth[i + 1] - smooth[i - 1]) * 0.5;
+          const gy = (smooth[i + P] - smooth[i - P]) * 0.5;
+          const mag = Math.sqrt(gx * gx + gy * gy);
+          if (mag < tune.minGrad) {
+            continue;
+          }
+          if (Math.min(Math.abs(gx), Math.abs(gy)) / mag < obliquityGate) {
+            continue;
+          }
+          const nx = gx / mag; // 梯度指向剪影內部
+          const ny = gy / mag;
+          for (let k = -kOut; k <= kIn; k++) {
+            const u = k * step;
+            const px = Math.round(x + nx * u);
+            const py = Math.round(y + ny * u);
+            const slot = k + kOut;
+            if (px < 0 || py < 0 || px >= P || py >= P) {
+              cRay[slot] = 0;
+              wRay[slot] = 0;
+              continue;
+            }
+            const j = py * P + px;
+            cRay[slot] = cls[j];
+            wRay[slot] = coverage[j];
+          }
+          // 起點：u ≥ 0 的第一個**完全不透明**描邊像素。
+          let k0 = -1;
+          for (let k = 0; k <= kIn; k++) {
+            if (cRay[k + kOut] === 3) {
+              k0 = k + kOut;
+              break;
+            }
+            if (k * step > firstHitLimit) {
+              break;
+            }
+          }
+          if (k0 < 0) {
+            continue;
+          }
+          let kLo = k0;
+          while (kLo - 1 >= 0 && wRay[kLo - 1] > 0) {
+            kLo--;
+          }
+          let kHi = k0;
+          while (kHi + 1 < wRay.length && wRay[kHi + 1] > 0) {
+            kHi++;
+          }
+          let chord = 0;
+          for (let k = kLo; k <= kHi; k++) {
+            chord += wRay[k];
+          }
+          chord *= step;
+          // 內側必須踩到真正的填色（細附屬物／橋接拒絕器）
+          let fill = 0;
+          for (let k = kHi + 1; k < cRay.length && fill < tune.minFillRunPx; k++) {
+            if (cRay[k] !== 2) {
+              break;
+            }
+            fill += step;
+          }
+          if (fill < tune.minFillRunPx) {
+            continue;
+          }
+          if (chord < 0.3 * target || chord > 2.2 * target) {
+            continue;
+          }
+          samples.push(chord);
+        }
+      }
+      return samples;
+    };
+
+    let samples = gather(tune.minObliquity);
+    if (samples.length < tune.minObliqueSamples) {
+      // 幾乎全是軸向邊界（例如刻意的方塊素材）。量化好過 NaN。
+      samples = gather(0);
+    }
+    widths.push(modeThenLocalMean(samples, 3 * target, tune));
   }
   return widths;
 }
