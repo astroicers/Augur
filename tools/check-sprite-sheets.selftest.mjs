@@ -1048,6 +1048,33 @@ function antialiasEdge(s, premul) {
 
 /** 不該紅的情形。合規的畫稿被硬失敗，跟漏放一樣嚴重 —— 它會讓人把檢查關掉。 */
 const NON_MUTANTS = [  {
+    // ⚠️ **合法的同亮度衣物貼著輪廓時，環狀 flood 會灌進整件衣物。**
+    // `#7c7c7c` 的相對亮度是 0.2016，落在描邊帶 [0.15, 0.27] **也**落在 SP-6.2 的
+    // 合法填色範圍 [0.047, 0.61] 內 —— 不會觸發任何亮度告警。
+    // 實測：九格的描邊寬度由 8.525 跳到 **17.132**，九條硬失敗，
+    // 而畫師收到的訊息是「你的 8px 描邊量到 17px」，完全沒有線索指向真正的原因。
+    // 修法是讓描邊色成為 manifest 的宣告值（`stroke.colour`），亮度帶保留為第一道篩。
+    name: '合法的同亮度衣物（#7c7c7c）貼著輪廓不得讓描邊量爆掉',
+    forbid: 'SP-7.7/描邊寬度',
+    sheets: () => buildSheets({ inBandGarment: true, alphaRampPx: 2 }),
+  },
+  {
+    name: 'SP-2.14 要求的抗鋸齒邊緣不得影響描邊量測',
+    forbid: 'SP-7.7/描邊寬度',
+    sheets: () => buildSheets({ alphaRampPx: 2 }),
+  },
+  {
+    name: '內描邊畫法（同一條真實厚度的另一種合法畫法）不得紅',
+    forbid: 'SP-7.7/描邊寬度',
+    sheets: () => buildSheets({ strokeInside: true }),
+  },
+  {
+    // 手繪 lineart-over-fill 的常態（日文「はみ出し」）。
+    name: '填色溢出線稿 1px（手繪常態）不得讓描邊量成 NaN',
+    forbid: 'SP-7.7/描邊',
+    sheets: () => buildSheets({ fillBleedPx: 1, alphaRampPx: 2 }),
+  },
+  {
     // ⚠️ 直通 alpha 的抗鋸齒邊緣是 **SP-2.14 強制要求**的，不得被預乘偵測誤殺。
     // 實測分離度：直通 0.0% vs 預乘 100.0%，門檻 0.98。
     name: 'SP-2.14 的抗鋸齒邊緣（直通 alpha）不得被判成預乘',
@@ -1156,8 +1183,12 @@ for (const m of mutants) {
 }
 
 for (const m of NON_MUTANTS) {
-  const sheets = clone(base);
-  m.apply(sheets);
+  // 與 MUTANTS 同形：`sheets()` 讓案例直接用 buildSheets 的選項造真實畫稿的性質
+  // （抗鋸齒、內描邊、填色溢出、同亮度衣物），那些用事後改像素做不出來。
+  const sheets = m.sheets ? m.sheets() : clone(base);
+  if (m.apply) {
+    m.apply(sheets);
+  }
   const got = ids(runAll(sheets, manifest));
   ok(`（不得誤紅）${m.name}`, !got.includes(m.forbid), `卻紅了 [${got.join(', ')}]`);
 }

@@ -198,6 +198,8 @@ function validateManifest(m) {
   num('stroke.luminanceMin', { min: 0, max: 1 });
   num('stroke.luminanceMax', { min: 0, max: 1 });
   num('stroke.luminanceSlack', { min: 0, max: 1, optional: true });
+  hex('stroke.colour', { optional: true });
+  num('stroke.colourToleranceRgb', { min: 0, max: 255, optional: true });
   // 與五行之上的 luminance.min/max 同形。少了它，把這兩個值對調會讓亮度帶收縮成空集合，
   // 九格全報「量不到描邊（剪影邊緣沒有落在亮度帶內的像素）」—— 輸出裡沒有一個字指向 manifest，
   // 畫師被告知九次他的描邊不見了。
