@@ -46,8 +46,6 @@
     <input type="file" id="file" accept="image/png" />
     <p class="fail" id="loadErr" hidden></p>
     <p id="sizeNote" hidden style="color:#b8860b;font-size:13px"></p>
-    <p id="resumed" hidden style="color:#2f6f4f;font-size:13px"></p>
-    <p id="debounced" hidden style="color:#b8860b;font-size:13px">連點太快，這一下沒有計入（250ms 防抖）。</p>
     <p class="sub" style="margin:10px 0 0">
       也可以直接測 <button type="button" id="useRepo">repo 內的 src/img/sprite/directions.png</button>
       或 <button type="button" id="useFixture">編號假 sheet（驗這個頁面本身）</button>
@@ -55,6 +53,13 @@
   </section>
 
   <section id="quiz" hidden>
+    <!-- ⚠️ 這兩個提示**必須放在 #quiz 裡**。它們一度放在 #setup，
+         而 #setup 在作答期間整段 hidden —— 於是兩個提示都永遠不顯示，
+         行為與它們要取代的那個靜默 return 完全相同。
+         我當時「用 playwright 驗過」，但量的是元素自己的 `hidden` 屬性，
+         不是它實際看不看得見（`offsetParent !== null`）。量了代理，不是量真的東西。 -->
+    <p id="resumed" hidden style="color:#2f6f4f;font-size:13px"></p>
+    <p id="debounced" hidden style="color:#b8860b;font-size:13px">連點太快，這一下沒有計入（250ms 防抖）。</p>
     <div id="stage"></div>
     <div class="grid" id="choices"></div>
     <div class="bar"><i id="progress" style="width:0"></i></div>
@@ -130,7 +135,9 @@
         $('resumed').textContent = `接續上次未完成的輪次：已答 ${answers.length} / ${questions.length} 題。`;
         $('resumed').hidden = false;
       } else {
-        clearRound();
+        // ⚠️ **不要 clearRound()。** 一度在這裡清掉，於是 reload 之後在選圖畫面
+        // 誤點任何一個按鈕，就把這個功能存在的理由（那 60 題）永久刪掉。
+        // 存檔只在「該輪完成」時清除；其餘情況讓它留著，下次選對圖還接得回去。
         questions = buildQuestions(Math.random);
         answers = [];
         $('resumed').hidden = true;
@@ -191,6 +198,8 @@
       localStorage.setItem(SAVE_SLOT, JSON.stringify({ imageKey, questions, answers, at: Date.now() }));
     } catch { /* 存不了就算了，不影響作答 */ }
   }
+  /** 續作的有效期。超過就不接 —— 隔天回來接一輪三天前的答案沒有意義。 */
+  const RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000;
   function loadRound() {
     try {
       const raw = localStorage.getItem(SAVE_SLOT);
@@ -198,6 +207,8 @@
       const d = JSON.parse(raw);
       if (!Array.isArray(d?.questions) || !Array.isArray(d?.answers)) { return null; }
       if (d.answers.length >= d.questions.length) { return null; } // 已完成的不算續作
+      // ⚠️ `at` 一度寫了卻從來沒讀 —— 存檔有時間戳而沒有過期判定等於沒有時間戳。
+      if (!Number.isFinite(d.at) || Date.now() - d.at > RESUME_MAX_AGE_MS) { return null; }
       return d;
     } catch { return null; }
   }
@@ -294,6 +305,21 @@
       start(URL.createObjectURL(f), 'file:' + f.name + ':' + f.size);
     }
   };
-  $('useRepo').onclick = () => start('/sprite/directions.png', '/sprite/directions.png');
-  $('useFixture').onclick = () => start('/fixture.png', '/fixture.png');
+  /**
+   * URL 圖片的內容身分。**只有路徑不夠** —— 畫師把修正版存回同一個路徑之後，
+   * 續作會把兩張圖的答案混進同一份報告，而報告不會顯示這件事。
+   * 用 HEAD 拿 content-length + last-modified；拿不到就退回路徑（並靠 12 小時過期兜底）。
+   */
+  async function urlIdentity(u) {
+    try {
+      const r = await fetch(u, { method: 'HEAD', cache: 'no-store' });
+      const len = r.headers.get('content-length') || '?';
+      const mod = r.headers.get('last-modified') || '?';
+      return `${u}:${len}:${mod}`;
+    } catch {
+      return u;
+    }
+  }
+  $('useRepo').onclick = async () => start('/sprite/directions.png', await urlIdentity('/sprite/directions.png'));
+  $('useFixture').onclick = async () => start('/fixture.png', await urlIdentity('/fixture.png'));
 </script>

@@ -43,7 +43,14 @@ http
       );
       return;
     }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(target)] || 'application/octet-stream' });
+    // ⚠️ 帶上 content-length 與 last-modified —— 盲測頁用它們當「這是不是同一張圖」的身分。
+    // 少了它們，畫師換掉 directions.png 之後續作會把兩張圖的答案混進同一份報告。
+    const st = fs.statSync(target);
+    res.writeHead(200, {
+      'content-type': TYPES[path.extname(target)] || 'application/octet-stream',
+      'content-length': String(st.size),
+      'last-modified': st.mtime.toUTCString(),
+    });
     fs.createReadStream(target).pipe(res);
   })
   .listen(PORT, () => {

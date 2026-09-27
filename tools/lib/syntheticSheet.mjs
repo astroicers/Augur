@@ -43,6 +43,10 @@ const hex = (rgb) => '#' + rgb.map((n) => n.toString(16).padStart(2, '0')).join(
 export const SP_2_12_MARKS = {
   sweat: { cx: 0.645, cy: 0.293, rx: 9, ry: 13 },
   anger: { x0: 0.629, x1: 0.668, y0: 0.258, y1: 0.266 },
+  // 腮紅的上緣一度是 0.440，與眼窗 E 的下緣（0.4453）重疊每側 123px ——
+  // 而 SP-7.4 把 E 從記號區 K 排除，所以照規格畫就硬失敗。
+  // 0.465 給 10px 餘裕，容得下 SP-2.14 強制的羽化（剛好不重疊只對硬邊成立）。
+  blush: { y0: 0.465, y1: 0.500, xs: [[0.290, 0.370], [0.630, 0.710]] },
 };
 
 export function buildManifest(overrides = {}) {

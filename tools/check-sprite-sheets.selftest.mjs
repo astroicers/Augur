@@ -1538,22 +1538,33 @@ function materialise(dir, sheets, patch = {}) {
     }
     return { total, hit };
   };
-  // ⚠️ 腮紅矩形的上緣一度與眼窗 E 重疊 0.005·S（每側 123px、共 246px）——
-  // 而 SP-7.4 的視窗產權把 E 從記號區 K 排除，於是照規格畫腮紅會硬失敗。
-  // 這條釘住「建議的腮紅範圍不得與 E 相交」。
+  // 腮紅矩形的上緣一度與眼窗 E 重疊（每側 123px），而 SP-7.4 把 E 從記號區 K 排除 ——
+  // 照規格畫腮紅會硬失敗。
+  // ⚠️ 座標讀 `SP_2_12_MARKS.blush`，**不要在測試裡寫死** ——
+  // 寫死的話唯一的變數輸入就只剩 `windows.E`，把規格改回 0.440 仍然全綠。
+  // 隔壁的汗滴／怒紋兩條就是讀共用常數並帶對照組的。
   {
     const Erect = C.windowRect(manifest.windows.E, cp);
-    let overlap = 0;
-    for (let y = Math.round(0.450 * cp); y < Math.round(0.500 * cp); y++) {
-      for (const [bx0, bx1] of [[0.290, 0.370], [0.630, 0.710]]) {
-        for (let x = Math.round(bx0 * cp); x < Math.round(bx1 * cp); x++) {
-          if (x >= Erect.x0 && x < Erect.x1 && y >= Erect.y0 && y < Erect.y1) {
-            overlap++;
+    const overlapOf = (y0) => {
+      let n = 0;
+      for (let y = Math.round(y0 * cp); y < Math.round(SP_2_12_MARKS.blush.y1 * cp); y++) {
+        for (const [bx0, bx1] of SP_2_12_MARKS.blush.xs) {
+          for (let x = Math.round(bx0 * cp); x < Math.round(bx1 * cp); x++) {
+            if (x >= Erect.x0 && x < Erect.x1 && y >= Erect.y0 && y < Erect.y1) { n++; }
           }
         }
       }
-    }
-    ok('SP-2.12 建議的腮紅範圍與眼窗 E 不相交（重疊 ' + overlap + ' px）', overlap === 0);
+      return n;
+    };
+    ok('SP-2.12 建議的腮紅範圍與眼窗 E 不相交（重疊 ' + overlapOf(SP_2_12_MARKS.blush.y0) + ' px）',
+      overlapOf(SP_2_12_MARKS.blush.y0) === 0);
+    // 對照組：原值 0.440 必須是**會**重疊的，否則上一條在測一個恆真的東西。
+    ok('（對照）原建議的腮紅上緣 0.440 確實與 E 重疊（' + overlapOf(0.440) + ' px）',
+      overlapOf(0.440) > 0);
+    // SP-2.14 強制羽化，所以餘裕要容得下軟邊 —— 剛好不重疊只對硬邊成立。
+    const gapPx = Math.round(SP_2_12_MARKS.blush.y0 * cp) - Erect.y1;
+    ok('SP-2.12 腮紅上緣離眼窗 E 至少 8px（容得下 SP-2.14 強制的羽化）—— 實測 ' + gapPx + ' px',
+      gapPx >= 8);
   }
 
   const sw = SP_2_12_MARKS.sweat;
