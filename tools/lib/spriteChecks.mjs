@@ -321,7 +321,15 @@ export function checkFormatAndHygiene(sheets, manifest) {
       // 樣本太少時不判（1-bit alpha 的圖沒有半透明像素 —— 那是 SP-2.14 的事，不是本條的）。
       residuals.sort((p, q) => p - q);
       const residMed = residuals.length ? residuals[residuals.length >> 1] : 0;
-      if (residuals.length >= 200 && residMed > (stroke?.colourToleranceRgb ?? 12)) {
+      // ⚠️ **不要借用 `stroke.colourToleranceRgb`。** 那個值是「描邊色的容差」，
+      // 驗證器允許 0–255，而它與「matte 殘差多大才算異常」沒有任何關係 ——
+      // 有人為了描邊而把它調鬆，matte 偵測就跟著失效：實測調到 40 時
+      // 白 matte 由 18 格掉到 11 格，調到 80 時黑白兩種都只剩 2 格。
+      // 一個檢查的靈敏度不該被另一個檢查的參數左右。
+      // 用自己的門檻：直通 alpha 的殘差在 SP-2.15 之下應為 **0**，
+      // 而 matte 實測 64（黑）／72（白），所以 12 有很寬的餘裕。
+      const MATTE_RESIDUAL_MAX = 12;
+      if (residuals.length >= 200 && residMed > MATTE_RESIDUAL_MAX) {
         out.push({
           id: 'SP-7.1/預乘alpha',
           severity: 'error',
@@ -329,7 +337,7 @@ export function checkFormatAndHygiene(sheets, manifest) {
           cell: c,
           message: `半透明像素的 RGB 與最近不透明像素的 RGB 差距中位數 ${residMed}（${residuals.length} 個樣本）—— SP-2.15 強制兩者相等，有系統性差距代表匯出時對底色合成過（matte）。SP-2.13 要求非預乘（straight）alpha`,
           measured: residMed,
-          limit: stroke?.colourToleranceRgb ?? 12,
+          limit: MATTE_RESIDUAL_MAX,
         });
       }
       const matteRatio = matte / (cellPx * cellPx);
@@ -1150,8 +1158,53 @@ export function checkOverlayOwnership(sheets, manifest) {
       }
       const declared = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
       const measured = patchPerim > 0 ? Math.ceil(patchSemi / patchPerim) : 0;
-      const feather = Math.max(declared, measured) + 1;
-      const core = erode(filled, cellPx, feather);
+      const want = Math.max(declared, measured) + 1;
+
+      /**
+       * ⚠️ **這個侵蝕深度會讓檢查自我廢除，而且缺陷越嚴重越容易發生。**
+       *
+       * `measured = patchSemi / patchPerim` 取自**半透明像素的數量**，
+       * 而「整片半透明的眼瞼」正是本檢查要抓的缺陷之一 —— 它讓每一個像素都變成
+       * 半透明，於是 `measured` 暴增、侵蝕深度暴增、核心被侵蝕成空。
+       * 先前沒有 `coreArea === 0` 的守衛，所以空核心 = 兩條檢查都不發 finding。
+       *
+       * 實測：把格 6 與格 7 的眼瞼整片改成 alpha 130，**只有格 6 報告**——
+       * 格 7 比較薄（SP-4.8 的半閉眼），核心是 0 px，零 finding。
+       * 而 selftest 的兩個眨眼變異體都只動格 6，所以沒有任何東西釘住這件事。
+       * 合規的 6px 羽化也會把格 7 的核心清空。
+       *
+       * 兩層修正：
+       *  1. **逐步退讓**：從 `want` 往下試到 1，取第一個「核心非空」的深度。
+       *     那保證量得到東西，而且用的是仍然可行的最深侵蝕。
+       *  2. **連深度 1 都空 → 出聲，不要靜默**。那種修補塊細到量不出核心，
+       *     可能是合法的細線閉眼、也可能是畫壞了，但兩者都不該是「靜默通過」。
+       */
+      let feather = 0;
+      let core = null;
+      for (let d = want; d >= 1; d--) {
+        const cand = erode(filled, cellPx, d);
+        let any = 0;
+        for (let i = 0; i < cand.length && !any; i++) {
+          any = cand[i];
+        }
+        if (any) {
+          feather = d;
+          core = cand;
+          break;
+        }
+      }
+      if (!core) {
+        out.push({
+          id: 'SP-7.4/眨眼核心量不到',
+          severity: 'warn',
+          sheet: 'reactions',
+          cell: c,
+          message: `修補塊侵蝕 1px 之後核心即為空（輪廓 ${nonZero} px）—— 太細，量不到「本來就該完全不透明」的核心。細線閉眼是合法的畫法，但本輪無法驗證它的不透明度`,
+          measured: 0,
+          limit: 1,
+        });
+        continue;
+      }
       const master = cellView(sheets.directions, 4, geom); // master frame（與本檔 :277 / :503 同一個常數）
       const iris = hexToRgb(manifest.colours.iris);
       const irisTol = manifest.colours.irisToleranceRgb;
@@ -1339,7 +1392,15 @@ export function checkAnchors(directions, manifest, centroids) {
   /** @type {Finding[]} */
   const out = [];
   const { cellPx } = manifest.sheet;
-  const tol = (manifest.anchorToleranceS ?? 0.004) * cellPx;
+  // ⚠️ **只從這裡讀容差，不要在下面再讀一次 `manifest.anchorToleranceS`。**
+  // :1438 與 :1481 一度直接讀原值，而這一行有 `?? 0.004` 的預設 ——
+  // 兩種讀法在「欄位缺席」時的行為不同：這裡拿到 0.004，那兩處拿到 `undefined`，
+  // 而 `m < lo - undefined` 是 `m < NaN` = **false**，於是
+  // `SP-7.5/頭頂` 與 `SP-7.5/頭寬` 在該紅的輸入上**靜默不發**（實測確認）。
+  // CLI 有 validateManifest 擋著，但 selftest 直接呼叫本函式，繞過它。
+  // 這正是本 repo 記錄過的第一類缺陷：「刪欄位比放寬門檻更強大」。
+  const tolS = manifest.anchorToleranceS ?? 0.004;
+  const tol = tolS * cellPx;
   const a = manifest.anchors;
 
   /** 點值比對：實測必須落在 `expected ± tol`。 */
@@ -1390,7 +1451,7 @@ export function checkAnchors(directions, manifest, centroids) {
       return;
     }
     const m = measured / cellPx;
-    if (m < lo - manifest.anchorToleranceS || m > hi + manifest.anchorToleranceS) {
+    if (m < lo - tolS || m > hi + tolS) {
       out.push({
         id,
         severity: 'error',
@@ -1433,7 +1494,7 @@ export function checkAnchors(directions, manifest, centroids) {
     // 要恢復雙側精度，規格必須凍結一個**量得到**的橫向錨點（例如「側髮最外緣 X」）——
     // 那是規格修訂不是程式修正，已記進 ROADMAP。
     const headW = box ? (box.x1 - box.x0 + 1) / cellPx : NaN;
-    if (Number.isFinite(headW) && headW < a.headWidth - manifest.anchorToleranceS) {
+    if (Number.isFinite(headW) && headW < a.headWidth - tolS) {
       out.push({
         id: 'SP-7.5/頭寬',
         severity: 'error',
@@ -1502,7 +1563,6 @@ export function checkAnchors(directions, manifest, centroids) {
    * 真正的瞳孔位置驗收在 SP-V.1 的人眼盲測 —— 那才是這件事的權威，本條是輔助。
    */
   const eyes = eyeCentroids(directions, 4, manifest);
-  const tolS = tol / cellPx; // :995 的 tol 是像素，這裡要 S 比例
   const soft = (id, label, measured, want, why) => {
     if (!Number.isFinite(measured)) {
       return;

@@ -52,14 +52,17 @@
     </p>
   </section>
 
-  <section id="quiz" hidden>
+  <section id="quiz" hidden style="position:relative">
     <!-- ⚠️ 這兩個提示**必須放在 #quiz 裡**。它們一度放在 #setup，
          而 #setup 在作答期間整段 hidden —— 於是兩個提示都永遠不顯示，
          行為與它們要取代的那個靜默 return 完全相同。
          我當時「用 playwright 驗過」，但量的是元素自己的 `hidden` 屬性，
          不是它實際看不看得見（`offsetParent !== null`）。量了代理，不是量真的東西。 -->
     <p id="resumed" hidden style="color:#2f6f4f;font-size:13px"></p>
-    <p id="debounced" hidden style="color:#b8860b;font-size:13px">連點太快，這一下沒有計入（250ms 防抖）。</p>
+    <!-- ⚠️ 絕對定位，**不要**用 block 佔位。一度是普通的 <p>，顯示 900ms 期間會把
+         #stage 與全部十一顆按鈕往下推 —— 而那正好發生在觸發它的那一串連點之中，
+         使用者的下一下會點到剛剛移位的位置。回饋不該改變版面。 -->
+    <p id="debounced" hidden style="color:#b8860b;font-size:13px;position:absolute;margin:0;pointer-events:none">連點太快，這一下沒有計入（250ms 防抖）。</p>
     <div id="stage"></div>
     <div class="grid" id="choices"></div>
     <div class="bar"><i id="progress" style="width:0"></i></div>

@@ -50,6 +50,12 @@ http
       'content-type': TYPES[path.extname(target)] || 'application/octet-stream',
       'content-length': String(st.size),
       'last-modified': st.mtime.toUTCString(),
+      // ⚠️ **`last-modified` 一定要配 `cache-control: no-store`。**
+      // 只給 last-modified 會啟動瀏覽器的啟發式新鮮度（heuristic freshness），
+      // 於是 `#stage` 可能顯示**快取的舊 PNG**，而 urlIdentity() 的 no-store HEAD
+      // 回報的是**新檔**的身分 —— 正好製造這個標頭本來要防的那種混淆，
+      // 而且更難查：身分對得上，圖卻是舊的。
+      'cache-control': 'no-store',
     });
     fs.createReadStream(target).pipe(res);
   })
