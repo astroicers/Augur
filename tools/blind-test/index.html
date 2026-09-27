@@ -46,6 +46,8 @@
     <input type="file" id="file" accept="image/png" />
     <p class="fail" id="loadErr" hidden></p>
     <p id="sizeNote" hidden style="color:#b8860b;font-size:13px"></p>
+    <p id="resumed" hidden style="color:#2f6f4f;font-size:13px"></p>
+    <p id="debounced" hidden style="color:#b8860b;font-size:13px">連點太快，這一下沒有計入（250ms 防抖）。</p>
     <p class="sub" style="margin:10px 0 0">
       也可以直接測 <button type="button" id="useRepo">repo 內的 src/img/sprite/directions.png</button>
       或 <button type="button" id="useFixture">編號假 sheet（驗這個頁面本身）</button>
@@ -81,6 +83,8 @@
   $('totalQ').textContent = String(MIN_QUESTIONS_PER_CELL * 8);
   let questions = [];
   let answers = [];
+  /** 目前這張圖的識別字串（路徑或檔名）。續作時用來擋「換了圖卻想接著答」。 */
+  let currentImageKey = '';
   let url = null;
 
   /**
@@ -90,7 +94,7 @@
    * 那份報告看起來跟「畫師交了一份讀不出方向的素材」一模一樣。
    * 也順便擋下尺寸不對的檔（3×3 的 sheet 必須是正方形）。
    */
-  function start(imageUrl) {
+  function start(imageUrl, imageKey) {
     const probe = new Image();
     probe.onerror = () => {
       $('setup').hidden = false;
@@ -112,12 +116,26 @@
       $('sizeNote').textContent = pre.note;
       $('sizeNote').hidden = pre.note === '';
       url = imageUrl;
+      // 有同一張圖的未完成輪次就接著答，不要從第 1 題重來。
+      const saved = loadRound();
+      const resuming = saved && saved.imageKey === imageKey && saved.questions.length === MIN_QUESTIONS_PER_CELL * 8;
       $('loadErr').hidden = true;
       $('setup').hidden = true;
       $('quiz').hidden = false;
       $('result').hidden = true;
-      questions = buildQuestions(Math.random);
-      answers = [];
+      currentImageKey = imageKey;
+      if (resuming) {
+        questions = saved.questions;
+        answers = saved.answers;
+        $('resumed').textContent = `接續上次未完成的輪次：已答 ${answers.length} / ${questions.length} 題。`;
+        $('resumed').hidden = false;
+      } else {
+        clearRound();
+        questions = buildQuestions(Math.random);
+        answers = [];
+        $('resumed').hidden = true;
+      }
+      lastAnswerAt = -Infinity; // 換一張圖再測一輪時，第一題不得被前一輪的時間戳吞掉
       $('stage').style.backgroundImage = `url(${url})`;
       renderChoices();
       next();
@@ -153,6 +171,37 @@
     box.appendChild(back);
   }
 
+  /**
+   * 輪次的續作。**80 題約四分鐘的持續專注，一次誤觸 reload 就全丟。**
+   * 唯一的補救原本只有 in-memory 的一步 undo。
+   *
+   * 只存 `questions` 與 `answers`（純數字陣列），不存圖 ——
+   * 圖是 objectURL 或路徑，重載後不可能還原，所以續作一定要重選同一張圖。
+   * 存 `imageKey` 是為了偵測「換了圖卻想續作」那種會產出無意義結果的情況。
+   *
+   * ⚠️ localStorage 讀寫一律包 try/catch：無痕視窗、封鎖站台資料時會丟，
+   * 而**盲測本身不該因為存檔失敗而中斷**。
+   */
+  const SAVE_KEY = 'augur-blind-test-v1';
+  function saveRound(imageKey) {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ imageKey, questions, answers, at: Date.now() }));
+    } catch { /* 存不了就算了，不影響作答 */ }
+  }
+  function loadRound() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) { return null; }
+      const d = JSON.parse(raw);
+      if (!Array.isArray(d?.questions) || !Array.isArray(d?.answers)) { return null; }
+      if (d.answers.length >= d.questions.length) { return null; } // 已完成的不算續作
+      return d;
+    } catch { return null; }
+  }
+  function clearRound() {
+    try { localStorage.removeItem(SAVE_KEY); } catch { /* 同上 */ }
+  }
+
   function next() {
     const i = answers.length;
     if (i >= questions.length) {
@@ -170,16 +219,26 @@
    * 兩題被吃掉，而第二題的圖只顯示了幾微秒。對一份 100% 正確的交付來說，
    * 一次手滑就會憑空製造一個錯答。250ms 內的重複點擊一律忽略。
    */
-  let lastAnswerAt = 0;
+  // ⚠️ 初值是 −Infinity 不是 0：`performance.now()` 是從**頁面載入**起算的，
+  // 而 `start()` 可以被呼叫第二次（換一張圖再測一輪）。留著前一輪的值，
+  // 新一輪的第一題就可能落在 250ms 內而**被無聲吞掉**。`start()` 也會重設它。
+  let lastAnswerAt = -Infinity;
   function answer(cell) {
     const now = performance.now();
     if (now - lastAnswerAt < 250) {
+      // ⚠️ 被吞掉時**要出聲**。原本是靜默 return，畫面零變化 ——
+      // 操作者只會覺得「我點了但沒反應」，而 80 題的輪次裡那會被當成頁面壞了。
+      $('debounced').hidden = false;
+      clearTimeout(debounceHintTimer);
+      debounceHintTimer = setTimeout(() => { $('debounced').hidden = true; }, 900);
       return;
     }
     lastAnswerAt = now;
     answers.push(cell);
+    saveRound(currentImageKey);
     next();
   }
+  let debounceHintTimer = 0;
 
   /** 上一題。手滑答錯時的唯一補救 —— 沒有它，一次誤點就污染整輪。 */
   function undo() {
@@ -187,11 +246,13 @@
       return;
     }
     answers.pop();
-    lastAnswerAt = 0;
+    lastAnswerAt = -Infinity;
+    saveRound(currentImageKey);
     next();
   }
 
   function finish() {
+    clearRound();
     $('quiz').hidden = true;
     const r = score(questions, answers);
     const cls = (ok) => (ok ? 'pass' : 'fail');
@@ -227,9 +288,9 @@
     // 而頁面不會告訴你這件事。
     e.target.value = '';
     if (f) {
-      start(URL.createObjectURL(f));
+      start(URL.createObjectURL(f), 'file:' + f.name + ':' + f.size);
     }
   };
-  $('useRepo').onclick = () => start('/sprite/directions.png');
-  $('useFixture').onclick = () => start('/fixture.png');
+  $('useRepo').onclick = () => start('/sprite/directions.png', '/sprite/directions.png');
+  $('useFixture').onclick = () => start('/fixture.png', '/fixture.png');
 </script>

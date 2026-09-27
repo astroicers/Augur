@@ -1746,7 +1746,7 @@ export function checkLuminanceAndStroke(directions, manifest) {
         severity: 'error',
         sheet: 'directions',
         cell: c,
-        message: `描邊中位寬度 ${(w / cellPx).toFixed(4)}·S，宣告 ${stroke.width}·S ±${stroke.tolerance}·S`,
+        message: `描邊寬度 ${(w / cellPx).toFixed(4)}·S，宣告 ${stroke.width}·S ±${stroke.tolerance}·S`,
         measured: w / cellPx,
         limit: stroke.width,
       });

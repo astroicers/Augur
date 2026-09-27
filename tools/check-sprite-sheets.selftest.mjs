@@ -118,6 +118,15 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
   // 本身的錯誤 100% 隱形。實證：把 tie-break 的 `<=` 改成 `<`（違反 PNG spec §6.6）
   // 或把 Average 改成四捨五入，上面那條都照樣全綠，而外部產生的 PNG 會錯十幾個像素。
   // 下面比對的是**照 spec 虛擬碼手算**的值，不是從本檔實作產生的。
+  // ⚠️ **先釘表的長度。** 不釘的話「把表清空」這個突變會讓兩條斷言變成
+  // `[].filter(...)` = 空陣列 = 通過 —— 而那兩張表是 `paeth()` / `average()`
+  // 的**唯一**覆蓋（round trip 對編解碼共用的錯誤 100% 隱形）。
+  // 實測：清空後 selftest 仍然全綠，只是標題印出「0 組」而沒有人看。
+  ok(`PAETH_SPEC_VECTORS 至少 11 組（實際 ${PAETH_SPEC_VECTORS.length}）`,
+    PAETH_SPEC_VECTORS.length >= 11, '表被清空或刪減，兩條斷言會退化成零覆蓋');
+  ok(`AVERAGE_SPEC_VECTORS 至少 9 組（實際 ${AVERAGE_SPEC_VECTORS.length}）`,
+    AVERAGE_SPEC_VECTORS.length >= 9, '同上');
+
   const bad = PAETH_SPEC_VECTORS.filter(([a, b, c, want]) => paeth(a, b, c) !== want);
   ok(
     `Paeth 對 PNG spec §6.6 的 ${PAETH_SPEC_VECTORS.length} 組手算向量全部相符`,
@@ -1529,6 +1538,24 @@ function materialise(dir, sheets, patch = {}) {
     }
     return { total, hit };
   };
+  // ⚠️ 腮紅矩形的上緣一度與眼窗 E 重疊 0.005·S（每側 123px、共 246px）——
+  // 而 SP-7.4 的視窗產權把 E 從記號區 K 排除，於是照規格畫腮紅會硬失敗。
+  // 這條釘住「建議的腮紅範圍不得與 E 相交」。
+  {
+    const Erect = C.windowRect(manifest.windows.E, cp);
+    let overlap = 0;
+    for (let y = Math.round(0.450 * cp); y < Math.round(0.500 * cp); y++) {
+      for (const [bx0, bx1] of [[0.290, 0.370], [0.630, 0.710]]) {
+        for (let x = Math.round(bx0 * cp); x < Math.round(bx1 * cp); x++) {
+          if (x >= Erect.x0 && x < Erect.x1 && y >= Erect.y0 && y < Erect.y1) {
+            overlap++;
+          }
+        }
+      }
+    }
+    ok('SP-2.12 建議的腮紅範圍與眼窗 E 不相交（重疊 ' + overlap + ' px）', overlap === 0);
+  }
+
   const sw = SP_2_12_MARKS.sweat;
   const a = inside((x, y) => {
     const dx = (x - sw.cx * cp) / sw.rx;
