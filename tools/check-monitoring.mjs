@@ -100,15 +100,42 @@ const RULE_FILES = (() => {
     console.error(`MONITORING-CHECK: TOOL-ERROR  讀不到 ${ALERTING_DIR}：${err.message}`);
     process.exit(2);
   }
-  const found = names.filter((n) => /^rules.*\.ya?ml$/i.test(n)).sort();
+  // ⚠️ **不要用檔名前綴篩。** 先前是 `/^rules.*\.ya?ml$/i`，而 Grafana 載入的是
+  // provisioning 目錄下的**每一個** `*.y(a)ml`，跟檔名叫什麼無關。於是
+  // `alerts-windows.yml`、`poc-rules.yml`、`extra-alerts.yml` 這些一樣會生效的檔案
+  // 對本檢查完全隱形 —— 實測把一條缺 annotation 的規則放進 `extra-alerts.yml`：
+  // exit 0；同一個檔改名成 `rules-extra.yml`：exit 1。
+  // 改成看**內容**：有 `groups:` 頂層鍵的才是規則檔。
+  // contactpoints.yml / policies.yml 沒有它，自然被排除（實查：兩者皆 0 個 `groups:`）。
+  const found = names
+    .filter((n) => /\.ya?ml$/i.test(n))
+    .filter((n) => {
+      try {
+        return /^groups:/m.test(fs.readFileSync(M(`${ALERTING_DIR}/${n}`), 'utf8'));
+      } catch {
+        return false;
+      }
+    })
+    .sort();
   if (!found.length) {
-    console.error(`MONITORING-CHECK: TOOL-ERROR  ${ALERTING_DIR} 裡找不到任何 rules*.yml`);
+    console.error(`MONITORING-CHECK: TOOL-ERROR  ${ALERTING_DIR} 裡找不到任何含 groups: 的規則檔`);
     process.exit(2);
   }
   return found.map((n) => `${ALERTING_DIR}/${n}`);
 })();
+
+/**
+ * 規則數的**下限**。理由與 jest 的 MIN_TESTS、selftest 的 MIN_SELFTEST 完全相同：
+ * 這個檢查的每一條都是「對著切出來的 block 比對」，而 block 切不出來時
+ * 迴圈一次都不跑、`problems` 保持空的、摘要照樣印 PASS ——
+ * **刪規則或改寫法會讓這道閘門變得更綠，不是更紅。**
+ * 實測：把 rules-poc.yml 換成合法的 flow-style YAML（Grafana 照樣載入），
+ * 切塊結果 0 條，而閘門印 `PASS（6 項）` 並在證據行寫「0 條規則都帶了 …」。
+ */
+const MIN_RULES = 10;
 const boundPanels = new Set();
 let ruleCount = 0;
+let titleTotal = 0;
 for (const f of RULE_FILES) {
   const src = read(M(f)).toString('utf8');
   for (const [metric, why] of Object.entries(REMOVED_METRICS)) {
@@ -152,10 +179,20 @@ for (const f of RULE_FILES) {
   // PASS，而且印出來的「N 條規則」這個數字本身就是錯的（少算一條）。
   // Grafana 的 provisioning 不要求 uid，所以這不是假想的寫法。
   const blocks = src.split(/^\s*-\s+(?=uid:|title:)/m).slice(1);
+  // 切塊是以 `uid:` / `title:` 為第一個鍵為前提，而 YAML 的 mapping 是無序的，
+  // Grafana 也不要求哪個鍵在前。第一個鍵是別的（例如 `condition:`）的規則會被
+  // 整個併進上一條、繼承它的 annotations 而通過 —— 實測 ruleCount 停在 10，
+  // 新加的那條一次都沒被數到。這裡不重寫成 YAML parser（SP-7.0 的零依賴精神），
+  // 改用一個**互相對帳**的量：檔案裡有幾個 title，就該切出幾個 block。
+  titleTotal += (src.match(/(^|[\s{,])title:/g) || []).length;
   for (const b of blocks) {
     ruleCount++;
     const title = (/title:\s*(\S+)/.exec(b) || [])[1] || '(無 title)';
-    if (!/__dashboardUid__:/.test(b) || !/__panelId__:/.test(b)) {
+    // ⚠️ **先把 `#` 註解行剝掉再比對。** 30 行前的 removed-metric 掃描已經這樣做了，
+    // 這裡卻沒有 —— 於是把 annotations 整段註解掉（除錯時最常見的動作）
+    // 仍然滿足「有 __dashboardUid__」。實測 exit 0。
+    const bCode = b.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    if (!/__dashboardUid__:/.test(bCode) || !/__panelId__:/.test(bCode)) {
       problems.push(`${f}：規則 ${title} 缺少 __dashboardUid__ 或 __panelId__ —— alertState 到不了任何 panel，而且沒有任何錯誤訊息`);
     }
     // ⚠️ **單引號也是 YAML 字串。** 先前只認雙引號，而本 repo 的 YAML 到處用單引號
@@ -163,16 +200,32 @@ for (const f of RULE_FILES) {
     // 閘門會報「__panelId__ 不是帶引號的字串」—— 一句**對著眼前的檔案顯然不成立**的話。
     // 訊息看得出來是假的，是閘門被關掉的最短路徑。
     // 只有**裸數字**才是 YAML 的 int（python3 yaml.safe_load 實查：'1' 與 "1" 都是 str，1 是 int）。
-    const pid = (/__panelId__:\s*['"]?(\d+)['"]?/.exec(b) || [])[1];
+    const pid = (/__panelId__:\s*['"]?(\d+)['"]?/.exec(bCode) || [])[1];
     if (pid) {
       boundPanels.add(Number(pid));
     }
-    if (b.includes('__panelId__:') && !/__panelId__:\s*['"]\d+['"]/.test(b)) {
+    if (bCode.includes('__panelId__:') && !/__panelId__:\s*['"]\d+['"]/.test(bCode)) {
       problems.push(`${f}：規則 ${title} 的 __panelId__ 是裸數字而不是字串 —— Grafana 的註解值必須是字串，請加引號`);
     }
   }
 }
-checked.push(`${ruleCount} 條規則都帶了 __dashboardUid__ / __panelId__`);
+// ⚠️ **證據行不可以無條件 push。** `checked` 是這個檢查留下的唯一痕跡，
+// 而在切塊失敗（0 條）時它會印「0 條規則都帶了 …」當成正面證據 ——
+// 一句空泛真命題。BOM 檢查在 :53-63 已經為了同一個理由拆成三路。
+if (ruleCount < MIN_RULES) {
+  problems.push(
+    `規則只切出 ${ruleCount} 條（下限 ${MIN_RULES}）—— 不是真的刪了規則，` +
+      '就是切塊的前提不成立（flow-style YAML、或第一個鍵不是 uid/title）。' +
+      '兩種都代表逐條檢查沒有真的跑過，不能當成通過'
+  );
+} else if (ruleCount !== titleTotal) {
+  problems.push(
+    `檔案裡有 ${titleTotal} 個 title 但只切出 ${ruleCount} 條規則 —— ` +
+      '差額那幾條被併進上一條、繼承了它的 annotations，等於沒被檢查'
+  );
+} else {
+  checked.push(`${ruleCount} 條規則都帶了 __dashboardUid__ / __panelId__（title 數對得上）`);
+}
 
 // --- 4) 規則綁的 panel id 必須真的存在於 provisioned dashboard ---
 {

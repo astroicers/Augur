@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAP = path.join(ROOT, 'dist', 'module.js.map');
+const BUNDLE = path.join(ROOT, 'dist', 'module.js');
 
 /**
  * 允許出現在 bundle 裡的 node_modules 模組。
@@ -44,8 +45,20 @@ try {
 } catch (err) {
   // 沒 build 過：印 sentinel 並回 0。這不是放水 —— 沒有 dist 就沒有出貨檔可稽核，
   // 而閘門不強制每次 commit 都跑 webpack（那要多十幾秒）。
+  //
+  // ⚠️ **但「沒 map」不等於「沒 build」。** 這個判斷原本只看 map 在不在，
+  // 於是 `dist/module.js` 存在而 map 不在（devtool 改設定、打包前把 map 剝掉）時，
+  // 閘門會對著一個**真的會出貨的 bundle** 印「未建置」並回 0 ——
+  // 出貨檔沒被稽核，而摘要行說的是一件假的事。兩種情況要分開。
   if (err.code === 'ENOENT') {
-    console.log('BUNDLE-DEPS: NOT-BUILT  dist/module.js.map 不存在（要稽核先跑 npm run build）');
+    if (fs.existsSync(BUNDLE)) {
+      console.error(
+        'BUNDLE-DEPS: TOOL-ERROR  dist/module.js 存在但 dist/module.js.map 不存在 —— ' +
+          '出貨 bundle 稽核不了（檢查 webpack 的 devtool 設定，或重跑 npm run build）'
+      );
+      process.exit(2);
+    }
+    console.log('BUNDLE-DEPS: NOT-BUILT  dist/ 沒有 module.js 也沒有 sourcemap（要稽核先跑 npm run build）');
     process.exit(0);
   }
   console.error(`BUNDLE-DEPS: TOOL-ERROR  讀不到 sourcemap：${err.message}`);

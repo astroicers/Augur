@@ -191,6 +191,24 @@ if [ -z "$SELF_PASS" ] || [ "$SELF_FAIL" != 0 ] || [ "$SELF_PASS" -lt "$MIN_SELF
   case "$FAILED" in *sprite-selftest*) ;; *) FAILED="$FAILED sprite-selftest" ;; esac
 fi
 
+echo '--- 描邊估計器電池 ---'
+# 20 列、`want` 欄寫「應通過還是應紅」的共用計分板。它先前**只印不判**：
+# 沒有退出碼、不在本閘門、不在 CI、不在 selftest，全 repo 只有四處散文提到它。
+# 實測把 measureStrokeWidths 換成回傳定值的樁，計分板由 19/20 崩到 5/20 而仍然回 0 ——
+# 也就是 ROADMAP 記的「換代是明確的改善」那個結論，沒有任何東西在維持它。
+# 判定是「判錯的列與 KNOWN_FAIL 逐列相符」，不是「判對數 >= N」：
+# 只釘數量分辨不出「R 修好了但 S 壞了」。
+BATTERY_OUT=$(node tools/stroke-battery.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED stroke-battery"; }
+printf '%s\n' "$BATTERY_OUT" | tail -3
+case "$BATTERY_OUT" in
+  *'STROKE-BATTERY: PASS'*) BATTERY_SUM='描邊電池: 與 KNOWN_FAIL 相符' ;;
+  *'STROKE-BATTERY: FAIL'*) BATTERY_SUM='描邊電池: 判錯的列變了' ;;
+  # 同 bundle / sprite：認不得的字串代表工具與閘門不同步，必須紅。
+  *)                        GATE_OK=false
+                            case "$FAILED" in *stroke-battery*) ;; *) FAILED="$FAILED stroke-battery" ;; esac
+                            BATTERY_SUM='描邊電池: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
+esac
+
 echo '--- jest ---'
 # 先刪：jest 沒起來時不會寫這個檔，殘留的舊檔會被誤當成本輪結果。
 rm -f .jest-result.json
@@ -236,10 +254,10 @@ else
   PASSED=false
   [ "$GATE_OK" = true ] || SUM="未過：${FAILED# }；$SUM"
 fi
-SUM="$SUM；$BUNDLE_SUM；$SPRITE_SUM；$GRAFANA_SUM"
+SUM="$SUM；$BUNDLE_SUM；$SPRITE_SUM；$BATTERY_SUM；$GRAFANA_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-bundle-deps + check-sprite-sheets + sprite-selftest + grafana-version + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-bundle-deps + check-sprite-sheets + sprite-selftest + stroke-battery + grafana-version + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1

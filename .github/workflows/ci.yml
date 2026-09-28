@@ -54,12 +54,23 @@ jobs:
       - name: sprite 工具自測
         run: node tools/check-sprite-sheets.selftest.mjs
 
+      # 描邊寬度估計器的 20 列計分板。它先前沒有退出碼、也不在任何閘門裡 ——
+      # 實測把估計器換成回傳定值的樁，計分板由 19/20 崩到 5/20 而仍然回 0。
+      - name: 描邊估計器電池
+        run: node tools/stroke-battery.mjs
+
       # ⚠️ 本機閘門有這道而 CI 先前沒有 —— 於是「PR 把 compose 的 Grafana 版本升上去
       # 但沒動 VERIFIED-GRAFANA.txt」會一路綠燈合併，而 G-ADR004-4（漸進降級，
       # 本專案唯一 unsupported 的部分）根本沒重跑。
       - name: Grafana 版本觸發器
         run: |
-          LINES=$(grep -nE '^[[:space:]]*image:[[:space:]]*"?grafana/grafana:' monitoring/docker-compose.yml || true)
+          # ⚠️ 這條樣式必須與 tools/asp-test.sh 的那條**逐字相同**。
+          # 先前 CI 是 `"?grafana/grafana:` 而本機已經放寬成認單引號與 registry 前綴，
+          # 於是 `image: 'grafana/grafana:13.2.2'`（本 repo 的 YAML house style）或
+          # `image: docker.io/grafana/grafana:13.2.2` 會**本機綠、CI 紅**，
+          # 而 CI 印的是「有 0 個未註解的 grafana image 宣告」—— 一句對著檔案看就知道
+          # 是假的話。護欄講假話是它被整條關掉的最短路徑。
+          LINES=$(grep -nE "^[[:space:]]*image:[[:space:]]*[\"']?([a-z0-9.:-]+/)*grafana/grafana:" monitoring/docker-compose.yml || true)
           COUNT=$(printf '%s' "$LINES" | grep -c . || true)
           TAG=$(printf '%s' "$LINES" | head -1 | sed -E 's/.*grafana\/grafana:([0-9][0-9.]*).*/\1/')
           VERIFIED=$(head -1 monitoring/VERIFIED-GRAFANA.txt | tr -d '[:space:]')
@@ -80,3 +91,11 @@ jobs:
       # 兩行 png import。CI 不跑 build 等於把最會出事的一關留在外面。
       - name: build
         run: npm run build
+
+      # ⚠️ 本機閘門有這道而 CI 先前沒有 —— 本機九道、CI 八道，而兩份文件
+      # （README:17、sprite-sheet-spec.md:931-933）都寫「commit 閘共 9 道」，
+      # 缺的正是這一道。後果：把第三方套件打包進出貨 bundle 的 PR 在 CI 一路綠燈。
+      # **必須排在 build 之後** —— 它稽核的是 dist/module.js.map，
+      # CI 的工作樹沒有 dist，排在前面只會拿到 NOT-BUILT 並回 0（等於沒跑）。
+      - name: bundle 相依
+        run: node tools/check-bundle-deps.mjs
