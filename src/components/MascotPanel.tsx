@@ -133,6 +133,11 @@ interface FeedLine {
   plan: BroadcastPlan;
 }
 
+/** `repeatFiringMin = 0` → 永不重播 → 防洪窗是 Infinity。source 與 dedup 共用這個換算。 */
+function windowSecFor(repeatFiringMin: number): number {
+  return repeatFiringMin > 0 ? repeatFiringMin * 60 : Number.POSITIVE_INFINITY;
+}
+
 export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height }) => {
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
@@ -364,11 +369,29 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   }, []);
 
   // ---- 導播管線 ----
+  //
+  // ⚠️ **source 與 dedup 的 deps 必須一致。** 它們共用一個不變量:
+  // `episodes`(誰正在燒)與 `lastFiring`(誰播過)講的是同一件事的兩半。
+  // 先前 source 是 `[id, fallbackSeverity]` 而 dedup 是 `[repeatFiringMin]`,
+  // 於是改「取不到細節時的嚴重度」會**只**重建 source:
+  // episodes 空了、lastFiring 還記得 → 告警恢復時 resolved 不播、key 不刪
+  // → 預設窗是 Infinity → 那個 fingerprint **從此再也不出聲**,而且不留任何錯誤。
+  // 兩個選項現在都不重建任何東西:fallbackSeverity 走 ref(source 在 evaluate 當下才讀),
+  // repeatFiringMin 走 dedup.setWindow(換窗但不清狀態)。
+  // ref 的同步放在 effect 裡而不是 render 中 —— render 期間寫 ref 會被
+  // `react-hooks/refs` 擋下，而那條規則是對的：render 可能被丟棄或重跑。
+  // **宣告順序有意義**：這個 effect 要排在下面的導播管線之前，
+  // 讓 evaluate 讀到的是本次 commit 的值。
+  const fallbackSeverityRef = useRef(fallbackSeverity);
+  useEffect(() => {
+    fallbackSeverityRef.current = fallbackSeverity;
+  }, [fallbackSeverity]);
+
   useEffect(() => {
     sourceRef.current = createPanelAlertSource({
       panelId: id,
       fetchRules: fetchPanelRules,
-      fallbackSeverity,
+      fallbackSeverity: () => fallbackSeverityRef.current,
       // 泛用 episode 被具名規則取代時，dedup 也要忘掉它，否則降級路徑永久靜音。
       // 讀 ref 而非閉包捕捉：兩個 effect 的建立先後無所謂。
       onSupersede: (fp) => dedupRef.current?.forget(fp),
@@ -376,17 +399,24 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => {
       sourceRef.current = null;
     };
-  }, [id, fallbackSeverity]);
+  }, [id]);
 
   useEffect(() => {
     // repeatFiringMin = 0 → 永不重播。createDedup 的窗就是 Infinity。
-    const windowSec = repeatFiringMin > 0 ? repeatFiringMin * 60 : Number.POSITIVE_INFINITY;
-    const d = createDedup(windowSec, { startCleanup: false });
+    // 只在掛載（與 id 變動）時建立一次。repeatFiringMin 之後由下面的 setWindow
+    // effect 同步 —— 放進 deps 會讓改選項重建 dedup，而那正是要避免的事。
+    const d = createDedup(windowSecFor(repeatFiringMin), { startCleanup: false });
     dedupRef.current = d;
     return () => {
       d.close();
       dedupRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // 換窗而不重建 —— 重建會清掉 lastFiring,正在燒的告警於是被重播一次。
+  useEffect(() => {
+    dedupRef.current?.setWindow(windowSecFor(repeatFiringMin));
   }, [repeatFiringMin]);
 
   useEffect(() => {

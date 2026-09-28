@@ -359,3 +359,48 @@ test('StrictMode 下 feed 順序必須與正式模式相同（updater 不得就�
   const feedText = view.container.textContent ?? '';
   expect(feedText.indexOf('第二則')).toBeLessThan(feedText.indexOf('第一則'));
 });
+
+/**
+ * 改選項不得讓 source 與 dedup 的生命週期分岔 —— 分岔的後果是**永久靜音**。
+ *
+ * 缺陷長這樣（2026-09-28 全專案複審抓到，實際存在於 `630cd81`）：
+ * source 的 deps 是 `[id, fallbackSeverity]`、dedup 的是 `[repeatFiringMin]`。
+ * 改 `fallbackSeverity` 於是**只**重建 source：`episodes` 清空，而 `lastFiring` 還記得。
+ * 接著告警恢復 → `resolvedAll()` 對著空的 episodes 迭代 → 不播 resolved、key 不刪；
+ * 再次 firing → 預設窗是 `Infinity` → `t - last < Infinity` 恆真 → **從此再也不出聲**，
+ * 而且不留任何錯誤訊息、UI 上沒有任何跡象。
+ *
+ * 這支測試把那四步逐一走過。對著舊實作跑，第 3 步與第 4 步都會停在 0 則。
+ */
+test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（source/dedup 生命週期一致）', async () => {
+  mockedFetch.mockResolvedValue([
+    { alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 },
+  ]);
+
+  // 1) 先燒起來，播一則 firing。
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  const afterFiring = spoken.length;
+  expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
+
+  // 2) **在同一次 rerender 裡**改選項並恢復。
+  //    這一步的寫法很要緊：如果先用 ALERTING 重繪一次再恢復，
+  //    那次 evaluate 會把 episodes 重新填回去，缺陷就被治好了、測試也就白寫。
+  //    （我第一版正是這樣寫的，對著舊實作跑**是綠的**。）
+  //    真實情境是選項改動與告警恢復落在同一個 refresh 週期內。
+  view.rerender(
+    <MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />
+  );
+
+  // 3) 必須播得出「已恢復」。舊實作在這裡對著空的 episodes 迭代 → 靜默。
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(afterFiring));
+  expect(spoken[spoken.length - 1]!.emotion).toBe('resolved');
+  const afterResolved = spoken.length;
+
+  // 4) 再燒一次 —— 必須再播一則。舊實作在這裡永久靜音。
+  view.rerender(
+    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(afterResolved));
+  expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
+});

@@ -31,6 +31,15 @@ export interface Dedup {
    * 且不留任何錯誤訊息。
    */
   forget(fingerprint: string): void
+  /**
+   * 換防洪窗,**不動已記住的狀態**。
+   *
+   * 給「使用者在編輯面板時改了 repeatFiringMin」用。先前的作法是重建整個 dedup,
+   * 而那會把 `lastFiring` 一起清掉 —— 對面正在燒的告警於是被重播一次;
+   * 更糟的是它與 source 的重建時機不一致(兩個 effect 的 deps 不同),
+   * 會出現「episodes 清了而 lastFiring 沒清」的組合,那個組合是**永久靜音**。
+   */
+  setWindow(windowSec: number): void
   /** 停掉清理 timer(關閉流程呼叫)。 */
   close(): void
 }
@@ -42,11 +51,14 @@ export interface DedupOptions {
   startCleanup?: boolean
 }
 
+/** 清理 timer 的週期上限。也是 `windowMs` 為 Infinity 時實際採用的週期。 */
+const MAX_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
 export function createDedup(windowSec: number, opts: DedupOptions = {}): Dedup {
   const now = opts.now ?? Date.now
-  const windowMs = Math.max(0, windowSec) * 1000
+  let windowMs = Math.max(0, windowSec) * 1000
   // 保留期:至少 6 小時,涵蓋一般事件存活時間與 Grafana 的重送間隔,確保 resolved 追得到。
-  const retentionMs = Math.max(windowMs, 6 * 60 * 60 * 1000)
+  let retentionMs = Math.max(windowMs, MAX_PRUNE_INTERVAL_MS)
 
   /** fingerprint → 上次「播過 firing」的時間戳(ms)。 */
   const lastFiring = new Map<string, number>()
@@ -80,18 +92,53 @@ export function createDedup(windowSec: number, opts: DedupOptions = {}): Dedup {
     }
   }
 
-  let timer: ReturnType<typeof setInterval> | undefined
-  if (opts.startCleanup !== false) {
-    timer = setInterval(prune, Math.max(windowMs, 60_000))
+  /**
+   * 清理週期。**必須是有限值。**
+   *
+   * 原本是 `Math.max(windowMs, 60_000)`,而 panel 在預設選項下算出來的 windowSec
+   * 正是 `Number.POSITIVE_INFINITY`(repeatFiringMin: 0 → 永不重播),
+   * 於是這裡變成 `setInterval(prune, Infinity)`。Infinity 不是「永遠不跑」——
+   * 它被 ToInt32 夾成 0,瀏覽器再夾到 4ms、Node 夾到 1ms,結果是一個 CPU 熱迴圈。
+   * 實測 `setInterval(fn, Infinity)`:**120ms 內觸發 114 次**,
+   * 而 Node 自己會印 `TimeoutOverflowWarning: Infinity does not fit into a 32-bit signed integer`。
+   * 目前所有呼叫端都傳 `startCleanup: false`,所以這條路沒有在生產裡踩到過 ——
+   * 但那也表示它從來沒有被任何測試走過,而預設值是「開」。
+   */
+  function pruneIntervalMs(): number {
+    return Math.min(Math.max(windowMs, 60_000), MAX_PRUNE_INTERVAL_MS)
   }
+
+  let timer: ReturnType<typeof setInterval> | undefined
+  function startTimer() {
+    if (opts.startCleanup === false) {
+      return
+    }
+    timer = setInterval(prune, pruneIntervalMs())
+  }
+  function stopTimer() {
+    if (timer !== undefined) {
+      clearInterval(timer)
+      timer = undefined
+    }
+  }
+  startTimer()
 
   return {
     shouldSpeak,
     forget(fingerprint: string) {
       lastFiring.delete(fingerprint)
     },
+    setWindow(sec: number) {
+      windowMs = Math.max(0, sec) * 1000
+      retentionMs = Math.max(windowMs, MAX_PRUNE_INTERVAL_MS)
+      // 週期是由 windowMs 算出來的,換窗就要重排,否則新的窗對清理不生效。
+      if (timer !== undefined) {
+        stopTimer()
+        startTimer()
+      }
+    },
     close() {
-      if (timer) {clearInterval(timer)}
+      stopTimer()
     },
   }
 }

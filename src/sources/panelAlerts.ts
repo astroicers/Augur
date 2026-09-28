@@ -56,8 +56,17 @@ export interface PanelAlertSourceOptions {
   panelId: number;
   /** 取規則細節。注入以利測試。 */
   fetchRules: RulesFetcher;
-  /** rules 端點取不到細節時用的嚴重度。 */
-  fallbackSeverity: string;
+  /**
+   * rules 端點取不到細節時用的嚴重度。
+   *
+   * **可以給函式** —— 它在 `evaluate` 當下才被讀,不是建構當下。
+   * 呼叫端因此不必為了換這個值而重建整個 source,而重建 source 會把 `episodes`
+   * 清空;若同一時間 dedup 沒有一起重建(兩個 effect 的 deps 不同),
+   * 就會留下「episodes 空了而 lastFiring 還記得」的組合 —— 那是**永久靜音**:
+   * 告警恢復時對著空的 episodes 比對,resolved 不播、key 不刪,
+   * 而預設窗是 Infinity,於是這個 fingerprint 再也不會出聲。
+   */
+  fallbackSeverity: string | (() => string);
   /** 規則細節的快取秒數；同一個 episode 期間不必反覆打端點。 */
   ruleCacheSec?: number;
   /**
@@ -229,7 +238,7 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
           status: 'firing',
           source: 'grafana-alertstate',
           name: '告警',
-          severity: opts.fallbackSeverity,
+          severity: typeof opts.fallbackSeverity === 'function' ? opts.fallbackSeverity() : opts.fallbackSeverity,
           startsAt: nowIso,
           fingerprint: fp,
         };

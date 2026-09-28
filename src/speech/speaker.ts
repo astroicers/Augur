@@ -54,21 +54,42 @@ export interface Speaker {
 /** 取得聲線清單。實測首呼必為空、單次 `voiceschanged` 於 +17ms 後給滿。 */
 export function loadVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
   return new Promise((resolve) => {
-    const first = synth.getVoices();
-    if (first.length) {
-      resolve(first);
-      return;
-    }
+    // ⚠️ **這個 executor 裡不能有任何未捕捉的 throw。**
+    // 它的回傳值被 `createSpeaker` 當成 `ready`，而 `enqueue` 是
+    // `void ready.then(pump)` —— ready 一旦 reject，`pump` **永遠不會被呼叫**，
+    // 於是佇列只進不出：`pending()` 一路往上爬、一句話都不會念、
+    // 沒有 onError、UI 上沒有任何跡象。受限環境裡 `getVoices()` 或
+    // `addEventListener` 丟例外是真實存在的。
     let done = false;
     const finish = () => {
       if (done) {
         return;
       }
       done = true;
-      synth.removeEventListener('voiceschanged', finish);
-      resolve(synth.getVoices());
+      try {
+        synth.removeEventListener('voiceschanged', finish);
+      } catch {
+        /* 沒有 EventTarget 介面的引擎 */
+      }
+      try {
+        resolve(synth.getVoices());
+      } catch {
+        resolve([]);
+      }
     };
-    synth.addEventListener('voiceschanged', finish);
+    try {
+      const first = synth.getVoices();
+      if (first.length) {
+        done = true;
+        resolve(first);
+        return;
+      }
+      synth.addEventListener('voiceschanged', finish);
+    } catch {
+      // 取不到聲線不是致命的 —— 用引擎的預設聲線照樣念得出來。
+      resolve([]);
+      return;
+    }
     // 實測 17ms 就到，2 秒是給慢機器的餘裕；逾時也回空陣列而非卡住。
     setTimeout(finish, 2000);
   });
@@ -98,9 +119,42 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
   let disposed = false;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
 
-  const ready = loadVoices(synth).then((vs) => {
-    voice = pickVoice(vs, opts.preferredVoice);
-  });
+  const ready = loadVoices(synth)
+    .then((vs) => {
+      voice = pickVoice(vs, opts.preferredVoice);
+    })
+    // ready 若 reject，enqueue 的 `void ready.then(pump)` 就再也不會 pump。
+    // 沒有聲線是可以降級的（用引擎預設），靜音不是。
+    .catch(() => {
+      voice = null;
+    });
+
+  /**
+   * 聲線清單**不是一次到位**。Chrome 在 Windows 上會多次觸發 `voiceschanged`，
+   * 而第一批可能還不含 zh-TW（或使用者指名的那一支）。原本只在 `ready` 挑一次，
+   * 挑到 null 就一輩子是 null —— 整個 panel 生命週期都用引擎預設聲線念中文，
+   * 而且 `preferredVoice` 找不到時什麼都不會說。
+   * 播報進行中不換，避免換到一半的怪聲。
+   */
+  const onVoicesChanged = () => {
+    try {
+      const vs = synth.getVoices();
+      if (!vs.length || speaking) {
+        return;
+      }
+      const next = pickVoice(vs, opts.preferredVoice);
+      if (next && next !== voice) {
+        voice = next;
+      }
+    } catch {
+      /* 同上：取不到就維持現狀 */
+    }
+  };
+  try {
+    synth.addEventListener('voiceschanged', onVoicesChanged);
+  } catch {
+    /* 沒有 EventTarget 介面的引擎 */
+  }
 
   function clearWatchdog() {
     if (watchdog !== undefined) {
@@ -117,14 +171,6 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     if (!plan) {
       return;
     }
-    speaking = true;
-
-    const u = new SpeechSynthesisUtterance(plan.text);
-    if (voice) {
-      u.voice = voice;
-    }
-    u.lang = opts.lang ?? 'zh-TW';
-
     let settled = false;
     const finish = (err?: string) => {
       if (settled) {
@@ -141,32 +187,44 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       pump();
     };
 
-    u.onstart = () => opts.events?.onStart?.(plan);
-    u.onend = () => finish();
-    u.onerror = (ev) => finish(String((ev as SpeechSynthesisErrorEvent).error ?? 'unknown'));
-    u.onboundary = (ev) => {
-      opts.events?.onBoundary?.({
-        charIndex: ev.charIndex,
-        // 首次 boundary 恆為 name:'sentence' 且 charLength 為 0 —— 那是句首標記不是詞，
-        // 呼叫端可以用 charLength 0 判斷要不要當嘴型觸發。
-        charLength: typeof ev.charLength === 'number' ? ev.charLength : 0,
-      });
-    };
-
-    // watchdog：估時長的兩倍加 5 秒。實測未重現「約 15 秒截斷」，但
-    // `onend` 不觸發而永遠卡住是真實存在的失敗模式，沒有它佇列會整條停住。
-    // ⚠️ 必須先 cancel 再 finish —— 反過來只是把「卡住且看得出來」變成「卡住且看不出來」。
-    const estMs = (plan.text.length / CHARS_PER_SEC) * 1000;
-    watchdog = setTimeout(() => {
-      try {
-        synth.cancel();
-      } catch {
-        /* cancel 失敗不該再讓佇列停住 */
-      }
-      finish('watchdog-timeout');
-    }, estMs * 2 + 5000);
-
+    // ⚠️ **`speaking = true` 與 utterance 的建構必須在同一個 try 裡。**
+    // 原本先設旗標再建構，而只有 `synth.speak(u)` 被 try 包住 ——
+    // 建構或指派 handler 的任何一步丟例外，都會留下 `speaking === true`
+    // 而引擎裡沒有任何 utterance：之後每一次 `pump()` 都在第一行就 return，
+    // 佇列**永遠停住**，沒有 watchdog（它還沒排上）、沒有錯誤、沒有跡象。
     try {
+      const u = new SpeechSynthesisUtterance(plan.text);
+      if (voice) {
+        u.voice = voice;
+      }
+      u.lang = opts.lang ?? 'zh-TW';
+
+      u.onstart = () => opts.events?.onStart?.(plan);
+      u.onend = () => finish();
+      u.onerror = (ev) => finish(String((ev as SpeechSynthesisErrorEvent).error ?? 'unknown'));
+      u.onboundary = (ev) => {
+        opts.events?.onBoundary?.({
+          charIndex: ev.charIndex,
+          // 首次 boundary 恆為 name:'sentence' 且 charLength 為 0 —— 那是句首標記不是詞，
+          // 呼叫端可以用 charLength 0 判斷要不要當嘴型觸發。
+          charLength: typeof ev.charLength === 'number' ? ev.charLength : 0,
+        });
+      };
+
+      // watchdog：估時長的兩倍加 5 秒。實測未重現「約 15 秒截斷」，但
+      // `onend` 不觸發而永遠卡住是真實存在的失敗模式，沒有它佇列會整條停住。
+      // ⚠️ 必須先 cancel 再 finish —— 反過來只是把「卡住且看得出來」變成「卡住且看不出來」。
+      const estMs = (plan.text.length / CHARS_PER_SEC) * 1000;
+      watchdog = setTimeout(() => {
+        try {
+          synth.cancel();
+        } catch {
+          /* cancel 失敗不該再讓佇列停住 */
+        }
+        finish('watchdog-timeout');
+      }, estMs * 2 + 5000);
+
+      speaking = true;
       synth.speak(u);
     } catch (e) {
       finish('throw:' + String(e));
@@ -201,6 +259,11 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     },
     dispose() {
       disposed = true;
+      try {
+        synth.removeEventListener('voiceschanged', onVoicesChanged);
+      } catch {
+        /* 同上 */
+      }
       this.stop();
     },
   };

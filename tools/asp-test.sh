@@ -215,9 +215,14 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（core 四支 18 + sources/panelAlerts 15 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 + components/MascotPanel 8）。
+# MIN_TESTS = 所有測試檔之和（2026-09-28 由 jest --json 實數，不是手算）：
+#   core/dedup 11 + core/emotion 3 + core/severity 4 + core/format-plan 4
+# + sources/panelAlerts 17 + speech/speaker 10 + components/MascotPanel 11
+# + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 6 = 78
+# ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
+#    手算的清單會漂，改成從 jest 的輸出抄。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=63
+MIN_TESTS=78
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
