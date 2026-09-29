@@ -38,14 +38,20 @@
 **已做**：一次普通的 `git rm --cached` commit 把 11 個檔移出索引，並在 `.gitignore`
 釘住五條路徑防止再度加入。原檔留在本機磁碟（已 gitignore），另有一份離線備份。
 
-**沒做**：歷史沒有改寫。這 11 個 blob 在 `14a481d` 起算的 24 個 commit 的 tree 裡仍然存在，
-clone 下來的人用 `git log --all -- assets/` 挖得到，而 `feat/grafana-mascot-panel`
-已經推上 GitHub。所以現況精確的說法是「**不再提供**」而不是「**拿掉**」。
+**沒做**：歷史沒有改寫。這 11 個 blob 存在於 **24 個 commit** 的 tree 裡
+（2026-09-28 逐 tree 實數），而那批 commit 現已隨 PR #1 的合併**可從 `main` 抵達**，
+五個推上 GitHub 的 ref 全部帶著它們。所以現況精確的說法是「**不再提供**」而不是「**拿掉**」。
+⚠️ 挖它們**不能**用 `git log main -- assets/` —— 合併的路徑簡化會讓那句回 **0 筆**，
+看起來乾淨；要逐 commit `git ls-tree` 才數得到 24。這句誤導本身就值得記下來。
 
-**要做到「拿掉」需要什麼**：`git filter-branch --index-filter` 覆寫分支上全部 24 個 commit，
-再 `--force-with-lease` 推蓋 `origin/feat/grafana-mascot-panel`。代價有三：
+**要做到「拿掉」需要什麼**：歷史改寫（filter 類操作）。
+⚠️ **成本數字先前寫錯了一個維度**：帶著 blob 的 commit 是 24 個，
+但改寫會讓改寫點之後的**每一個** commit 換 SHA —— `git rev-list --count 14a481d..HEAD`
+是 **71**（2026-09-28，還在增加），不是 24。而且對象現在是 `main`，
+不再是一支未合併的 feature 分支：原文「趁 land 進 main 之前做」的時間窗**已經關了**。
+代價有三：
 
-1. 24 個 commit 的 SHA 全變。本 repo 文件目前引用了其中 5 個
+1. 71+ 個 commit 的 SHA 全變。本 repo 文件目前引用了其中 5 個
    (`fbd81f4` / `de98011` / `9911b00` / `596f9db` / `dabb3f3`，散在 ADR-001、
    `sprite-sheet-spec.md`、`remaining-plan.md`)，全數失效 —— 可機械重映，但要一起改。
 2. 屬 CLAUDE.md 鐵則明文列名的毀滅性操作（`git push` / `rebase`），需人類逐次授權；
@@ -54,9 +60,11 @@ clone 下來的人用 `git log --all -- assets/` 挖得到，而 `feat/grafana-m
    要徹底清除得另外請 GitHub Support 處理。換句話說這一步買到的是
    「一般 clone 拿不到」，不是「世界上不存在」。
 
-**建議（仍待裁定）**：值得做，而且**趁分支 land 進 `main` 之前做**。
-理由是時間窗：現在清只影響一支未合併的 feature 分支；併進 `main` 之後再清，
-對象就變成 `main`，成本量級不同。與 nami 那次是同一個邏輯。
+**建議（仍待裁定）**：原建議是「趁分支 land 進 `main` 之前做」——
+**那個窗已於 2026-09-27 隨 PR #1 合併關閉**。現在的兩個選項是
+（a）對 `main` 做歷史改寫（成本如上，71+ commit、五個 ref、需逐次人類授權），
+或（b）先完成出處調查：若當初的服務條款允許，改寫就不必做。
+b 的期望成本低得多，仍建議先走 b。
 
 **與 nami 那次的差別**在風險性質而非規則寬嚴：nami 是可辨識的**第三方角色**，
 風險是著作權侵害，且當時分支尚未推送、改寫成本近乎零；A1 是本專案的**原創角色**，
