@@ -658,6 +658,68 @@ const base = buildSheets();
 }
 
 // ===========================================================================
+console.log('\n[2b] 從未被本檔呼叫過的函式（2026-09-29 變異測試：多個存活變異體的來源）');
+// ---------------------------------------------------------------------------
+{
+  // checkFileSize —— 三個存活變異體（單張預算 ×2、error→warn、合計 ×99）全因它零呼叫。
+  const per = manifest.budget.perSheetBytes;
+  const overPer = C.checkFileSize({ directions: per + 1, reactions: 1000 }, manifest);
+  ok('checkFileSize：單張超 1 byte → SP-7.8/單張體積 error',
+    overPer.length === 1 && overPer[0].id === 'SP-7.8/單張體積' && overPer[0].severity === 'error',
+    JSON.stringify(overPer.map((f) => [f.id, f.severity])));
+  const half = Math.floor(manifest.budget.totalBytes / 2) + 1;
+  const overTotal = C.checkFileSize({ directions: Math.min(per, half), reactions: Math.min(per, half) }, manifest);
+  ok('checkFileSize：單張皆合規但合計超 → SP-7.8/合計體積',
+    overTotal.some((f) => f.id === 'SP-7.8/合計體積' && f.severity === 'error'),
+    JSON.stringify(overTotal.map((f) => f.id)));
+  ok('checkFileSize：兩張皆遠低於上限 → 零 finding',
+    C.checkFileSize({ directions: 1000, reactions: 1000 }, manifest).length === 0, '');
+
+  // windowRect —— 四個邊都要釘。變異測試：x0 round→floor、x1/y1 round→ceil 都活著。
+  const r = C.windowRect({ x0: 0.33, x1: 0.66, y0: 0.33, y1: 0.66 }, 512);
+  ok('windowRect 四邊都是 round（169/338/169/338）',
+    r.x0 === 169 && r.x1 === 338 && r.y0 === 169 && r.y1 === 338, JSON.stringify(r));
+
+  // relativeLuminance —— 通道權重次序。變異測試把 (r,g,b) 換 (b,g,r) 仍全綠。
+  const lg = C.relativeLuminance(0, 255, 0);
+  const lr = C.relativeLuminance(255, 0, 0);
+  const lb = C.relativeLuminance(0, 0, 255);
+  ok('relativeLuminance 權重次序 G > R > B（0.7152 / 0.2126 / 0.0722）',
+    lg > lr && lr > lb && Math.abs(lg - 0.7152) < 1e-4, lg.toFixed(4) + '/' + lr.toFixed(4) + '/' + lb.toFixed(4));
+
+  // cellView 的出界守門 —— 拿掉後讀的是**鄰格**的像素。
+  const v4 = C.cellView(base.directions, 4, manifest.sheet);
+  const midY = Math.floor(manifest.sheet.cellPx / 2);
+  // 出界座標的選擇有講究：無守門時 px(cellPx + k, y) 算出的 offset 恰是
+  // **cell 5 的 (k, y)** —— 所以 k 要選在鄰格剪影內（k=200, y=256 實測 alpha 255），
+  // 否則鄰格該處本來就是 0，守門拿掉了測試照樣綠（第一版就是這樣白寫的）。
+  const inside5 = C.cellView(base.directions, 5, manifest.sheet).px(200, midY);
+  ok('cellView 出界（x = cellPx+200）回全 0，即使無守門時會讀到的鄰格位置有內容',
+    JSON.stringify(v4.px(manifest.sheet.cellPx + 200, midY)) === '[0,0,0,0]' && inside5[3] !== 0,
+    '出界讀到 ' + JSON.stringify(v4.px(manifest.sheet.cellPx + 200, midY)) + '，鄰格 alpha=' + inside5[3]);
+  ok('cellView 出界（負座標）回全 0', JSON.stringify(v4.px(-1, midY)) === '[0,0,0,0]', '');
+
+  // intentionally_empty 的底線拼法（行為級 —— declaredEmpty 未 export）。
+  const emptied = clone(base);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      emptied.reactions.data[(y * SHEET + x) * 4 + 3] = 0;
+    }
+  }
+  const mUnder = JSON.parse(JSON.stringify(manifest));
+  mUnder.intentionallyEmpty = [];
+  mUnder.intentionally_empty = [{ sheet: 'reactions', cell: 0 }];
+  const fUnder = C.checkOverlayOwnership(emptied, mUnder).filter((f) => f.cell === 0);
+  ok('底線拼法 intentionally_empty 的宣告必須生效（規格用的就是這個拼法）',
+    !fUnder.some((f) => f.id === 'SP-7.4/空格'), JSON.stringify(fUnder.map((f) => f.id)));
+  const mNone = JSON.parse(JSON.stringify(mUnder));
+  mNone.intentionally_empty = [];
+  const fNone = C.checkOverlayOwnership(emptied, mNone).filter((f) => f.cell === 0);
+  ok('未宣告時清空的格必須紅 SP-7.4/空格（上一條的反方向）',
+    fNone.some((f) => f.id === 'SP-7.4/空格'), JSON.stringify(fNone.map((f) => f.id)));
+}
+
+// ===========================================================================
 console.log('\n[3] 變異體：做壞一處，紅的必須是那一條');
 // ---------------------------------------------------------------------------
 const mutants = [
