@@ -216,12 +216,18 @@ export function checkFormatAndHygiene(sheets, manifest) {
        *    而猜一個數字放進硬失敗，第一次交付就會紅在一個沒有根據的值上（SP-7.6 的前例）。
        */
       let semiCount = 0;
+      let rampMoment = 0;
       let perimeter = 0;
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
           const a = v.px(x, y)[3];
           if (a > 0 && a < 255) {
             semiCount++;
+            // 一階矩：2·min(α, 1−α)。對寬 h 的線性斜坡，沿法線的積分恰為 h/2，
+            // 與斜坡的相位、取樣落點無關 —— 「數半透明像素」則不然：
+            // 守恆斜坡（相位修正後）h=1 與 h=2 的半透明像素**一樣多**（各 2 顆/邊），
+            // 計數法對 h<2 完全失去鑑別力，還把合規下限 h=2 誤 warn 成 1.5。
+            rampMoment += (2 * Math.min(a, 255 - a)) / 255;
           }
           if (a >= 128) {
             const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
@@ -238,8 +244,9 @@ export function checkFormatAndHygiene(sheets, manifest) {
         // 實際的執法下限比規格低 25%，一張 1.5px 羽化的圖從整套檢查拿到**零輸出**。
         // 變數名叫 rampPx 也是共犯（聽起來是像素，裝的是比值）。
         // 現在先把比值換回過渡寬度 h，再對規格自己的 0.004·S 比。
-        const ratio = semiCount / perimeter;
-        const impliedH = (ratio + 1) / 2;
+        // implied h = 2 × (矩總和 / 周長)。校準（兩種斜坡實測）：
+        // 舊相位 h=1/2/4 → 1.00/2.00/4.00；守恆斜坡 h=1/2/4 → 1.00/2.01/4.02。
+        const impliedH = (2 * rampMoment) / perimeter;
         // 0.004·S 在 S=512 是 2.048 —— 但羽化只能畫整數像素，2px 就是最接近的
         // 可畫值，整個 repo（含電池 B 列「SP-2.14 下限」）也都以 2px 為下限。
         // 直接拿 2.048 比會把合規下限自己 warn 掉，故向下取整到可繪製像素。
@@ -264,7 +271,7 @@ export function checkFormatAndHygiene(sheets, manifest) {
             severity: 'warn',
             sheet: name,
             cell: c,
-            message: `剪影邊緣的平均過渡寬度約 ${impliedH.toFixed(2)} px（半透明/周長比 ${ratio.toFixed(2)}），SP-2.14 要求 ≥ 0.004·S = ${minH.toFixed(2)}px。此門檻**未經真素材校準**，首版僅記錄`,
+            message: `剪影邊緣的平均過渡寬度約 ${impliedH.toFixed(2)} px（一階矩法），SP-2.14 要求 ≥ 0.004·S = ${minH.toFixed(2)}px。此門檻**未經真素材校準**，首版僅記錄`,
             measured: impliedH,
             limit: minH,
           });
@@ -2085,11 +2092,16 @@ export const STROKE_MEASURE_TUNING = {
  *    軸向邊界上，描邊帶的像素中心距離全是整數，真實寬度 D 只能被夾在
  *    `[floor(D), floor(D)+1)` —— 那一格資訊**根本不在圖裡**，量到的一定是 floor(D)。
  *    斜法線與晶格不可通約，相位連續變動，弦長平均後才回到 D。
- *    實測殘差（量到值 − D）在 D ∈ [7.4, 9.0] 為 −0.07 ~ −0.03；不篩的話是 −0.21 ~ −0.06，
- *    而電池的 R（7.4px）與 S（9.0px）兩列合起來只留 ±0.22 的餘裕，那個斜率誤差吃不下。
+ *    ⚠️ 這一點原記「實測殘差 −0.07 ~ −0.03」—— 那是對著 1-bit fixture 量的
+ *    （2026-09-29 複審查出實際是 −0.68 上下，差 20 倍；根因一半在 fixture 的
+ *    斜坡相位錯，一半在內緣硬分類，兩者都已修）。當前數字見檔尾校準段。
  *    斜樣本少於 `minObliqueSamples` 時退回不篩（量化好過 NaN）。
  * 4. **兩端都是次像素，靠覆蓋率積分而不是找交界。** 沿法線以 `stepPx` 積
- *    `覆蓋率 du`：不透明描邊算 1，屬於描邊的半透明環算 `alpha / 255`。
+ *    `覆蓋率 du`：不透明描邊算 1，屬於描邊的半透明環算 `alpha / 255`，
+ *    內緣（描邊↔填色）的不透明混色像素算解混出的描邊成分 t。
+ *    ⚠️ 內緣那一項是 2026-09-29 補的 —— 在那之前這一點的敘述是假的：
+ *    只有外緣是次像素，內緣是 colourNear 硬門檻，每條游程系統性少半個像素，
+ *    而且少多少隨填色顏色變（解析地面真值：偏差 −0.31 ~ −0.34、隨填色擺 0.08px）。
  *    抗鋸齒環因此**按它實際遮住多少貢獻寬度**，不是整格算或整格不算 ——
  *    2px 與 4px 漸層量到的值相差 0.013px（電池 B 與 C）。
  * 5. **matte 偵測而不是投降。** 半透明像素若其直通道色是描邊色，
@@ -2108,8 +2120,15 @@ export const STROKE_MEASURE_TUNING = {
  *   但不讓它們進 bin 可以省掉直方圖的長尾）。
  *
  * **沒有任何為了湊電池而加的常數**：兩端的半像素約定是 0（`edgeConvention` 不存在），
- * 量到的就是覆蓋率積分本身。實測 20 列全對，最窄餘裕 0.159px（R 列），
- * 且 11 個可調項逐一掃過（半徑 1–4、斜度門檻 0.2–0.55、步長 0.05–0.25 等）都維持 20/20。
+ * 量到的就是覆蓋率積分本身。
+ *
+ * **校準現況（2026-09-29，fixture 斜坡相位修正 + 內緣解混之後）**：
+ * - 電池 20/20（`node tools/stroke-battery.mjs`，有退出碼、在閘門與 CI 裡）。
+ * - 解析地面真值（8× supersample disc，含內緣真實混色）：
+ *   D ∈ [6, 10] 偏差 **+0.03 ~ +0.08**，填色相依擺動 0.017px。
+ * - ⚠️ 合成 fixture（內緣硬過渡，解混無素材可解）殘餘偏差約 **−0.2**，
+ *   電池 R 列（7.4px）量 7.170、餘裕只剩 **0.002px** —— 貼線過。
+ *   這 −0.2 的來源尚未定位（與內緣無關），第一批真素材到貨時要重量。
  *
  * 成本：9 格 512×512 實測 96–103 ms（同機器上 fixture 自己建一張 sheet 要 ~2 s）。
  */
@@ -2308,6 +2327,79 @@ export function measureStrokeWidths(directions, manifest) {
     const coverage = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       coverage[i] = cls[i] === 3 ? 1 : (cls[i] === 1 && rimIsStroke(i) ? A[i] / 255 : 0);
+    }
+    // **內緣次像素**：描邊↔填色邊界的不透明混色像素，對鄰接填色解混出描邊成分 t。
+    //
+    // 沒有這一段時只有外緣（描邊↔透明）是次像素，內緣是 colourNear 的硬門檻 ——
+    // 一顆 80% 描邊 / 20% 膚色的邊界像素貢獻 0，每條游程系統性少掉內側半個像素，
+    // 而少掉多少取決於**填色的顏色**（門檻切在哪）。解析地面真值（8× supersample
+    // disc、內緣含真實混色）實測：修正前偏差 −0.31 ~ −0.34（與獨立複審的 −0.29 一致）
+    // 且隨填色擺動 0.08px；解混後 +0.03 ~ +0.08、擺動 0.017px。
+    // 合成 fixture 的內緣是硬過渡（無混色像素），所以這一段在電池上零影響 ——
+    // 它保護的是真素材。
+    {
+      const isInnerEdge = new Uint8Array(N);
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
+          if (cls[i] !== 2) {
+            continue;
+          }
+          if (cls[i - 1] === 3 || cls[i + 1] === 3 || cls[i - P] === 3 || cls[i + P] === 3) {
+            isInnerEdge[i] = 1;
+          }
+        }
+      }
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
+          if (!isInnerEdge[i]) {
+            continue;
+          }
+          // 鄰接填色 = 8 鄰域中「非邊界」的不透明非描邊像素平均
+          let fr = 0;
+          let fg = 0;
+          let fb = 0;
+          let n = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const j = i + dy * P + dx;
+              if (j === i || cls[j] !== 2 || isInnerEdge[j]) {
+                continue;
+              }
+              fr += R[j];
+              fg += G[j];
+              fb += B[j];
+              n++;
+            }
+          }
+          if (!n) {
+            continue;
+          }
+          fr /= n;
+          fg /= n;
+          fb /= n;
+          const dr = ref[0] - fr;
+          const dg = ref[1] - fg;
+          const db2 = ref[2] - fb;
+          const den = dr * dr + dg * dg + db2 * db2;
+          if (den < 400) {
+            // 填色與描邊太接近時解不出：den 是解混的分母，8-bit 捨入誤差被放大
+            // ref−fill 距離的倒數倍。門檻取 400（≈ 每通道 12）；#E2C8B1 膚色的
+            // den ≈ 22,000，不受影響。
+            // ⚠️ 誠實記：**近色填色（如 #7c7c7c 整片當填色）的殘餘偏差 +0.42px
+            // 不是這個分支能救的** —— 它的內緣混色像素離 ref 只差 7/3/2.5，
+            // 在 colourNear 的 tol 12 內，直接被 cls 判成描邊，根本走不到解混。
+            // 顏色分不開時內緣位置本來就不可分辨；現實情境（J 列：衣物「帶」
+            // 貼邊而非整片填色）不受影響，電池 20/20。
+            continue;
+          }
+          const t = ((R[i] - fr) * dr + (G[i] - fg) * dg + (B[i] - fb) * db2) / den;
+          if (t > 0.02) {
+            coverage[i] = Math.min(1, t);
+          }
+        }
+      }
     }
 
     const smooth = boxBlurMask(mask, P, P, tune.blurRadius, tune.blurPasses);

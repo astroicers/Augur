@@ -1266,11 +1266,12 @@ console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外�
   ok('h=2（合規下限）不得有任何 SP-2.14 輸出（含 warn）', at2.length === 0,
     at2.map((f) => `${f.sheet}#${f.cell} ${f.measured?.toFixed(3)}`).join(' '));
 
-  // ⚠️ 上面兩條在「門檻寫錯單位」（比值 2 被當像素 2，執法下限 1.5px）的舊版下
-  // **也都會過** —— 整數羽化畫不出落在 1.5 與 2 之間的過渡寬度。
-  // 這裡手工構造一張：把 h=2 的格每 3 個半透明像素殺掉 1 個
-  // （semiCount × 2/3，perimeter 不動）→ 比值 3.0 → 2.0 → implied 過渡寬度恰 1.50px。
-  // 舊門檻（< 1.5）對它視而不見；正確門檻（< 2 − 容差）必須 warn。
+  // ⚠️ 上面兩條在「門檻寫錯單位」（執法下限實為 1.5px）的舊版下**也都會過**
+  // —— 整數羽化畫不出落在 1.5 與 2 之間的過渡寬度。
+  // 這裡手工構造一張：把 h=2 的格每 4 個半透明像素殺掉 1 個
+  // （一階矩 × 3/4，perimeter 不動）→ implied 過渡寬度 ≈ 1.5px。
+  // （原本是每 3 殺 1 —— 那是對「計數比值法」校準的；換成矩法後比例跟著換。）
+  // 過鬆的門檻對它視而不見；正確門檻（< 2 − 容差）必須 warn。
   const midSheets = clone(base);
   {
     const d = midSheets.directions;
@@ -1279,7 +1280,7 @@ console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外�
       for (let x = 0; x < S; x++) {
         const o = (y * SHEET + x) * 4;
         const a = d.data[o + 3];
-        if (a > 0 && a < 255 && k++ % 3 === 0) {
+        if (a > 0 && a < 255 && k++ % 4 === 0) {
           d.data[o + 3] = a >= 128 ? 255 : 0;
         }
       }

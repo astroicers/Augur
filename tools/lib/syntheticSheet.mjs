@@ -456,7 +456,23 @@ function applyAlphaRamp(buf, ox, oy, h) {
         continue;
       }
       const signed = solid[i] ? -db[i] : db[i];
-      const a = Math.round(255 * Math.min(1, Math.max(0, 0.5 - signed / (2 * h))));
+      // ⚠️ **相位：斜坡中心是邊界「線」，不是邊界「像素」。**
+      // 舊公式 0.5 − signed/(2h) 把 α=128 放在最外圈實心像素的中心 ——
+      // 但那顆像素在原圖是 100% 覆蓋，幾何邊界在它的**外緣**（中心 +0.5px）。
+      // 半格相位差讓每條羽化邊的覆蓋積分淨損 ~0.5px（外側只補 0.25、內側損 0.75），
+      // 實測 h=2 的剖面是 0,64,128,191,255：積分 7.50px 而 fixture 宣稱 8.192 ——
+      // 電池 R 列（7.4px 誤紅）與「估計器 −0.639 系統性偏差」的大部分，
+      // 其實都是 fixture 畫不出它宣稱的寬度。修正後外側 +0.25 = 內側 −0.25，守恆。
+      // α 取像素區間 [d−½, d+½] 對 clamp(0.5 + u/h) 的平均（8 點數值積分），
+      // 而不是中心點值 —— 否則 h=1 時兩側端點恰落在 clamp 邊界，
+      // 整條斜坡退化成 1-bit（一個半透明像素都不剩）。
+      const d = 0.5 - signed;
+      let acc = 0;
+      for (let t = 0; t < 8; t++) {
+        const u = d - 0.5 + (t + 0.5) / 8;
+        acc += Math.min(1, Math.max(0, 0.5 + u / h));
+      }
+      const a = Math.round((255 * acc) / 8);
       const sj = src[i];
       if (sj < 0) {
         continue;
