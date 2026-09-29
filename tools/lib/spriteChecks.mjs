@@ -1053,6 +1053,10 @@ export function checkOverlayOwnership(sheets, manifest) {
     let nonZero = 0;
     let fullyOpaque = 0;
     let firstOut = null;
+    let semiCount = 0;
+    let perim = 0;
+    const softOutAllow = [];
+    const softOutSkin = [];
     for (let y = 0; y < cellPx; y++) {
       for (let x = 0; x < cellPx; x++) {
         const a = v.px(x, y)[3];
@@ -1063,14 +1067,67 @@ export function checkOverlayOwnership(sheets, manifest) {
         if (a === 255) {
           fullyOpaque++;
         }
-        if (!allow[y * cellPx + x]) {
-          outsideWindows++;
-          if (!firstOut) {
-            firstOut = [x, y];
+        if (a < 255) {
+          semiCount++;
+        }
+        if (a >= 128) {
+          const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          if (nb.some(([px2, py2]) => px2 < 0 || py2 < 0 || px2 >= cellPx || py2 >= cellPx || v.px(px2, py2)[3] < 128)) {
+            perim++;
           }
         }
-        if (!skin[y * cellPx + x]) {
-          outsideSkin++;
+        const i = y * cellPx + x;
+        // ⚠️ **兩級判定，不再是「任何非零 alpha 出界即違規」。**
+        // SP-2.14 對 overlay 一樣強制 ≥ 0.004·S 的羽化（syntheticSheet 也刻意
+        // 這樣畫），而羽化帶必然溢出遮罩邊界 —— 4px 羽化（電池 C 列，合規）
+        // 先前在這兩條 limit:0 上硬紅（溢 13/22 px）。規格要求羽化、規格不設
+        // 羽化上限、檢查要求 0 個出界像素：三者不可同時成立，先前輸的是素材。
+        // 完全不透明的出界仍是硬違規（那是畫上去的內容，不是羽化）；
+        // 半透明的出界先收著，迴圈後對「按該格量到的羽化寬度膨脹過的遮罩」再判。
+        if (!allow[i]) {
+          if (a >= 250) {
+            outsideWindows++;
+            if (!firstOut) {
+              firstOut = [x, y];
+            }
+          } else {
+            softOutAllow.push(i);
+          }
+        }
+        if (!skin[i]) {
+          if (a >= 250) {
+            outsideSkin++;
+          } else {
+            softOutSkin.push(i);
+          }
+        }
+      }
+    }
+    if (softOutAllow.length || softOutSkin.length) {
+      // 該格自己的羽化寬度（SP-2.14 的比值法：implied h = (semi/perim + 1) / 2），
+      // 夾在 [下限, 3×下限]。**夾上限是自我廢除防護** —— 「整片半透明」正是這類
+      // 檢查要抓的缺陷之一，它會抬高量到的羽化；眨眼檢查踩過同一個坑
+      // （侵蝕深度取自缺陷會影響的量，缺陷越重檢查越鬆）。
+      const minH = Math.max(1, Math.floor(0.004 * cellPx));
+      const impliedH = perim > 0 ? (semiCount / perim + 1) / 2 : minH;
+      const featherPx = Math.min(3 * minH, Math.max(minH, Math.ceil(impliedH)));
+      if (softOutAllow.length) {
+        const allowFeather = dilate(allow, cellPx, featherPx);
+        for (const i of softOutAllow) {
+          if (!allowFeather[i]) {
+            outsideWindows++;
+            if (!firstOut) {
+              firstOut = [i % cellPx, Math.floor(i / cellPx)];
+            }
+          }
+        }
+      }
+      if (softOutSkin.length) {
+        const skinFeather = dilate(skin, cellPx, featherPx);
+        for (const i of softOutSkin) {
+          if (!skinFeather[i]) {
+            outsideSkin++;
+          }
         }
       }
     }

@@ -908,6 +908,21 @@ const mutants = [
     expect: 'SP-2.14/1-bit硬邊',
     sheets: () => buildSheets({ alphaRampPx: 0 }),
   },
+
+  {
+    // 自我廢除防護的紅方向：半透明但離視窗超過 3×下限（羽化帶蓋不到的距離）
+    // 仍必須硬紅 —— 沒有這條，「把整個違規畫成 a=200」就能穿過產權檢查。
+    // ⚠️ 這條第一次寫的時候插錯陣列（放進 NON_MUTANTS），forbid 是 undefined
+    //    使它**恆過** —— 顯示 ok 而什麼都沒驗。expect 的案例只能住在 mutants。
+    name: '半透明像素離視窗超過羽化帶仍須觸發視窗產權',
+    expect: 'SP-7.4/視窗產權',
+    apply: (s) => {
+      // cell 4 的產權是 M（無 K），(30,30) 離 M 窗遠超過 6px
+      const o = ((Math.floor(4 / 3) * S + 30) * SHEET + ((4 % 3) * S + 30)) * 4;
+      s.reactions.data[o] = 255;
+      s.reactions.data[o + 3] = 120;
+    },
+  },
 ];
 
 
@@ -1167,6 +1182,21 @@ const NON_MUTANTS = [  {
         }
       }
     },
+  },
+  {
+    // SP-2.14 對 overlay 一樣強制羽化，而羽化帶必然溢出視窗邊界。
+    // 4px 羽化（電池 C 列，合規）先前在兩條 limit:0 上硬紅（溢 13/22 px）——
+    // 規格要求羽化、不設上限，檢查卻要求 0 個出界像素，三者不可同時成立。
+    // 現在完全不透明的出界仍硬紅；半透明允許在「該格量到的羽化寬度」內，
+    // 上限夾 3×下限（自我廢除防護：整片半透明的缺陷會抬高量到的羽化）。
+    name: 'SP-2.14 合規的 4px 羽化不得觸發視窗產權',
+    forbid: 'SP-7.4/視窗產權',
+    sheets: () => buildSheets({ alphaRampPx: 4 }),
+  },
+  {
+    name: 'SP-2.14 合規的 4px 羽化不得觸發皮膚遮罩',
+    forbid: 'SP-6.6/皮膚遮罩',
+    sheets: () => buildSheets({ alphaRampPx: 4 }),
   },
   {
     // SP-6.4 規範的是亮度帶（0.18–0.24），#7c7c7c（L=0.2016）完全合規。
