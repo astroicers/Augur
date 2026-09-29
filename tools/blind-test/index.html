@@ -258,10 +258,19 @@
   let debounceHintTimer = 0;
 
   /** 上一題。手滑答錯時的唯一補救 —— 沒有它，一次誤點就污染整輪。 */
+  let lastUndoAt = -Infinity;
   function undo() {
     if (answers.length === 0) {
       return;
     }
+    // 與 answer() 同一套防抖，理由也相同：受試者連點是常態。
+    // answer() 有 250ms 防抖而 undo() 沒有 —— 一次 dblclick「← 上一題」
+    // 會吞掉兩題。兩個會改動 answers 的入口只防了一個，等於沒防。
+    const now = Date.now();
+    if (now - lastUndoAt < 250) {
+      return;
+    }
+    lastUndoAt = now;
     answers.pop();
     lastAnswerAt = -Infinity;
     saveRound(currentImageKey);
