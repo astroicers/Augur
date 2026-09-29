@@ -679,6 +679,12 @@ console.log('\n[2b] 從未被本檔呼叫過的函式（2026-09-29 變異測試�
   const r = C.windowRect({ x0: 0.33, x1: 0.66, y0: 0.33, y1: 0.66 }, 512);
   ok('windowRect 四邊都是 round（169/338/169/338）',
     r.x0 === 169 && r.x1 === 338 && r.y0 === 169 && r.y1 === 338, JSON.stringify(r));
+  // ⚠️ 上面那組的小數部分都是 .96/.92 ≥ 0.5 —— ceil 與 round 在它上面**恆等**，
+  // 「x1/y1 round→ceil」的變異體對它免疫（2026-09-29 複審實測 152/152 全綠存活）。
+  // 補一組小數 < 0.5 的探測值把 ceil 與 round 分開：0.331·512 = 169.472。
+  const r2 = C.windowRect({ x0: 0.331, x1: 0.661, y0: 0.331, y1: 0.661 }, 512);
+  ok('windowRect 對小數 < 0.5 的邊也是 round 不是 ceil（169/338，非 170/339）',
+    r2.x0 === 169 && r2.x1 === 338 && r2.y0 === 169 && r2.y1 === 338, JSON.stringify(r2));
 
   // relativeLuminance —— 通道權重次序。變異測試把 (r,g,b) 換 (b,g,r) 仍全綠。
   const lg = C.relativeLuminance(0, 255, 0);

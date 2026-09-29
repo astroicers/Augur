@@ -178,16 +178,28 @@ for (const f of RULE_FILES) {
   // 上一條的 block、繼承它的 annotations 而通過檢查 —— 實測第三條規則被吸收，
   // PASS，而且印出來的「N 條規則」這個數字本身就是錯的（少算一條）。
   // Grafana 的 provisioning 不要求 uid，所以這不是假想的寫法。
-  const blocks = src.split(/^\s*-\s+(?=uid:|title:)/m).slice(1);
+  // ⚠️ **切塊、對帳、塊內提取三者必須吃同一種正規化，否則對帳自我抵銷。**
+  // 2026-09-29 複審抓到兩條（實測）：
+  //  - `- title : x`（冒號前有空白）與 `- 'title':`（引號鍵）都是合法 YAML、
+  //    Grafana 照載，但切塊器與 titleTotal **一起**漏掉 —— 10==10、PASS、
+  //    證據行還寫「title 數對得上」。對帳量與被對帳量共享盲點等於沒對。
+  //  - titleTotal 對著**未剝註解**的原始 src 數，而它對帳的塊都剝了 ——
+  //    一行 `# title: 舊名` 的純註解就讓合規設定誤紅，訊息還說
+  //    「被併進上一條」這件沒發生的事（同檔 :165/:194 都剝，只有它沒剝）。
+  // 現在三者都吃 srcCode（剝掉純註解行），鍵的拼寫統一放寬到
+  // 選配引號 + 冒號前空白；titleTotal 只數**行首鍵位**（值裡的
+  // `panel title:` 不在行首，不會被算進來）。
+  const srcCode = src.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const blocks = srcCode.split(/^\s*-\s+(?=['"]?(?:uid|title)['"]?\s*:)/m).slice(1);
   // 切塊是以 `uid:` / `title:` 為第一個鍵為前提，而 YAML 的 mapping 是無序的，
   // Grafana 也不要求哪個鍵在前。第一個鍵是別的（例如 `condition:`）的規則會被
   // 整個併進上一條、繼承它的 annotations 而通過 —— 實測 ruleCount 停在 10，
   // 新加的那條一次都沒被數到。這裡不重寫成 YAML parser（SP-7.0 的零依賴精神），
   // 改用一個**互相對帳**的量：檔案裡有幾個 title，就該切出幾個 block。
-  titleTotal += (src.match(/(^|[\s{,])title:/g) || []).length;
+  titleTotal += (srcCode.match(/^\s*(?:-\s+)?['"]?title['"]?\s*:/gm) || []).length;
   for (const b of blocks) {
     ruleCount++;
-    const title = (/title:\s*(\S+)/.exec(b) || [])[1] || '(無 title)';
+    const title = (/['"]?title['"]?\s*:\s*(\S+)/.exec(b) || [])[1] || '(無 title)';
     // ⚠️ **先把 `#` 註解行剝掉再比對。** 30 行前的 removed-metric 掃描已經這樣做了，
     // 這裡卻沒有 —— 於是把 annotations 整段註解掉（除錯時最常見的動作）
     // 仍然滿足「有 __dashboardUid__」。實測 exit 0。

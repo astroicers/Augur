@@ -153,3 +153,40 @@ test('setWindow 換窗但不清掉已記住的狀態', () => {
   clock += 300_000;
   expect(d.shouldSpeak(mkAlert())).toBe(true); // 新窗過了 → 重播
 });
+
+test('setWindow 也要更新保留期 —— 換大窗後既有 key 不得被舊保留期清掉', () => {
+  // 2026-09-29 變異測試：拿掉 setWindow 裡的 retentionMs 更新，全套照綠。
+  // 場景：小窗（保留期取下限 6h）換成 8h 大窗 → 保留期應跟著變 8h；
+  // 一個 7 小時前播過的 firing，其 resolved 必須還播得出來。
+  jest.useFakeTimers();
+  try {
+    let clock = 1000;
+    const d = createDedup(300, { now: () => clock, startCleanup: true });
+    expect(d.shouldSpeak(mkAlert({ fingerprint: 'k' }))).toBe(true);
+    d.setWindow(8 * 60 * 60); // 窗 8h > 6h 下限 → retention 應變 8h
+    clock += 7 * 60 * 60 * 1000;
+    jest.advanceTimersByTime(8 * 60 * 60 * 1000); // 讓 prune 至少跑一次
+    // retention 若停留在 6h，k 已被清 → resolved 變孤兒被吞 → false。
+    expect(d.shouldSpeak(mkAlert({ fingerprint: 'k', status: 'resolved' }))).toBe(true);
+    d.close();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('setWindow 要重排清理 timer —— 新窗的週期要真的生效', () => {
+  // 同一輪變異測試：拿掉「stopTimer + startTimer」的重排，全套照綠 ——
+  // 而 setWindow 的註解自己寫著「換窗就要重排,否則新的窗對清理不生效」。
+  jest.useFakeTimers();
+  const spy = jest.spyOn(global, 'setInterval');
+  try {
+    const d = createDedup(30, { startCleanup: true }); // 週期 = max(30s, 60s) = 60s
+    expect(spy.mock.calls[spy.mock.calls.length - 1]![1]).toBe(60_000);
+    d.setWindow(7200); // 週期應變 min(max(7200s, 60s), 6h) = 2h
+    expect(spy.mock.calls[spy.mock.calls.length - 1]![1]).toBe(7_200_000);
+    d.close();
+  } finally {
+    spy.mockRestore();
+    jest.useRealTimers();
+  }
+});

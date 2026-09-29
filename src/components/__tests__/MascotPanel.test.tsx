@@ -404,3 +404,58 @@ test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（
   await waitFor(() => expect(spoken.length).toBeGreaterThan(afterResolved));
   expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
 });
+
+/**
+ * repeatFiringMin 的接線：換窗必須「生效」且「不重建」。
+ * 2026-09-29 變異測試抓到這條接線整個無法失敗：把 setWindow effect 清空、
+ * 或把 dedup 建立 effect 的 deps 改回 [id, repeatFiringMin]（重建式 —— setWindow
+ * 存在的唯一理由就是取代它），78/78 都全綠。這一條同時殺兩個變異體。
+ */
+test('改 repeatFiringMin：不重播目前告警（不重建），但新窗真的生效（setWindow 不是空殼）', async () => {
+  jest.useFakeTimers();
+  try {
+    jest.setSystemTime(1_000_000);
+    mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '高', value: 95 }]);
+    const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+    await settle();
+    expect(spoken).toHaveLength(1);
+
+    // 換窗（0 → 1 分鐘）。重建式實作會把 lastFiring 清掉 → 這裡立刻重播。
+    view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { repeatFiringMin: 1 } })} />);
+    await settle();
+    expect(spoken).toHaveLength(1);
+
+    // 61 秒後：60 秒的新窗已過 → 必須重播。setWindow 若是空殼，窗仍是
+    // Infinity（repeatFiringMin: 0 的初始值）→ 永不重播 → 這裡抓到。
+    jest.setSystemTime(1_000_000 + 61_000);
+    view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { repeatFiringMin: 1 } })} />);
+    await settle();
+    expect(spoken).toHaveLength(2);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+/**
+ * fallbackSeverity 的接線：改選項後，「新建立」的降級 episode 必須用新值。
+ * 同一輪變異測試：把 fallbackSeverityRef 的同步賦值拿掉，78/78 全綠 ——
+ * 永久靜音測試只驗了「改選項後管線還活著」，沒驗「改後的值真的被用到」。
+ */
+test('改 fallbackSeverity 後，新的降級 episode 用新值（ref 同步不是裝飾）', async () => {
+  mockedFetch.mockRejectedValue(new Error('rules endpoint down')); // 走降級路徑
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBe(1));
+  expect(spoken[0]!.emotion).toBe('critical'); // 預設 fallbackSeverity
+
+  // 恢復（episode 結清、fingerprint 忘掉），然後改選項再燒。
+  view.rerender(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(spoken.length).toBe(2));
+  expect(spoken[1]!.emotion).toBe('resolved');
+
+  view.rerender(
+    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBe(3));
+  // ref 同步拿掉的話，這裡讀到的是掛載時捕捉的 'critical'。
+  expect(spoken[2]!.emotion).toBe('warning');
+});

@@ -54,11 +54,23 @@ class FakeSynth {
   emit(type: string) {
     [...(this.listeners.get(type) ?? [])].forEach((f) => f());
   }
+  /** 目前在引擎裡的 utterance —— cancel 要對它發事件。 */
+  current: FakeUtterance | null = null;
   speak(u: FakeUtterance) {
     this.spoken.push(u);
+    this.current = u;
   }
   cancel() {
+    // ⚠️ 真引擎的 cancel 會**非同步**對 in-flight utterance 觸發
+    // error('interrupted')（規格行為）。第一版的假引擎只加計數器 ——
+    // 於是 settled 守門與「先 cancel 再 finish」這兩個與 cancel 交互的
+    // 保證整個測不到（2026-09-29 變異測試：兩個對應變異體都存活）。
     this.cancelled++;
+    const u = this.current;
+    this.current = null;
+    if (u) {
+      queueMicrotask(() => u.onerror?.({ error: 'interrupted' }));
+    }
   }
   resume() {
     this.resumed++;
@@ -143,7 +155,9 @@ test('watchdog 逾時會 cancel 並讓佇列往前走，逾時長度隨字數成
     jest.advanceTimersByTime(2_000);
     await settle();
     expect(synth.cancelled).toBe(1);
-    expect(errors).toContain('watchdog-timeout');
+    // 恰好一條，而且是 watchdog 那條 —— cancel 引發的 interrupted 事件
+    // 必須被 settled 守門吃掉。守門拿掉的話這裡會是兩條。
+    expect(errors).toEqual(['watchdog-timeout']);
     // 卡住的那則被放掉之後，佇列必須繼續。
     expect(synth.spoken.map((u) => u.text)).toEqual([text, '下一則']);
 
@@ -204,7 +218,7 @@ test('第一批聲線沒有 zh-TW 時，後續的 voiceschanged 會補挑到', a
   expect((synth.spoken[0]!.voice as { name: string }).name).toBe('Hanhan');
 });
 
-test('播報進行中不換聲線（避免念到一半換聲）', async () => {
+test('播報中到達的 voiceschanged 延後到則間生效 —— 不換到一半、也不丟棄', async () => {
   const synth = mk();
   const sp = createSpeaker(synth as unknown as SpeechSynthesis);
   sp.enqueue(plan('進行中'));
@@ -213,15 +227,69 @@ test('播報進行中不換聲線（避免念到一半換聲）', async () => {
   expect((synth.spoken[0]!.voice as { name: string }).name).toBe('Hanhan');
   expect(sp.isSpeaking()).toBe(true);
 
-  // 播報中來一次 voiceschanged —— 必須被忽略。
-  synth.voices = [{ name: '別的', lang: 'zh-TW', localService: true }];
+  // 播報中來一次 voiceschanged。兩個都是錯的：立刻換（念到一半換聲）、
+  // 直接丟棄（第一版 —— 首批沒有 zh-TW 時「null 就一輩子是 null」原樣回歸，
+  // 而中文一則實測 ~14 秒，補批落在播報中是常態）。正解是延後到 finish。
+  synth.voices = [{ name: '補批', lang: 'zh-TW', localService: true }];
   synth.emit('voiceschanged');
+  // 正在念的這一則不受影響（utterance 已交給引擎）。
+  expect((synth.spoken[0]!.voice as { name: string }).name).toBe('Hanhan');
 
   synth.spoken[0]!.onend!();
   await settle();
-  // 沒有守門的話，上面那次 voiceschanged 會把 voice 換成「別的」，
-  // 而第二則就會用它。守門在，所以第二則仍是 Hanhan。
+  // 則間重挑：第二則用補批的聲線。丟棄式守門會讓這裡還是 Hanhan。
+  expect((synth.spoken[1]!.voice as { name: string }).name).toBe('補批');
+});
+
+test('首批沒有中文聲線、補批落在播報中 —— 第二則仍要挑到 zh-TW', async () => {
+  const synth = mk();
+  synth.voices = [{ name: 'David', lang: 'en-US', localService: true }];
+  const sp = createSpeaker(synth as unknown as SpeechSynthesis);
+  sp.enqueue(plan('第一則'));
+  sp.enqueue(plan('第二則'));
+  await settle();
+  expect(synth.spoken[0]!.voice).toBeNull(); // 沒得挑，用引擎預設
+
+  synth.voices = [
+    { name: 'David', lang: 'en-US', localService: true },
+    { name: 'Hanhan', lang: 'zh-TW', localService: true },
+  ];
+  synth.emit('voiceschanged'); // 播報中到達 —— 丟棄式守門在這裡把它扔掉
+  synth.spoken[0]!.onend!();
+  await settle();
   expect((synth.spoken[1]!.voice as { name: string }).name).toBe('Hanhan');
+});
+
+test('utterance 建構丟例外時，那一則報錯、佇列繼續 —— 不卡死', async () => {
+  // 2026-09-29 變異測試：把 pump() 還原成修復前結構（speaking 先設、
+  // try 只包 synth.speak）之後 78/78 全綠 —— 「speaking 與建構必須在同一個
+  // try」的整個修復沒有任何測試能讓它失敗。這一條就是那個測試：
+  // 修復前結構下，建構 throw 讓 speaking 卡在 true，第二則永遠不播。
+  const synth = mk();
+  const errors: string[] = [];
+  const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+    events: { onError: (e) => errors.push(e) },
+  });
+  const Real = (global as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance;
+  let boom = 1;
+  (global as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class extends FakeUtterance {
+    constructor(t: string) {
+      if (boom-- > 0) {
+        throw new Error('ctor-boom');
+      }
+      super(t);
+    }
+  };
+  try {
+    sp.enqueue(plan('會爆的'));
+    sp.enqueue(plan('接著播的'));
+    await settle();
+  } finally {
+    (global as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = Real;
+  }
+  expect(errors.some((e) => e.startsWith('throw:'))).toBe(true);
+  expect(synth.spoken.map((u) => u.text)).toEqual(['接著播的']);
+  expect(sp.isSpeaking()).toBe(true); // 第二則正在播 —— 佇列沒有卡死
 });
 
 test('dispose 之後不再有任何 utterance 進引擎', async () => {

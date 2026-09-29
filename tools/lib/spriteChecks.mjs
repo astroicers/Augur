@@ -215,25 +215,42 @@ export function checkFormatAndHygiene(sheets, manifest) {
        *  - **過渡寬度 < 2.0 → warn。** 那個門檻**未經真素材校準**，
        *    而猜一個數字放進硬失敗，第一次交付就會紅在一個沒有根據的值上（SP-7.6 的前例）。
        */
-      let semiCount = 0;
-      let rampMoment = 0;
+      // 兩遍掃描。第一遍找輪廓（α≥128 遮罩的邊界）；第二遍只在
+      // 「輪廓 ± 3×下限」的帶內累計半透明統計。
+      //
+      // ⚠️ **不能對整格積分（2026-09-29 對抗性複審抓到的自我廢除）。**
+      // 第一版把全格的半透明像素都灌進 semiCount 與一階矩，於是一張
+      // 完全 1-bit 硬邊的剪影，只要身體內部有一塊 70×70、α=120 的軟陰影，
+      // 就同時逃過 error（semiCount>0）與 warn（矩被灌大到 impliedH=5.78）——
+      // 檢查零輸出，而「半透明塗抹」與「硬邊」正是這條要抓的缺陷族。
+      // 這與眨眼侵蝕、羽化寬度兩次踩過的是同一個坑：門檻參數取自缺陷會影響的量。
+      const boundary = new Uint8Array(cellPx * cellPx);
       let perimeter = 0;
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
-          const a = v.px(x, y)[3];
-          if (a > 0 && a < 255) {
-            semiCount++;
-            // 一階矩：2·min(α, 1−α)。對寬 h 的線性斜坡，沿法線的積分恰為 h/2，
-            // 與斜坡的相位、取樣落點無關 —— 「數半透明像素」則不然：
-            // 守恆斜坡（相位修正後）h=1 與 h=2 的半透明像素**一樣多**（各 2 顆/邊），
-            // 計數法對 h<2 完全失去鑑別力，還把合規下限 h=2 誤 warn 成 1.5。
-            rampMoment += (2 * Math.min(a, 255 - a)) / 255;
+          if (v.px(x, y)[3] < 128) {
+            continue;
           }
-          if (a >= 128) {
-            const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
-            if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
-              perimeter++;
-            }
+          const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
+            boundary[y * cellPx + x] = 1;
+            perimeter++;
+          }
+        }
+      }
+      const rampBandReach = 3 * Math.max(1, Math.floor(0.004 * cellPx));
+      const rampBand = dilate(boundary, cellPx, rampBandReach);
+      let semiCount = 0;
+      let rampMoment = 0;
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          const a = v.px(x, y)[3];
+          if (a > 0 && a < 255 && rampBand[y * cellPx + x]) {
+            semiCount++;
+            // 一階矩：2·min(α, 1−α)。對寬 h 的線性斜坡，沿法線的積分恰為 h/2。
+            // 「數半透明像素」不行：守恆斜坡下 h=1 與 h=2 的半透明像素一樣多
+            // （各 2 顆/邊），計數法對 h<2 失去鑑別力，還把合規下限誤 warn 成 1.5。
+            rampMoment += (2 * Math.min(a, 255 - a)) / 255;
           }
         }
       }
@@ -246,6 +263,12 @@ export function checkFormatAndHygiene(sheets, manifest) {
         // 現在先把比值換回過渡寬度 h，再對規格自己的 0.004·S 比。
         // implied h = 2 × (矩總和 / 周長)。校準（兩種斜坡實測）：
         // 舊相位 h=1/2/4 → 1.00/2.00/4.00；守恆斜坡 h=1/2/4 → 1.00/2.01/4.02。
+        // ⚠️ **上表是軸向邊、整數相位下的數字，不是普遍性質**（2026-09-29 複審實測）：
+        // 次像素相位讓 h=2 讀 2.01–2.50（+25% 擺動）、45° 斜邊高估 ~1.5×、
+        // 曲線剪影 h=1.5 讀 1.9 貼線 —— 方向恆為**高估**，所以不會誤紅合規素材，
+        // 但「≥2px 下限」對非軸向素材的實際執法力只有 ~1.0–1.5px。
+        // 這是已知限制：warn 級、未經真素材校準，等真素材再決定要不要換
+        // 沿法線的量測（成本高一個量級）。
         const impliedH = (2 * rampMoment) / perimeter;
         // 0.004·S 在 S=512 是 2.048 —— 但羽化只能畫整數像素，2px 就是最接近的
         // 可畫值，整個 repo（含電池 B 列「SP-2.14 下限」）也都以 2px 為下限。
@@ -2125,7 +2148,9 @@ export const STROKE_MEASURE_TUNING = {
  * **校準現況（2026-09-29，fixture 斜坡相位修正 + 內緣解混之後）**：
  * - 電池 20/20（`node tools/stroke-battery.mjs`，有退出碼、在閘門與 CI 裡）。
  * - 解析地面真值（8× supersample disc，含內緣真實混色）：
- *   D ∈ [6, 10] 偏差 **+0.03 ~ +0.08**，填色相依擺動 0.017px。
+ *   D ∈ [6, 10] 偏差 **+0.03 ~ +0.08**、填色相依擺動 <0.01px，
+ *   且對內緣過渡寬 wIn ∈ [0, 2px] 穩定（兩圈解混 + 填色搜尋 3×3→5×5 之後；
+ *   一圈版在 wIn=2 時偏差 −0.26，真 7.4px 的合規描邊被推出下限硬紅）。
  * - ⚠️ 合成 fixture（內緣硬過渡，解混無素材可解）殘餘偏差約 **−0.2**，
  *   電池 R 列（7.4px）量 7.170、餘裕只剩 **0.002px** —— 貼線過。
  *   這 −0.2 的來源尚未定位（與內緣無關），第一批真素材到貨時要重量。
@@ -2338,6 +2363,12 @@ export function measureStrokeWidths(directions, manifest) {
     // 合成 fixture 的內緣是硬過渡（無混色像素），所以這一段在電池上零影響 ——
     // 它保護的是真素材。
     {
+      // 兩圈，不是一圈（2026-09-29 複審抓到）：內緣過渡 1px 時一圈就夠，
+      // 但 SP-2.14 自己對外緣要求 2px 軟邊，軟筆刷/高解析縮圖的內緣一樣會有
+      // ≥1.5px 的過渡 —— 第二圈混色像素（~25% 描邊成分）既不與 cls-3 四鄰接
+      // （永遠標不進第一圈），還會混進第一圈的鄰域填色平均把 t 壓低。
+      // 實測（解析地面真值、skin 填色）：只解一圈時 wIn=2 偏差 −0.26，
+      // 真 7.4px 的合規描邊被推出下限硬紅（7.137 < 7.168）。
       const isInnerEdge = new Uint8Array(N);
       for (let y = 1; y < P - 1; y++) {
         for (let x = 1; x < P - 1; x++) {
@@ -2353,24 +2384,44 @@ export function measureStrokeWidths(directions, manifest) {
       for (let y = 1; y < P - 1; y++) {
         for (let x = 1; x < P - 1; x++) {
           const i = y * P + x;
+          if (isInnerEdge[i] || cls[i] !== 2) {
+            continue;
+          }
+          if (isInnerEdge[i - 1] === 1 || isInnerEdge[i + 1] === 1 || isInnerEdge[i - P] === 1 || isInnerEdge[i + P] === 1) {
+            isInnerEdge[i] = 2; // 第二圈
+          }
+        }
+      }
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
           if (!isInnerEdge[i]) {
             continue;
           }
-          // 鄰接填色 = 8 鄰域中「非邊界」的不透明非描邊像素平均
+          // 鄰接填色 = 「非邊界（兩圈都不是）」的不透明非描邊像素平均。
+          // ⚠️ 先找 3×3，找不到再擴 5×5 —— 軸向的內緣帶上，第一圈像素的
+          // 8 鄰域可以**全部**是描邊/一圈/二圈（上=cls3、左右=一圈、下與對角=二圈），
+          // 只搜 3×3 會 n=0 而放棄解混：實測整排 t=0.37~0.84 的混色像素被歸零，
+          // wIn=0 的偏差從 +0.05 惡化到 −0.18 —— 比不修還糟。
           let fr = 0;
           let fg = 0;
           let fb = 0;
           let n = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const j = i + dy * P + dx;
-              if (j === i || cls[j] !== 2 || isInnerEdge[j]) {
-                continue;
+          for (let radius = 1; radius <= 2 && n === 0; radius++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dy), Math.abs(dx)) !== radius) {
+                  continue; // 只掃這一圈殼，內圈上一輪掃過了
+                }
+                const j = i + dy * P + dx;
+                if (j < 0 || j >= N || cls[j] !== 2 || isInnerEdge[j]) {
+                  continue;
+                }
+                fr += R[j];
+                fg += G[j];
+                fb += B[j];
+                n++;
               }
-              fr += R[j];
-              fg += G[j];
-              fb += B[j];
-              n++;
             }
           }
           if (!n) {

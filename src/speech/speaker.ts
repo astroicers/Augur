@@ -136,10 +136,11 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
    * 而且 `preferredVoice` 找不到時什麼都不會說。
    * 播報進行中不換，避免換到一半的怪聲。
    */
-  const onVoicesChanged = () => {
+  let voicesDirty = false;
+  const repickVoice = () => {
     try {
       const vs = synth.getVoices();
-      if (!vs.length || speaking) {
+      if (!vs.length) {
         return;
       }
       const next = pickVoice(vs, opts.preferredVoice);
@@ -147,8 +148,19 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
         voice = next;
       }
     } catch {
-      /* 同上：取不到就維持現狀 */
+      /* 取不到就維持現狀 */
     }
+  };
+  const onVoicesChanged = () => {
+    // ⚠️ 播報中不能**丟棄**這個事件，只能**延後**（2026-09-29 複審抓到）：
+    // 中文一則實測 ~14 秒，Windows/Chrome 的補批 voiceschanged 落在播報中
+    // 是常態 —— 第一版直接 return，等於把「挑到 null 就一輩子是 null」
+    // 又原樣搬回來。改記 dirty，這一則 finish 之後、下一則開播之前重挑。
+    if (speaking) {
+      voicesDirty = true;
+      return;
+    }
+    repickVoice();
   };
   try {
     synth.addEventListener('voiceschanged', onVoicesChanged);
@@ -179,6 +191,10 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       settled = true;
       clearWatchdog();
       speaking = false;
+      if (voicesDirty) {
+        voicesDirty = false;
+        repickVoice();
+      }
       if (err) {
         opts.events?.onError?.(err);
       } else {

@@ -232,6 +232,15 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         const fp = `alert:panel:${opts.panelId}`;
         const existing = episodes.get(fp);
         if (existing) {
+          // ⚠️ severity 要**就地跟上目前的選項值**（2026-09-29 複審抓到）：
+          // 降級 episode 的 severity 是猜的（不是事實），而它一旦建立就定格 ——
+          // 最壞組合是 fallbackSeverity=info、minSeverity=warning 時告警被過濾掉，
+          // 使用者發現沒聲音、把 fallbackSeverity 調高想救，**也救不回來**：
+          // episode 還是舊的 info，直到 resolved 前永遠沉默。
+          // 具名規則的 episode 不在此列 —— 它們的 severity 是 label 記錄的事實，
+          // 「複製不重算」的不變量仍然成立；這裡改的只是自己合成的猜測值。
+          existing.severity =
+            typeof opts.fallbackSeverity === 'function' ? opts.fallbackSeverity() : opts.fallbackSeverity;
           return [existing];
         }
         const ep: ParsedAlert = {
