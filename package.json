@@ -10,7 +10,7 @@
     "lint": "eslint --cache .",
     "lint:fix": "npm run lint -- --fix && prettier --write --list-different .",
     "e2e": "playwright test",
-    "server": "npm run build && docker compose -f monitoring/docker-compose.yml up -d",
+    "server": "npm run build && docker compose -f monitoring/docker-compose.yml up -d && bash tools/check-server.sh",
     "sign": "sign-plugin",
     "test:unit": "jest --maxWorkers=2",
     "server:down": "docker compose -f monitoring/docker-compose.yml down",
