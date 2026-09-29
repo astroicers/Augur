@@ -232,7 +232,22 @@ export function checkFormatAndHygiene(sheets, manifest) {
         }
       }
       if (perimeter > 0) {
-        const rampPx = semiCount / perimeter;
+        // ⚠️ **量到的是比值，門檻要換算回同一個單位再比。**
+        // 第一版寫成 `ratio < 2`，把規格的像素數 2 直接當門檻用 ——
+        // 但上表推導的是 `比值 = 2h − 1`，比值 2 對應的是 h = **1.5px**：
+        // 實際的執法下限比規格低 25%，一張 1.5px 羽化的圖從整套檢查拿到**零輸出**。
+        // 變數名叫 rampPx 也是共犯（聽起來是像素，裝的是比值）。
+        // 現在先把比值換回過渡寬度 h，再對規格自己的 0.004·S 比。
+        const ratio = semiCount / perimeter;
+        const impliedH = (ratio + 1) / 2;
+        // 0.004·S 在 S=512 是 2.048 —— 但羽化只能畫整數像素，2px 就是最接近的
+        // 可畫值，整個 repo（含電池 B 列「SP-2.14 下限」）也都以 2px 為下限。
+        // 直接拿 2.048 比會把合規下限自己 warn 掉，故向下取整到可繪製像素。
+        const minH = Math.floor(0.004 * cellPx);
+        // 小塊（reactions 的 overlay）的角落讓比值略低於大周長極限的 2h−1：
+        // 實測 h=2 時五個小塊的 impliedH 是 1.983–1.992（偏差 ≤ 0.017px）。
+        // 給 0.05px 的量測容差 —— 足以蓋掉角落效應，吞不掉 h=1（impliedH ≈ 1.0）。
+        const measureTol = 0.05;
         if (semiCount === 0) {
           out.push({
             id: 'SP-2.14/1-bit硬邊',
@@ -243,15 +258,15 @@ export function checkFormatAndHygiene(sheets, manifest) {
             measured: 0,
             limit: 1,
           });
-        } else if (rampPx < 2) {
+        } else if (impliedH < minH - measureTol) {
           out.push({
             id: 'SP-2.14/漸層過窄',
             severity: 'warn',
             sheet: name,
             cell: c,
-            message: `剪影邊緣的平均過渡寬度 ${rampPx.toFixed(2)} px，SP-2.14 要求 ≥ 0.004·S（S=512 時 2px）。此門檻**未經真素材校準**，首版僅記錄`,
-            measured: rampPx,
-            limit: 2,
+            message: `剪影邊緣的平均過渡寬度約 ${impliedH.toFixed(2)} px（半透明/周長比 ${ratio.toFixed(2)}），SP-2.14 要求 ≥ 0.004·S = ${minH.toFixed(2)}px。此門檻**未經真素材校準**，首版僅記錄`,
+            measured: impliedH,
+            limit: minH,
           });
         }
       }
@@ -1797,7 +1812,20 @@ export function checkLuminanceAndStroke(directions, manifest) {
   for (let c = 0; c < CELL_COUNT; c++) {
     const w = widths[c];
     if (!Number.isFinite(w)) {
-      out.push({ id: 'SP-7.7/描邊', severity: 'error', sheet: 'directions', cell: c, message: '量不到描邊（剪影邊緣沒有落在亮度帶內的像素）' });
+      // ⚠️ 訊息不可以只講亮度帶。樣本是「亮度帶 ∩ 接近描邊參考色」的交集，
+      // 先前的訊息只提亮度帶 —— 當像素明明在帶內、是被顏色閘殺掉時
+      // （宣告了 stroke.colour 而畫的墨色偏了），畫師會拿著一句
+      // 對著檔案看顯然不成立的話排查九次。護欄講假話是它被關掉的最短路徑。
+      const colourHint = stroke.colour
+        ? `且接近宣告色 ${stroke.colour}（±${stroke.colourToleranceRgb ?? 12}/通道）`
+        : '且接近自素材取樣的描邊色';
+      out.push({
+        id: 'SP-7.7/描邊',
+        severity: 'error',
+        sheet: 'directions',
+        cell: c,
+        message: `量不到描邊 —— 剪影邊緣沒有「落在亮度帶內${colourHint}」的連續像素。兩個篩哪個殺的都有可能，先檢查墨色亮度，再檢查它與宣告色的距離`,
+      });
       continue;
     }
     if (Math.abs(w - target) > tol) {
@@ -1809,6 +1837,29 @@ export function checkLuminanceAndStroke(directions, manifest) {
         message: `描邊寬度 ${(w / cellPx).toFixed(4)}·S，宣告 ${stroke.width}·S ±${stroke.tolerance}·S`,
         measured: w / cellPx,
         limit: stroke.width,
+      });
+    }
+  }
+
+  // SP-6.5「描邊在 18 格中的寬度必須一致」的跨格統計。
+  // 每格獨立的 |w − target| ≤ tol 只隱含 spread ≤ 2·tol —— 兩格可以一格貼上限、
+  // 一格貼下限（差 0.032·S）而全綠，那正是「一致」要禁止的樣子。
+  // reactions 不在這裡量：SP-6.6 禁止 overlay 覆寫描邊（⊆ 臉部皮膚遮罩），
+  // 所以 overlay 上不存在也不准存在可量的描邊，「18 格」的另外 9 格由
+  // SP-7.4/視窗產權 與 SP-6.6 承接。
+  // 門檻取 tol（與電池 run() 的 spread 判定同值）；**未經真素材校準，首版僅 warn**。
+  const finite = widths.filter(Number.isFinite);
+  if (finite.length >= 2) {
+    const spread = Math.max(...finite) - Math.min(...finite);
+    if (spread > tol) {
+      out.push({
+        id: 'SP-7.7/描邊不一致',
+        severity: 'warn',
+        sheet: 'directions',
+        cell: widths.indexOf(Math.max(...finite)),
+        message: `九格描邊寬度極差 ${(spread / cellPx).toFixed(4)}·S（${spread.toFixed(2)}px），SP-6.5 要求一致；門檻 ${stroke.tolerance}·S 未經真素材校準，首版僅記錄`,
+        measured: spread / cellPx,
+        limit: stroke.tolerance,
       });
     }
   }
@@ -2005,6 +2056,62 @@ export const STROKE_MEASURE_TUNING = {
  *
  * 成本：9 格 512×512 實測 96–103 ms（同機器上 fixture 自己建一張 sheet 要 ~2 s）。
  */
+/**
+ * 從 master 格（cell 4）自取描邊參考色：剪影邊界向內 1.2·target 的環帶內，
+ * 完全不透明且亮度落在描邊帶（含 slack）的像素，4-bit 量化桶取眾數桶的實際平均。
+ * 環帶把「同亮度但在角色內部」的色塊（衣物主體）排除在取樣之外；
+ * 貼著描邊的窄衣物帶仍可能混入，但描邊繞整圈周長，眾數穩定屬於描邊
+ * （電池 J/K 列實測）。樣本太少（< 200）回 null，由呼叫端退回參考色。
+ */
+function sampleStrokeColour(directions, manifest, lumLo, lumHi) {
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const v = cellView(directions, 4, geom);
+  const N = P * P;
+  const mask = new Uint8Array(N);
+  for (let y = 0; y < P; y++) {
+    for (let x = 0; x < P; x++) {
+      mask[y * P + x] = v.px(x, y)[3] >= 128 ? 1 : 0;
+    }
+  }
+  const depth = Math.ceil(manifest.stroke.width * P * 1.2);
+  const core = erode(mask, P, depth);
+  const hist = new Map();
+  for (let y = 0; y < P; y++) {
+    for (let x = 0; x < P; x++) {
+      const i = y * P + x;
+      if (!mask[i] || core[i]) {
+        continue;
+      }
+      const [r, g, b, a] = v.px(x, y);
+      if (a < 250) {
+        continue;
+      }
+      const L = fastLuminance(r, g, b);
+      if (L < lumLo || L > lumHi) {
+        continue;
+      }
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const bin = hist.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+      bin.n++;
+      bin.r += r;
+      bin.g += g;
+      bin.b += b;
+      hist.set(key, bin);
+    }
+  }
+  let best = null;
+  for (const bin of hist.values()) {
+    if (!best || bin.n > best.n) {
+      best = bin;
+    }
+  }
+  if (!best || best.n < 200) {
+    return null;
+  }
+  return [Math.round(best.r / best.n), Math.round(best.g / best.n), Math.round(best.b / best.n)];
+}
+
 export function measureStrokeWidths(directions, manifest) {
   const tune = STROKE_MEASURE_TUNING;
   const geom = manifest.sheet;
@@ -2014,10 +2121,19 @@ export function measureStrokeWidths(directions, manifest) {
   const lumLo = stroke.luminanceMin - slack;
   const lumHi = stroke.luminanceMax + slack;
   const target = stroke.width * P;
-  // 亮度帶是第一道篩、宣告色是第二道 —— 兩道都要，缺一不可：
+  // 亮度帶是第一道篩、參考色是第二道 —— 兩道都要，缺一不可：
   // 只看亮度，合法的同亮度衣物（#7c7c7c，L = 0.2016）會被當成描邊；
   // 只看顏色，SP-6.4 規範的是亮度帶而 #6E7681 只是參考色。
-  const ref = hexToRgb(stroke.colour ?? '#6E7681');
+  //
+  // ⚠️ **未宣告 stroke.colour 時，參考色從素材自己取樣，不用硬編的 #6E7681。**
+  // 2026-09-28 複審實測：SP-6.4 是亮度帶規範（0.18–0.24），#7c7c7c（L=0.2016）
+  // 完全合規，但它離參考色 ΔRGB = 14/6/5 > 預設容差 12 —— 於是一張合規的圖
+  // 九格全 NaN 硬紅，訊息還說「亮度帶內沒有像素」（像素明明在帶內，是被
+  // 顏色閘殺的）。更糟的是 #6E7681 自己 L = 0.1786，**低於**帶的下限 0.18，
+  // 只靠 luminanceSlack 才活著 —— 唯一被乾淨接受的色系反而不滿足規範本身。
+  // 自取樣讓「畫師實際畫的描邊色」成為第二道篩的基準；宣告值仍然優先。
+  const sampled = stroke.colour ? null : sampleStrokeColour(directions, manifest, lumLo, lumHi);
+  const ref = stroke.colour ? hexToRgb(stroke.colour) : (sampled ?? hexToRgb('#6E7681'));
   const colourTol = stroke.colourToleranceRgb ?? 12;
   const maxRun = Math.ceil(target * 2.6);
   const firstHitLimit = Math.max(6, 0.8 * target);

@@ -900,6 +900,14 @@ const mutants = [
       }
     },
   },
+
+  {
+    // 2026-09-28 變異測試指出 SP-2.14 的兩個 id 在本檔一次都沒出現 ——
+    // 也就是「合成基準改回 1-bit」這種最根本的退化，沒有任何斷言會發現。
+    name: 'SP-2.14 整張 1-bit 硬邊（合成基準退回舊預設）',
+    expect: 'SP-2.14/1-bit硬邊',
+    sheets: () => buildSheets({ alphaRampPx: 0 }),
+  },
 ];
 
 
@@ -1161,6 +1169,14 @@ const NON_MUTANTS = [  {
     },
   },
   {
+    // SP-6.4 規範的是亮度帶（0.18–0.24），#7c7c7c（L=0.2016）完全合規。
+    // 未宣告 stroke.colour 時參考色改為自素材取樣 —— 硬編 #6E7681 曾讓這張圖
+    // 九格全 NaN 硬紅，訊息還把成因謊報成「亮度帶內沒有像素」。
+    name: '亮度帶內的替代描邊色 #7c7c7c（未宣告 stroke.colour）不得量不到',
+    forbid: 'SP-7.7/描邊',
+    sheets: () => buildSheets({ strokeColour: '#7c7c7c' }),
+  },
+  {
     name: '角色內部貼著邊緣的亮度帶內色不得拉高描邊量測',
     forbid: 'SP-7.7/描邊寬度',
     apply: (s) => {
@@ -1200,6 +1216,63 @@ for (const m of NON_MUTANTS) {
   }
   const got = ids(runAll(sheets, manifest));
   ok(`（不得誤紅）${m.name}`, !got.includes(m.forbid), `卻紅了 [${got.join(', ')}]`);
+}
+
+// ===========================================================================
+console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外釘）');
+// ---------------------------------------------------------------------------
+{
+  // 兩個方向都要有：h=1 必須 warn；h=2（規格下限的可繪製值）不得有任何 SP-2.14 輸出。
+  // 門檻的單位錯誤（比值 2 被當成像素 2，執法下限實為 1.5px）就是因為
+  // 沒有這一段而活了下來。
+  const warn1 = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 1 }), manifest)
+    .filter((f) => f.id === 'SP-2.14/漸層過窄');
+  ok('h=1 的過渡寬度必須被記為 SP-2.14/漸層過窄', warn1.length === CELL_COUNT * 2,
+    `實得 ${warn1.length} 筆（應為 18）`);
+  ok('h=1 記到的 implied 過渡寬度落在 0.8–1.2px', warn1.every((f) => f.measured > 0.8 && f.measured < 1.2),
+    warn1.map((f) => f.measured.toFixed(2)).join(','));
+  const at2 = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 2 }), manifest)
+    .filter((f) => f.id.startsWith('SP-2.14'));
+  ok('h=2（合規下限）不得有任何 SP-2.14 輸出（含 warn）', at2.length === 0,
+    at2.map((f) => `${f.sheet}#${f.cell} ${f.measured?.toFixed(3)}`).join(' '));
+
+  // ⚠️ 上面兩條在「門檻寫錯單位」（比值 2 被當像素 2，執法下限 1.5px）的舊版下
+  // **也都會過** —— 整數羽化畫不出落在 1.5 與 2 之間的過渡寬度。
+  // 這裡手工構造一張：把 h=2 的格每 3 個半透明像素殺掉 1 個
+  // （semiCount × 2/3，perimeter 不動）→ 比值 3.0 → 2.0 → implied 過渡寬度恰 1.50px。
+  // 舊門檻（< 1.5）對它視而不見；正確門檻（< 2 − 容差）必須 warn。
+  const midSheets = clone(base);
+  {
+    const d = midSheets.directions;
+    let k = 0;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const o = (y * SHEET + x) * 4;
+        const a = d.data[o + 3];
+        if (a > 0 && a < 255 && k++ % 3 === 0) {
+          d.data[o + 3] = a >= 128 ? 255 : 0;
+        }
+      }
+    }
+  }
+  const mid = C.checkFormatAndHygiene(midSheets, manifest)
+    .filter((f) => f.id === 'SP-2.14/漸層過窄' && f.sheet === 'directions' && f.cell === 0);
+  ok('過渡寬度 1.5px（合規下限的 75%）必須 warn —— 這是單位錯誤唯一的判別點', mid.length === 1,
+    `實得 ${mid.length} 筆`);
+  if (mid.length === 1) {
+    ok('1.5px 案例記到的 implied 過渡寬度落在 1.4–1.6px', mid[0].measured > 1.4 && mid[0].measured < 1.6,
+      mid[0].measured.toFixed(3));
+  }
+
+  // SP-6.5「寬度一致」的跨格統計（warn 級）。兩個方向：
+  // 單格加寬 1.8px（每格獨立檢查抓不到 —— 仍在 ±tol 內）必須被 spread 記下；基準不得誤記。
+  const spreadWarn = C.checkLuminanceAndStroke(buildSheets({ perCellStrokePx: { 5: 10.0 } }).directions, manifest)
+    .filter((f) => f.id === 'SP-7.7/描邊不一致');
+  ok('單格 10px（其餘 8.192px）必須觸發 SP-7.7/描邊不一致', spreadWarn.length === 1,
+    `實得 ${spreadWarn.length} 筆`);
+  const spreadBase = C.checkLuminanceAndStroke(clone(base).directions, manifest)
+    .filter((f) => f.id === 'SP-7.7/描邊不一致');
+  ok('基準九格同寬不得觸發描邊不一致', spreadBase.length === 0, `卻有 ${spreadBase.length} 筆`);
 }
 
 // ===========================================================================
