@@ -99,3 +99,32 @@ jobs:
       # CI 的工作樹沒有 dist，排在前面只會拿到 NOT-BUILT 並回 0（等於沒跑）。
       - name: bundle 相依
         run: node tools/check-bundle-deps.mjs
+
+  # e2e：真的把 compose 環境起起來、把 plugin 掛進 Grafana、用瀏覽器驗
+  # G-ADR004-1（plugin 載入）與 G-ADR004-2（告警走完導播管線）。
+  # 這是唯一能抓到「掛載空了 / 容器沒重掃 plugin」那類環境級失效的檢查 ——
+  # 2026-09-28 實地發生過一次（e2e 2 failed 而 npm run server 照樣 exit 0），
+  # 當時 CI 完全沒有這一層。單獨一個 job、不進 node 版本矩陣：它驗的是
+  # 環境接線不是程式碼相容性，跑兩份只會多付一倍鏡像拉取時間。
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: 產 CI 專用的 monitoring/.env
+        # compose 宣告 env_file: ./.env，檔案缺席是 fatal。本機的 .env 不進版控
+        # （裡面是真密碼），CI 用固定的 admin/admin —— plugin-e2e 的預設憑證。
+        run: printf 'GF_ADMIN_USER=admin\nGF_ADMIN_PASSWORD=admin\nWEBHOOK_SECRET=ci-only\n' > monitoring/.env
+      - run: docker compose -f monitoring/docker-compose.yml up -d
+      - name: 等 plugin 真的註冊進 Grafana
+        run: bash tools/check-server.sh
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - name: 失敗時傾印 Grafana 日誌
+        if: failure()
+        run: docker logs augur-grafana 2>&1 | tail -120

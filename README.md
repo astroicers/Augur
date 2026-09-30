@@ -56,6 +56,35 @@ ADR-004 的 5 個 POC gate 全數 PASS 後才升 Accepted —— 它先前刻意
 ADR-002 有兩個抽象被 ADR-004 **明文繼承**，不隨 supersede 作廢：
 `BroadcastPlan` 事件契約、`AvatarController` avatar-agnostic 介面。
 
+## 安裝（給要在自己的 Grafana 上跑這個 panel 的人）
+
+> 前提：Grafana ≥ 13.2（**只驗過 13.2.2** —— `plugin.json` 宣告的 `>=12.3.0`
+> 是腳手架預設值，12.x 帶未實測）。plugin 未簽署，Grafana Cloud 裝不了。
+
+1. 拿到 zip：`npm run package` 會產出 `augur-mascot-panel-<版本>.zip`
+   （或向專案要現成的產物）。
+2. 解壓到 Grafana 的 plugins 目錄（預設 `/var/lib/grafana/plugins`）：
+   ```bash
+   unzip augur-mascot-panel-0.1.0.zip -d /var/lib/grafana/plugins/
+   ```
+   解出來的目錄名就是 plugin id（`augur-mascot-panel/`），不要改名。
+3. 允許載入未簽署的 plugin —— 兩種寫法擇一：
+   ```ini
+   # grafana.ini
+   [plugins]
+   allow_loading_unsigned_plugins = augur-mascot-panel
+   ```
+   ```bash
+   # 容器環境變數
+   GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=augur-mascot-panel
+   ```
+4. **重啟 Grafana**。它只在行程啟動時掃描 plugins 目錄 —— 不重啟就是沒裝。
+   成功的話啟動日誌會有一行 `Plugin registered pluginId=augur-mascot-panel`
+   （前面跟著一句 `Permitting unsigned plugin` 的警告，那是預期的）。
+5. 在 dashboard 加一個 **Mascot** panel，並讓它的告警規則把
+   `__dashboardUid__` 與 `__panelId__` 寫進 annotations —— alertState
+   才到得了 panel（範例見 `monitoring/grafana/provisioning/alerting/`）。
+
 ## 開發
 
 ```bash
