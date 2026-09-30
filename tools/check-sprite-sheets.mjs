@@ -731,9 +731,14 @@ function report(findings, centroids, manifest, log = console.log) {
 
   const detail = (f) => {
     const where = [f.sheet, f.cell !== undefined ? `格${f.cell}` : null].filter(Boolean).join(' ');
+    // ⚠️ **limit 不一定是上限。** minBrowContrast（SP-7.6）是**下限**，
+    // 舊格式化一律印「上限…超出…」，合格素材（0.606 ≥ 0.25）也被印成
+    // 「實測 0.6061 / 上限 0.2500；超出 0.3561」—— 畫師會以為要把對比調低。
+    // 這裡不猜方向：印中性的「門檻」與**帶符號**的差值（正=高於門檻、負=低於），
+    // 是哪個方向由各 finding 的 message 自己講。
     const over =
       f.measured !== undefined && f.limit !== undefined
-        ? `  [實測 ${fmt(f.measured)} / 上限 ${fmt(f.limit)}；超出 ${fmt(Math.abs(f.measured - f.limit))}]`
+        ? `  [實測 ${fmt(f.measured)} / 門檻 ${fmt(f.limit)}；差 ${f.measured >= f.limit ? '+' : ''}${fmt(f.measured - f.limit)}]`
         : '';
     return `  ${f.id.padEnd(20)} ${where.padEnd(18)} ${f.message}${over}`;
   };

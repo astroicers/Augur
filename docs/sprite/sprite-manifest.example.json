@@ -5,7 +5,7 @@
     "用版控的 manifest 當開關而不是『PNG 在不在』，是為了讓關閘成為一筆看得見的 diff。",
     "不記錄兩張 sheet 的路徑，只記 sha256（SP-7.15）：webpack 會把它們改成 hash 檔名，記路徑必然過期。",
     "所有容差與門檻都住在這裡，不是寫死在腳本裡 —— SP-7.12 不提供旁路，要放寬只能改這個檔，",
-    "而改這個檔會被 sha256 連帶影響、視同規格變更須經 review。"
+    "而改這個檔視同規格變更、須經 review（sha256 只蓋兩張 PNG、不蓋本檔 —— 真正的承接是 validator 逐值驗證 + review，見 SP-7.12 的訂正）。"
   ],
   "version": 1,
   "sheet": { "width": 1536, "height": 1536, "cellPx": 512, "cols": 3, "rows": 3 },
@@ -48,7 +48,7 @@
     "irisToleranceRgb": 40,
     "skin": "#E2C8B1",
     "skinToleranceRgb": 24,
-    "hair": "TBD-見 SP-6.2 的髮色待裁定項（實測 #C0D0E0 的 L = 0.617 超出夾制上限 0.61）",
+    "hair": "TBD-見 SP-0.8 與 §10 表第 1 項的髮色待裁定（實測 #C0D0E0 的 L = 0.617 超出夾制上限 0.61；SP-6.2 無此待裁定項，舊指向錯誤）",
     "hairToleranceRgb": 24,
     "exemptToleranceRgb": 24
   },
