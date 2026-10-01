@@ -74,5 +74,8 @@ commit log of PR #4 carries the full account with measurements.
   Expect them to need attention across Grafana upgrades.
 - Speech quality is whatever the viewer's operating system provides. This is the price
   of removing the backend; the previous architecture used Edge TTS neural voices.
-- Developed and tested against Grafana 13.2.x. The declared minimum of 12.3.0 is the
-  scaffold's default and has not been verified.
+- Declared minimum Grafana 12.3.0, now actually verified: the browser e2e gates pass
+  on 12.3.0, 12.3.11, 12.4.0, 13.0.1 and 13.2.2. Before the 2026-10-01 fix the panel
+  *loaded* on 12.3.x but silently degraded — Grafana renamed the internal
+  `alertState.dashboardId` to `dashboardUID` in 12.4.0, so on 12.3.x rule details were
+  never fetched and every alert was read as a generic "alert" at the fallback severity.

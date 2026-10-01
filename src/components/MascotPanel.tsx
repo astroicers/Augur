@@ -485,9 +485,17 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     busyRef.current = true;
 
     const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
+    // ⚠️ **dashboard uid 不能只從 alertState 拿。** alertState 是 `@internal`，
+    // 而它的形狀**真的在 minor 版之間變過**（2026-10-01 實測，Grafana 原始碼逐 tag 比對）：
+    // 12.3.0–12.3.11 的物件是 `{state,id,panelId,dashboardId}`（數字 id），
+    // 12.4.0 起才是 `{…, dashboardUID}`。在 12.3.x 上讀 dashboardUID 得到 undefined
+    // → rules 查詢被跳過 → 整條退到泛用降級：規則名與數值消失、warning 被念成 critical。
+    // 後備用**公開**型別的 `data.request.dashboardUID`（@grafana/data 的 DataQueryRequest）——
+    // 這正是 ADR-004 標過的 @internal 風險實際發生了一次，不要只靠那一個欄位。
+    const dashboardUid = alertState?.dashboardUID ?? data.request?.dashboardUID;
 
     void source
-      .evaluate(alertState, alertState?.dashboardUID)
+      .evaluate(alertState, dashboardUid)
       .then((alerts) => {
         const plans: FeedLine[] = [];
         for (const a of alerts) {

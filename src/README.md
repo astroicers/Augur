@@ -9,9 +9,13 @@ has the dashboard open.
 
 ## Requirements
 
-- Grafana **13.2.x** is what this is developed and tested against. The plugin declares
-  `>=12.3.0`, which is the scaffold's default and **has not been verified** on anything
-  below 13.x — treat older versions as untested rather than supported.
+- Grafana **>= 12.3.0**. Developed against 13.2.x; the two browser e2e gates
+  (plugin loads; an alert reaches the panel and is spoken by rule name) were run
+  on **12.3.0, 12.3.11, 12.4.0, 13.0.1 and 13.2.2** on 2026-10-01. The frontend
+  sandbox gate (G-ADR004-4) has only been run on 13.2.2.
+  12.3.x needed a fix to get there: its `alertState` object carries a numeric
+  `dashboardId` rather than `dashboardUID` (renamed in 12.4.0), so the panel now
+  falls back to the public `data.request.dashboardUID`.
 - A browser with the Web Speech API (Chrome and Edge are the tested ones).
 - For Chinese speech: a Chinese voice installed **in your operating system**. The
   browser does not ship voices of its own — it exposes whatever the OS provides. The

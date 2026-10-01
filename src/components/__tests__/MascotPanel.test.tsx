@@ -459,3 +459,21 @@ test('改 fallbackSeverity 後，新的降級 episode 用新值（ref 同步不�
   // ref 同步拿掉的話，這裡讀到的是掛載時捕捉的 'critical'。
   expect(spoken[2]!.emotion).toBe('warning');
 });
+
+/**
+ * Grafana 12.3.x 的 alertState 沒有 dashboardUID（欄位叫 dashboardId、是數字 id）。
+ * 2026-10-01 在 12.3.0 / 12.3.11 實測：plugin 會載入，但 rules 查詢被跳過，
+ * 念出來的是泛用的「告警」—— 規則名、數值都沒了，嚴重度一律用 fallback。
+ * dashboard uid 改由公開型別的 data.request.dashboardUID 後備。
+ */
+test('alertState 沒有 dashboardUID（Grafana 12.3.x 的形狀）時，改用 data.request.dashboardUID 查規則', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'PocAlwaysFiring', severity: 'critical', summary: '恆定', value: 1 }]);
+  const legacyAlertState = { state: 'alerting', id: 3, panelId: 7, dashboardId: 42 }; // 12.3.x 的實際形狀
+  const p = props({ alertState: legacyAlertState });
+  (p.data as unknown as { request: { dashboardUID: string } }).request = { dashboardUID: 'dash-1' };
+  render(<MascotPanel {...p} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(mockedFetch).toHaveBeenCalledWith('dash-1', 7);
+  // 沒有後備時這裡會是泛用降級句「告警」，不是規則名。
+  expect(spoken[0]!.text).toContain('PocAlwaysFiring');
+});
