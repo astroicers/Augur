@@ -113,6 +113,14 @@ const BODY_TOP = 0.586 * S;
 const BODY_BOTTOM = 0.89 * S;
 const STROKE_PX = 0.016 * S;
 
+/**
+ * fixture 的解析幾何，給 selftest 用來**不經估計器**驗證 fixture 自己畫的寬度。
+ * 估計器與 fixture 互相校準是循環論證 —— 兩個都錯同一個方向時誰也看不出來
+ * （2026-10-01：fixture 窄 0.23px 而電池全綠，正是這樣藏住的）。
+ */
+export const FIXTURE_GEOMETRY = Object.freeze({ head: HEAD, bodyTopY: BODY_TOP });
+
+
 function inHead(x, y) {
   const dx = (x + 0.5 - HEAD.cx) / HEAD.rx;
   const dy = (y + 0.5 - HEAD.cy) / HEAD.ry;
@@ -132,6 +140,106 @@ function inEllipse(x, y, cx, cy, rx, ry) {
   const dx = (x + 0.5 - cx) / rx;
   const dy = (y + 0.5 - cy) / ry;
   return dx * dx + dy * dy <= 1;
+}
+
+// ---------------------------------------------------------------------------
+// 解析邊界距離：頭（橢圓）∪ 身體（梯形）的真實輪廓。
+//
+// ⚠️ **描邊寬度必須從核心的「邊緣」量，不是從核心的「像素中心」量。**
+// 2026-10-01 實測：舊做法是「描邊像素中心到核心像素中心的 chamfer 距離 ≤ W」，
+// 而核心的幾何邊緣在最外圈中心之外（軸向 0.5px、45° 約 0.35px、一般角度更少）——
+// 於是 fixture 畫出的真實描邊寬比宣告**少約 0.23px**。證據鏈：
+//  - 同一個「精確寬 8.192」的解析圓環，估計器讀 +0.02~+0.07（對 fixture 式斜坡）
+//  - 但 fixture 上讀 −0.18 → 差額只能是圖本身窄了；A 列（1-bit）也獨立指向 ~7.96
+//  - 電池 R 列「7.4px」實際只畫了 ~7.17，壓在容差下限 7.168 上，餘裕 0.002px
+// 這是本 repo 第三次「fixture 畫不出它宣稱的東西」（前兩次：1-bit 違反 SP-2.14、
+// 斜坡相位錯半格）。
+//
+// 修法：對解析形狀算真正的點到輪廓距離；像素中心取樣一條精確偏移帶是無偏的。
+// 輪廓 = 頭的弧（只取身體之外的部分）+ 身體梯形的四邊（頂邊扣掉頭蓋住的那段）。
+// 身體的連續邊界取與 inBody() 的整數列取樣一致的位置（頂/底對齊列邊緣，
+// 兩側用與 inBody 相同的線性半寬，換成連續座標）。
+
+const BODY_Y0 = Math.ceil(BODY_TOP); // 第一個被 inBody 取到的列的上緣
+const BODY_Y1 = Math.floor(BODY_BOTTOM) + 1; // 最後一列的下緣
+const bodyHalfAt = (Y) => 106 + (40 * (Y - 0.5 - BODY_TOP)) / (BODY_BOTTOM - BODY_TOP);
+// 頭與身體頂邊的交點（頭在 Y0 以下的部分整個落在身體內：那裡頭半寬 ~31 < 身體半寬 ~106）
+const HEAD_JX = HEAD.rx * Math.sqrt(Math.max(0, 1 - ((BODY_Y0 - HEAD.cy) / HEAD.ry) ** 2));
+
+function segDist(px, py, ax, ay, bx, by) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
+}
+
+/** 點到橢圓輪廓的精確距離（Newton 解參數角），回傳 [距離, 垂足 Y]。 */
+function ellipseDist(px, py) {
+  const a = HEAD.rx;
+  const b = HEAD.ry;
+  const x = Math.abs(px - HEAD.cx);
+  const y = Math.abs(py - HEAD.cy);
+  let t = Math.atan2(a * y, b * x);
+  for (let k = 0; k < 12; k++) {
+    const c = Math.cos(t);
+    const sn = Math.sin(t);
+    const f = (a * a - b * b) * c * sn - x * a * sn + y * b * c;
+    const df = (a * a - b * b) * (c * c - sn * sn) - x * a * c - y * b * sn;
+    if (df === 0) {
+      break;
+    }
+    t = Math.min(Math.PI / 2, Math.max(0, t - f / df));
+  }
+  const fx = a * Math.cos(t);
+  const fy = b * Math.sin(t);
+  const footY = HEAD.cy + Math.sign(py - HEAD.cy || 1) * fy;
+  return [Math.hypot(x - fx, y - fy), footY];
+}
+
+/** 連續座標 (X, Y) 到「頭 ∪ 身體」輪廓的距離（不分內外，內外由核心取樣決定）。 */
+function distToCoreOutline(X, Y) {
+  const cx = 0.5 * S;
+  // 頭：只有身體頂邊以上的弧是聯集的輪廓；垂足落在以下時，最近的合法點是交點。
+  const [de, footY] = ellipseDist(X, Y);
+  let d =
+    footY < BODY_Y0
+      ? de
+      : Math.min(Math.hypot(X - (cx - HEAD_JX), Y - BODY_Y0), Math.hypot(X - (cx + HEAD_JX), Y - BODY_Y0));
+  const h0 = bodyHalfAt(BODY_Y0);
+  const h1 = bodyHalfAt(BODY_Y1);
+  // 身體頂邊（扣掉頭蓋住的中段）、兩側、底邊
+  d = Math.min(d, segDist(X, Y, cx - h0, BODY_Y0, cx - HEAD_JX, BODY_Y0));
+  d = Math.min(d, segDist(X, Y, cx + HEAD_JX, BODY_Y0, cx + h0, BODY_Y0));
+  d = Math.min(d, segDist(X, Y, cx - h0, BODY_Y0, cx - h1, BODY_Y1));
+  d = Math.min(d, segDist(X, Y, cx + h0, BODY_Y0, cx + h1, BODY_Y1));
+  d = Math.min(d, segDist(X, Y, cx - h1, BODY_Y1, cx + h1, BODY_Y1));
+  return d;
+}
+
+/**
+ * 點到一組「光柵定義的像素」（髮束）的邊緣距離：把每顆像素當單位方塊，
+ * 不是當中心點。髮束沒有解析形狀 —— 它就是畫出來的那些方塊。
+ */
+function distToPixelSquares(X, Y, mask, reach) {
+  const x0 = Math.max(0, Math.floor(X - reach));
+  const x1 = Math.min(S - 1, Math.ceil(X + reach));
+  const y0 = Math.max(0, Math.floor(Y - reach));
+  const y1 = Math.min(S - 1, Math.ceil(Y + reach));
+  let best = Infinity;
+  for (let qy = y0; qy <= y1; qy++) {
+    for (let qx = x0; qx <= x1; qx++) {
+      if (!mask[qy * S + qx]) {
+        continue;
+      }
+      const dx = Math.max(0, Math.abs(X - (qx + 0.5)) - 0.5);
+      const dy = Math.max(0, Math.abs(Y - (qy + 0.5)) - 0.5);
+      const dd = Math.hypot(dx, dy);
+      if (dd < best) {
+        best = dd;
+      }
+    }
+  }
+  return best;
 }
 
 /** 5-7-11 chamfer 距離變換（相對誤差約 2%），用來把描邊環畫在剪影外緣。 */
@@ -205,6 +313,8 @@ function drawDirectionCell(buf, ox, oy, gazeDx, gazeDy, opts = {}, cellIndex = 0
   // `strands`：四根漸細髮束。**真實畫稿必然有這類細長附屬物**，而面積÷周長的
   // 描邊估計器對它們極度敏感（複審實測四根就把 8.192 推到 9.505）。
   // 從顱骨兩側往下垂，末端收細到 2px。
+  // 髮束另記一份遮罩：它們沒有解析形狀，描邊距離要對「方塊」量（見 distToPixelSquares）。
+  const strandOnly = new Uint8Array(S * S);
   if (opts.strands) {
     for (const [baseX, dir] of [[0.315, -1], [0.345, -1], [0.655, 1], [0.685, 1]]) {
       const x0 = baseX * S;
@@ -216,6 +326,9 @@ function drawDirectionCell(buf, ox, oy, gazeDx, gazeDy, opts = {}, cellIndex = 0
           const x = cx + k;
           const y = Math.round(0.22 * S + t);
           if (x >= 0 && x < S && y >= 0 && y < S) {
+            if (!core[y * S + x]) {
+              strandOnly[y * S + x] = 1;
+            }
             core[y * S + x] = 1;
           }
         }
@@ -225,7 +338,6 @@ function drawDirectionCell(buf, ox, oy, gazeDx, gazeDy, opts = {}, cellIndex = 0
   const dist = distanceOutside(core);
   // `perCellStrokePx` 讓 selftest 造「單一格描邊寬度不同」的變異體（SP-6.5 跨格一致）。
   const strokePx = opts.perCellStrokePx?.[cellIndex] ?? opts.strokePx ?? STROKE_PX;
-  const strokeLimit = Math.round(strokePx * 5);
   const strokeRgb = opts.strokeColour ? hexToRgbLocal(opts.strokeColour) : PALETTE.stroke;
   // `strokeGapY`：該 y 區間不畫描邊（SP-2.8 下襬豁免、或肩部真的缺一段）。
   const gap = opts.strokeGapY ?? null;
@@ -234,18 +346,38 @@ function drawDirectionCell(buf, ox, oy, gazeDx, gazeDy, opts = {}, cellIndex = 0
   // 兩種畫法都是合法的 —— 而面積÷周長在兩者之間差 2.31 px，比整個容差窗還寬。
   const distIn = opts.strokeInside ? distanceOutside(invertMask(core)) : null;
 
+  // 預篩：chamfer 距離（中心到中心）在 W+3 以內的才算精確距離 —— 精確距離只差
+  // 不到 1px，預篩放寬 3px 不會漏，又把 Newton 迭代限制在輪廓附近的一圈。
+  const candLimit = Math.round((strokePx + 3) * 5);
+  const hasStrands = opts.strands === true;
+  /** 像素中心到「核心真實輪廓」的距離：頭∪身體用解析式，髮束用方塊。 */
+  const outlineDist = (x, y) => {
+    let d = distToCoreOutline(x + 0.5, y + 0.5);
+    if (hasStrands) {
+      d = Math.min(d, distToPixelSquares(x + 0.5, y + 0.5, strandOnly, strokePx + 1));
+    }
+    return d;
+  };
+
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const i = y * S + x;
       if (!core[i]) {
-        if (!opts.strokeInside && dist[i] > 0 && dist[i] <= strokeLimit && !inGap(y)) {
+        if (!opts.strokeInside && dist[i] > 0 && dist[i] <= candLimit && !inGap(y) && outlineDist(x, y) <= strokePx) {
           setPx(buf, ox, oy, x, y, strokeRgb);
         }
         continue;
       }
-      if (opts.strokeInside && distIn[i] > 0 && distIn[i] <= strokeLimit && !inGap(y)) {
-        setPx(buf, ox, oy, x, y, strokeRgb);
-        continue;
+      if (opts.strokeInside && !inGap(y)) {
+        // 髮束本身（頭/身體之外的細條）整根比描邊窄，內描邊時整根就是描邊 ——
+        // 與舊實作行為一致（舊的 distIn 對它們也全數 ≤ W）。
+        const isStroke =
+          strandOnly[i] === 1 ||
+          (distIn[i] > 0 && distIn[i] <= candLimit && distToCoreOutline(x + 0.5, y + 0.5) <= strokePx);
+        if (isStroke) {
+          setPx(buf, ox, oy, x, y, strokeRgb);
+          continue;
+        }
       }
       let colour;
       if (inHead(x, y)) {

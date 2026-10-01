@@ -34,7 +34,7 @@ import {
   PngFormatError,
 } from './lib/png.mjs';
 import { encodeGif } from './lib/gif.mjs';
-import { buildManifest, buildSheets, S, SHEET, SP_2_12_MARKS } from './lib/syntheticSheet.mjs';
+import { buildManifest, buildSheets, S, SHEET, SP_2_12_MARKS, FIXTURE_GEOMETRY } from './lib/syntheticSheet.mjs';
 import {
   CENTER_CELL,
   MIN_QUESTIONS_PER_CELL,
@@ -723,6 +723,69 @@ console.log('\n[2b] 從未被本檔呼叫過的函式（2026-09-29 變異測試�
   const fNone = C.checkOverlayOwnership(emptied, mNone).filter((f) => f.cell === 0);
   ok('未宣告時清空的格必須紅 SP-7.4/空格（上一條的反方向）',
     fNone.some((f) => f.id === 'SP-7.4/空格'), JSON.stringify(fNone.map((f) => f.id)));
+}
+
+// ===========================================================================
+console.log('\n[2c] fixture 自己畫的描邊寬度（不經估計器）');
+// ---------------------------------------------------------------------------
+{
+  // 估計器與 fixture 互相校準是循環論證：2026-10-01 之前 fixture 的描邊從核心
+  // **像素中心**量距，真實寬度比宣告窄 ~0.23px，而電池照樣 20/20 —— 估計器
+  // 讀得「準」，因為兩邊錯在同一個方向。這一段用一把**獨立的尺**量 fixture：
+  // 沿頭部橢圓的解析法線（不是遮罩梯度），對 1-bit 渲染的像素做線積分，
+  // 取大量法線的**平均**（不是眾數）。法線起點在各種次像素相位上，
+  // 像素場的線積分對相位平均是無偏的。
+  const { head: Hd, bodyTopY } = FIXTURE_GEOMETRY;
+  const strokeRgbFx = [0x6e, 0x76, 0x81];
+  const fixtureWidth = (sheets, cell) => {
+    const d = sheets.directions;
+    const ox = (cell % 3) * S;
+    const oy = Math.floor(cell / 3) * S;
+    const isStroke = (X, Y) => {
+      const px = Math.floor(X);
+      const py = Math.floor(Y);
+      if (px < 0 || py < 0 || px >= S || py >= S) {
+        return 0;
+      }
+      const o = ((oy + py) * SHEET + ox + px) * 4;
+      return d.data[o + 3] === 255 && d.data[o] === strokeRgbFx[0] && d.data[o + 1] === strokeRgbFx[1] &&
+        d.data[o + 2] === strokeRgbFx[2] ? 1 : 0;
+    };
+    let sum = 0;
+    let n = 0;
+    for (let k = 0; k < 600; k++) {
+      // 上半弧（遠離身體），參數角 t ∈ (π+0.25, 2π−0.25)
+      const t = Math.PI + 0.25 + ((Math.PI - 0.5) * (k + 0.5)) / 600;
+      const ex = Hd.cx + Hd.rx * Math.cos(t);
+      const ey = Hd.cy + Hd.ry * Math.sin(t);
+      if (ey > bodyTopY - 40) {
+        continue;
+      }
+      // 外法線 ∝ (cos t / rx, sin t / ry)
+      let nx = Math.cos(t) / Hd.rx;
+      let ny = Math.sin(t) / Hd.ry;
+      const L = Math.hypot(nx, ny);
+      nx /= L;
+      ny /= L;
+      let acc = 0;
+      const step = 0.02;
+      for (let u = -3; u <= 16; u += step) {
+        acc += isStroke(ex + nx * u, ey + ny * u);
+      }
+      sum += acc * step;
+      n++;
+    }
+    return sum / n;
+  };
+  for (const [label, opts, want] of [
+    ['預設（宣告 8.192）', { alphaRampPx: 0 }, 8.192],
+    ['strokePx 7.4（電池 R 列）', { alphaRampPx: 0, strokePx: 7.4 }, 7.4],
+    ['strokePx 9.0（電池 S 列）', { alphaRampPx: 0, strokePx: 9.0 }, 9.0],
+  ]) {
+    const w = fixtureWidth(buildSheets(opts), 4);
+    ok(`fixture 實際畫出的描邊寬 ≈ 宣告值：${label} → ${w.toFixed(3)}`, Math.abs(w - want) <= 0.06,
+      `差 ${(w - want).toFixed(3)} px（容許 ±0.06）`);
+  }
 }
 
 // ===========================================================================

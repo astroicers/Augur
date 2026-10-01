@@ -14,7 +14,7 @@
 
 **P2–P4 完成**：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位。**5 個 POC gate 全數 PASS。**
-90 個測試、11 個 suite，153 條 sprite 工具自測。commit 閘共 **10 道**：typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
+90 個測試、11 個 suite，156 條 sprite 工具自測。commit 閘共 **10 道**：typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 （CI 跑同樣 10 道；先前 CI 少了 bundle 相依那一道，而三份文件都寫「9 道」。）
 
 **P5 的工具側完成、素材側未開工**：精靈圖規格（`docs/sprite/sprite-sheet-spec.md`）、
