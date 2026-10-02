@@ -42,7 +42,7 @@ Port 刻意避開本機既有的 `fh-lgtm`（3000/3100/9090）：**Grafana 3002�
 
 ```bash
 cd monitoring
-cp .env.example .env            # 填 GF 帳密。WEBHOOK_SECRET 已無用途（bridge 已刪），見下方待裁定段
+cp .env.example .env            # 填 GF 帳密
 
 # 預設 = 只起效能（Grafana + Prometheus，2 容器）
 docker compose up -d
@@ -136,18 +136,40 @@ powershell -ExecutionPolicy Bypass -File .\alloy-install.ps1
 用 `docker network inspect bridge` 查出實際網段後補進腳本的 `$allowedRemote`。
 腳本對**既有規則**會就地收斂（舊版建立的可能是對全部來源開放），不會當作已經好了就跳過。
 
-## ⚠️ contactpoints / policies：待裁定，目前不通往任何地方
+## 告警通知：這個 stack 不 provision 任何 contact point
 
-`grafana/provisioning/alerting/contactpoints.yml` 仍然指向
-`http://host.docker.internal:3001/grafana/webhook` —— **那個 bridge 已於 `fbd81f4` 刪除**。
-它現在是一份指向不存在服務的 webhook 設定。
+panel 自己 pull 告警（ADR-004 決策 2），用不到 Grafana 的通知管線。
+舊的 `contactpoints.yml` / `policies.yml`（把所有告警送往已於 `fbd81f4` 刪除的 `:3001` 接收端）
+已於 2026-10-02 依 **ADR-004 決策 7 的訂正**刪除。
 
-**為什麼還留著**：ADR-004 決策 7（Accepted）寫的是「`monitoring/` **全套**保留」，
-而計畫 P3 寫的是「**丟**掉這兩個檔」。兩造正面衝突，且 ADR 的效力高於計畫。
-三條可能的解與裁定狀態見 **`../docs/ROADMAP.md`〈未解決的衝突〉**。
+刪除後，全新 volume 上的 Grafana 13.2.2 沒有任何 contact point，預設根政策的 receiver 是
+不帶 integration 的 `empty`：規則照常評估、panel 照常念，只是不對外送通知，也就不會有通知錯誤。
+要在這台 Grafana 上加真正的通知（Slack、email…），直接在 UI 建 contact point 與政策即可。
 
-**與裁定無關、但不該一起拖著的一件事**：`WEBHOOK_SECRET` 曾出現在容器環境變數與
-provisioning 檔裡。不論上面選哪一條，**那應該由人輪換**。
+### ⚠️ 2026-10-02 以前就起過的環境：要一次性清掉殘留
+
+**只刪檔案不會清掉已經 provision 進資料庫的東西。** 舊的 `grafana-data` volume 裡，
+`augur-bridge` contact point 與它的政策樹重啟後仍在（provenance 仍是 `file`，UI 改不動），
+`docker logs augur-grafana` 會持續出現 `Notify for alerts failed … augur-bridge/webhook[0]`。
+Grafana 起著的時候跑一次（帳密見 `.env`；照這個順序 —— 先重設政策樹、再刪 contact point，這是實測過的順序）：
+
+```bash
+curl -fsS -u '<GF_ADMIN_USER>:<GF_ADMIN_PASSWORD>' -X DELETE \
+  http://127.0.0.1:3002/api/v1/provisioning/policies
+curl -fsS -u '<GF_ADMIN_USER>:<GF_ADMIN_PASSWORD>' -X DELETE \
+  http://127.0.0.1:3002/api/v1/provisioning/contact-points/augur_bridge_webhook
+```
+
+確認：清除後約一分鐘數一次 `docker logs augur-grafana 2>&1 | grep -c 'augur-bridge/webhook'`，
+隔兩分鐘再數一次，兩次數字應相同（實測 Alertmanager 換上新設定前的那一分鐘內可能還會多一兩行）。
+（數累計行數而不用 `--since`，理由同 `tools/check-server.sh` 檔頭：WSL2 的主機時鐘與容器日誌時間戳會偏差。）
+**不要**改用常駐的 `resetPolicies` provisioning 檔 —— 它每次重啟都會把整棵政策樹重設回預設，
+之後不論從 UI 或 API 加的通知政策都會在下次重啟時消失（實測）。
+全新 volume（例如 `docker compose down -v` 之後、或 CI）不需要這一步。
+
+**仍要由人處理的一件事**：`WEBHOOK_SECRET` 曾出現在容器環境變數與 provisioning 檔裡，
+**那應該由人輪換或作廢**。自己的 `monitoring/.env` 若還留著 `WEBHOOK_SECRET=` 那一行也請刪掉 ——
+compose 的 `env_file: ./.env` 會把檔內每一個變數都注入 Grafana 容器，不論有沒有人用。
 
 ## 驗證（端到端）
 

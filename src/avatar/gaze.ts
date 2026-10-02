@@ -38,7 +38,8 @@ export interface GazeOptions {
 export const DEFAULT_GAZE: GazeOptions = {
   // 吉祥物本身的尺寸量級。太小會在角色身上抖，太大會變成「不太看人」。
   deadZonePx: 28,
-  // 45° 的扇區，給 8° 遲滯 ≈ 交界兩側各 4° 的緩衝。
+  // 45° 的扇區：要深入新扇區超過 8°（離新扇區中心 ≤ 14.5°）才換格，
+  // 剛跨過交界的那 8° 帶內維持原格。（舊註解寫「交界兩側各 4°」—— 與程式不符。）
   hysteresisDeg: 8,
 };
 

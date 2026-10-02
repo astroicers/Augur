@@ -53,7 +53,7 @@
 
 1. 71+ 個 commit 的 SHA 全變。本 repo 文件目前引用了其中 5 個
    (`fbd81f4` / `de98011` / `9911b00` / `596f9db` / `dabb3f3`，散在 ADR-001、
-   `sprite-sheet-spec.md`、`remaining-plan.md`)，全數失效 —— 可機械重映，但要一起改。
+   `sprite-sheet-spec.md`、已退役的 `remaining-plan.md`)，全數失效 —— 可機械重映，但要一起改。
 2. 屬 CLAUDE.md 鐵則明文列名的毀滅性操作（`git push` / `rebase`），需人類逐次授權；
    本機 auto mode 分類器亦直接擋下 `filter-branch`。
 3. GitHub 端 force-push **不保證真的刪掉** —— 被覆寫的 commit 仍可用 SHA 取回，

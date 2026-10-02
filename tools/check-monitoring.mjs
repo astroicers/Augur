@@ -106,7 +106,8 @@ const RULE_FILES = (() => {
   // 對本檢查完全隱形 —— 實測把一條缺 annotation 的規則放進 `extra-alerts.yml`：
   // exit 0；同一個檔改名成 `rules-extra.yml`：exit 1。
   // 改成看**內容**：有 `groups:` 頂層鍵的才是規則檔。
-  // contactpoints.yml / policies.yml 沒有它，自然被排除（實查：兩者皆 0 個 `groups:`）。
+  // contact point / 通知政策這類非規則檔沒有它，自然被排除（2026-10-02 刪除前的
+  // contactpoints.yml / policies.yml 就是，實查兩者皆 0 個 `groups:`）。
   const found = names
     .filter((n) => /\.ya?ml$/i.test(n))
     .filter((n) => {

@@ -19,7 +19,7 @@
 
 **P5 的工具側完成、素材側未開工**：精靈圖規格（`docs/sprite/sprite-sheet-spec.md`）、
 製作 SOP、SP-7 的機械驗收腳本、SP-V.1 的方向辨識盲測頁都已就位並自測通過。
-**缺的是畫** —— 那需要一個會用分層繪圖軟體的人，見 `docs/handoff/remaining-plan.md` 的 B2。
+**缺的是畫** —— 那需要一個會用分層繪圖軟體的人，見 `docs/ROADMAP.md`〈未完成項目〉 的「素材」。
 
 > ⚠️ **commit 閘的綠燈不代表 sprite 檢查鏈是好的 —— 它綠是因為還沒有圖。**
 > 素材未交付時 `SPRITE-CHECK` 走 `NOT-DELIVERED` 分支直接回 0，所以整條檢查鏈
@@ -162,7 +162,7 @@ e2e 要指過去：`GRAFANA_URL=http://localhost:3002 npm run e2e`。
 | `avatar/` | VRM / THA 選型研究備忘錄（歷史，已不在關鍵路徑） |
 | `tools/` | `asp-test.sh`（commit 閘：typecheck + lint + js-suffix + sprite + jest）、`check-js-suffix.sh`、`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）、`lib/`（手寫 PNG / GIF 編解碼與檢查邏輯）、`blind-test/`（SP-V.1 方向辨識盲測頁） |
 | `docs/sprite/` | 精靈圖規格（`sprite-sheet-spec.md`）、製作 SOP、manifest 樣板。**發包給畫師時給這三份。** |
-| `docs/handoff/` | `remaining-plan.md` —— 未完成項目的執行計畫，分「現在能做」與「卡在人」兩部分 |
+| `docs/handoff/` | 歷史交接文件。`remaining-plan.md` 已於 2026-10-02 退役，仍有效的項目在 `docs/ROADMAP.md`〈未完成項目〉 |
 
 ### 為什麼 `dedup.ts` 在 pull 模型下更重要
 
