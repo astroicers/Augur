@@ -139,6 +139,39 @@ function colourNear(r, g, b, target, tol) {
 // SP-7.1 檢查 A — 格式與衛生
 // ---------------------------------------------------------------------------
 
+/**
+ * 45°±22.5° 方向邊緣的平均過渡寬度（餘面積法）：寬 h 的線性斜坡讀 h，與網格方向無關。
+ * 弧長 < 20px（幾乎沒有斜邊的素材）回 null —— 樣本太少不判。
+ */
+function diagonalRampWidth(v, cellPx, band) {
+  const A = (x, y) => v.px(x, y)[3] / 255;
+  let moment = 0;
+  let arc = 0;
+  const c225 = Math.cos((22.5 * Math.PI) / 180);
+  for (let y = 1; y < cellPx - 1; y++) {
+    for (let x = 1; x < cellPx - 1; x++) {
+      if (!band[y * cellPx + x]) {
+        continue;
+      }
+      const a = A(x, y);
+      const gx = (A(x + 1, y) - A(x - 1, y)) / 2;
+      const gy = (A(x, y + 1) - A(x, y - 1)) / 2;
+      const g = Math.hypot(gx, gy);
+      if (g < 1e-6) {
+        continue;
+      }
+      // 梯度方向與最近的 45° 對角線的夾角 ≤ 22.5°：|cos 2θ| ≤ cos 67.5° = sin 22.5°
+      const cos2 = (gx * gx - gy * gy) / (g * g);
+      if (Math.abs(cos2) > Math.sqrt(1 - c225 * c225)) {
+        continue;
+      }
+      moment += 2 * Math.min(a, 1 - a);
+      arc += g;
+    }
+  }
+  return arc < 20 ? null : { width: (2 * moment) / arc, arc };
+}
+
 export function checkFormatAndHygiene(sheets, manifest) {
   /** @type {Finding[]} */
   const out = [];
@@ -298,6 +331,25 @@ export function checkFormatAndHygiene(sheets, manifest) {
             measured: impliedH,
             limit: minH,
           });
+        }
+        // **斜邊另外量（PR #8 複審）。** 上面的一階矩除以周長，周長是 4-鄰接邊界像素數 ——
+        // 45° 邊的邊界像素比真實弧長多 √2 倍，於是 L1 距離做的斜坡（45° 的真實寬度只剩 h/√2）
+        // 被讀成合規。這裡改用餘面積式：Σ 2·min(α,1−α) ÷ Σ|∇α| 只取梯度方向在 45°±22.5° 的
+        // 像素 —— |∇α| 沿法線積分恰為 1，分母就是真實弧長，與網格方向無關。
+        // 第一版暫定圖（L1、h=2）實測 45° 只有 1.49px，而本條上面那段讀它合規。
+        if (semiCount > 0) {
+          const diag = diagonalRampWidth(v, cellPx, rampBand);
+          if (diag && diag.width < minH - measureTol) {
+            out.push({
+              id: 'SP-2.14/斜邊漸層過窄',
+              severity: 'warn',
+              sheet: name,
+              cell: c,
+              message: `45° 方向的剪影邊緣過渡寬度約 ${diag.width.toFixed(2)} px（餘面積法，弧長 ${diag.arc.toFixed(0)} px），SP-2.14 要求 ≥ ${minH.toFixed(2)}px —— 常見原因是用 L1／4-鄰接距離做羽化：斜邊變窄而且呈階梯狀。首版僅記錄`,
+              measured: diag.width,
+              limit: minH,
+            });
+          }
         }
       }
 
@@ -2554,6 +2606,449 @@ export function measureStrokeWidths(directions, manifest) {
     widths.push(modeThenLocalMean(samples, 3 * target, tune));
   }
   return widths;
+}
+
+// ---------------------------------------------------------------------------
+// PR #8 複審找到的五個盲點（ROADMAP B2-9）
+//
+// 第一版暫定圖（commit 7f8933a）同時違反下面四條規格，`SPRITE-CHECK` 照樣 PASS ——
+// 而且合成 fixture 自己也違反其中兩條（下襬、眨眼修補塊），整個閘門是對著它校準的。
+// 每一條都在 selftest 裡配了會紅的變異體，並以那兩張舊 PNG 實測過會紅。
+// ---------------------------------------------------------------------------
+
+/** 描邊參考色：宣告值優先，否則從素材取樣（與 measureStrokeWidths 同一套）。 */
+function strokeReference(directions, manifest) {
+  const stroke = manifest.stroke;
+  const slack = optional(manifest, 'stroke', 'luminanceSlack');
+  if (stroke.colour) {
+    return hexToRgb(stroke.colour);
+  }
+  return sampleStrokeColour(directions, manifest, stroke.luminanceMin - slack, stroke.luminanceMax + slack) ?? hexToRgb('#6E7681');
+}
+
+/**
+ * SP-2.8 下襬 + SP-6.5 下襬不描邊。
+ *
+ * 只驗兩個端點與描邊，不驗漸隱曲線的形狀（手繪的漸隱不會是精確的直線）：
+ *  - `0.890·S + 2px` 以下不得有 α = 255（2px 給羽化與取整）；
+ *  - `0.955·S` 以下必須全透明；
+ *  - `0.890·S + 3px` 以下不得有描邊色（SP-6.5：沿漸隱區描邊會出現一道弧形切邊）。
+ *    門檻 0.05·S 個像素，吸收零星的同色抗鋸齒。
+ */
+export function checkHem(directions, manifest) {
+  /** @type {Finding[]} */
+  const out = [];
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const top = Math.ceil(0.89 * P);
+  const clear = Math.ceil(0.955 * P);
+  const ref = strokeReference(directions, manifest);
+  const tol = manifest.stroke.colourToleranceRgb ?? 12;
+  const strokeLimit = Math.round(0.05 * P);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const v = cellView(directions, c, geom);
+    let opaque = 0;
+    let firstOpaque = null;
+    let notClear = 0;
+    let stroke = 0;
+    for (let y = top; y < P; y++) {
+      for (let x = 0; x < P; x++) {
+        const [r, g, b, a] = v.px(x, y);
+        if (a === 255 && y >= top + 2) {
+          opaque++;
+          firstOpaque ??= [x, y];
+        }
+        if (a > 0 && y >= clear) {
+          notClear++;
+        }
+        if (a > 0 && y >= top + 3 && colourNear(r, g, b, ref, tol)) {
+          stroke++;
+        }
+      }
+    }
+    if (opaque > 0) {
+      out.push({
+        id: 'SP-2.8/下襬不透明',
+        severity: 'error',
+        sheet: 'directions',
+        cell: c,
+        message: `${(0.89 * P + 2).toFixed(0)} 列以下有 ${opaque} 個 α=255 像素（首例 ${firstOpaque[0]},${firstOpaque[1]}）—— SP-2.8：不透明止於 0.890·S，0.890 → 0.950 alpha 線性漸隱`,
+        measured: opaque,
+        limit: 0,
+      });
+    }
+    if (notClear > 0) {
+      out.push({
+        id: 'SP-2.8/下襬未清空',
+        severity: 'error',
+        sheet: 'directions',
+        cell: c,
+        message: `${clear} 列（0.955·S）以下有 ${notClear} 個非零 alpha 像素 —— SP-2.8：0.955 以下全透明`,
+        measured: notClear,
+        limit: 0,
+      });
+    }
+    if (stroke > strokeLimit) {
+      out.push({
+        id: 'SP-6.5/下襬描邊',
+        severity: 'error',
+        sheet: 'directions',
+        cell: c,
+        message: `下襬漸隱區（${top + 3} 列以下）有 ${stroke} 個描邊色像素 —— SP-6.5：描邊不得沿下襬漸隱區繪製`,
+        measured: stroke,
+        limit: strokeLimit,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * SP-6.4 外描邊的連續性（master 格）。
+ *
+ * `measureStrokeWidths` 量的是寬度的眾數：法線在 firstHitLimit 內找不到描邊就**靜默丟掉**，
+ * 所以局部缺口完全看不到（第一版暫定圖兩頰各缺約 35 列，量到的寬度 8.322 → 補好後 8.315）。
+ * 這裡沿剪影外緣逐點看：內側一個描邊寬度內有沒有 α ≥ 250 的描邊色像素。沒有的點
+ * 8-連通聚成段，任一段 ≥ 描邊寬度就是缺口。下襬漸隱區不驗（SP-6.5 本來就不描邊）。
+ *
+ * 缺的點超過外緣四分之一時不報 —— 那是「整圈沒有描邊／顏色不對」，由 SP-7.7/描邊 報，
+ * 不在這裡重複一次。
+ */
+export function checkOutlineContinuity(directions, manifest) {
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const target = manifest.stroke.width * P;
+  const reach = Math.ceil(target);
+  const ref = strokeReference(directions, manifest);
+  const tol = manifest.stroke.colourToleranceRgb ?? 12;
+  const v = cellView(directions, 4, geom);
+  const solid = new Uint8Array(P * P);
+  const ink = new Uint8Array(P * P);
+  for (let y = 0; y < P; y++) {
+    for (let x = 0; x < P; x++) {
+      const [r, g, b, a] = v.px(x, y);
+      solid[y * P + x] = a >= 128 ? 1 : 0;
+      ink[y * P + x] = a >= 250 && colourNear(r, g, b, ref, tol) ? 1 : 0;
+    }
+  }
+  const yMax = Math.floor(0.89 * P) - reach;
+  const miss = new Uint8Array(P * P);
+  let boundary = 0;
+  let missed = 0;
+  for (let y = 1; y < yMax; y++) {
+    for (let x = 1; x < P - 1; x++) {
+      const i = y * P + x;
+      if (!solid[i] || (solid[i - 1] && solid[i + 1] && solid[i - P] && solid[i + P])) {
+        continue;
+      }
+      boundary++;
+      let hit = false;
+      for (let dy = -reach; dy <= reach && !hit; dy++) {
+        for (let dx = -reach; dx <= reach; dx++) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (dx * dx + dy * dy <= target * target && xx >= 0 && yy >= 0 && xx < P && yy < P && ink[yy * P + xx]) {
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (!hit) {
+        miss[i] = 1;
+        missed++;
+      }
+    }
+  }
+  if (boundary === 0 || missed === 0 || missed > boundary / 4) {
+    return [];
+  }
+  const seen = new Uint8Array(P * P);
+  const runs = [];
+  for (let i = 0; i < P * P; i++) {
+    if (!miss[i] || seen[i]) {
+      continue;
+    }
+    const stack = [i];
+    seen[i] = 1;
+    let n = 0;
+    let at = i;
+    while (stack.length) {
+      const j = stack.pop();
+      n++;
+      at = Math.min(at, j);
+      const jx = j % P;
+      const jy = (j / P) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = jx + dx;
+          const yy = jy + dy;
+          if (xx >= 0 && yy >= 0 && xx < P && yy < P && miss[yy * P + xx] && !seen[yy * P + xx]) {
+            seen[yy * P + xx] = 1;
+            stack.push(yy * P + xx);
+          }
+        }
+      }
+    }
+    runs.push({ n, at });
+  }
+  const gaps = runs.filter((r) => r.n >= reach).sort((a, b) => b.n - a.n);
+  if (!gaps.length) {
+    return [];
+  }
+  return [
+    {
+      id: 'SP-6.4/描邊缺口',
+      severity: 'error',
+      sheet: 'directions',
+      cell: 4,
+      message: `剪影外緣有 ${gaps.length} 段沒有描邊（最長 ${gaps[0].n} px，起點 ${gaps[0].at % P},${(gaps[0].at / P) | 0}）—— SP-6.4 要整圈描邊；常見原因是某個形狀凸出了被描邊的輪廓（例如臉外圈、反光、飾物畫到描邊外）`,
+      measured: gaps[0].n,
+      limit: reach - 1,
+    },
+  ];
+}
+
+/**
+ * SP-4.7 / SP-4.8：眨眼格（與點擊格）疊在**九個**方向格上，結果必須一樣。
+ *
+ * SP-7.4 的眨眼檢查只疊在 master 格、只數虹膜色。可是 blink 層疊在**目前的視線格**上，
+ * 而九個方向格的眼皮線、睫毛位置都不同（SP-3.5）—— 修補塊沒蓋到的線稿，在 master 上
+ * 看不到，在往上看的那一排就浮在閉著的眼睛外面。第一版暫定圖在格 6 漏了 186 px。
+ *
+ * 量法：`composite(directions[g], reactions[c])` 與 g = 4 的結果比，任一通道差 > 40 即算漏。
+ *  - 格 6（全閉眼）：整個眼窗 E；error。
+ *  - 格 7（半閉眼）：每一欄只看修補塊下緣以上 3px（眼皮線以下本來就該露出隨視線變的下半隻眼）；error。
+ *  - 格 0（點擊）：SP-4.1 准它畫入 E，但不要求蓋滿；只看它在每隻眼睛畫出的 bbox 內；warn。
+ */
+export function checkEyeCoverage(sheets, manifest) {
+  /** @type {Finding[]} */
+  const out = [];
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const E = windowRect(manifest.windows.E, P);
+  const empty = new Set(declaredEmpty(manifest).filter((e) => e.sheet === 'reactions').map((e) => e.cell));
+  const dirs = Array.from({ length: CELL_COUNT }, (_, g) => cellView(sheets.directions, g, geom));
+  const axis = Math.round(0.5 * P);
+  for (const [c, severity, id] of [
+    [6, 'error', 'SP-7.4/眨眼漏線'],
+    [7, 'error', 'SP-7.4/眨眼漏線'],
+    [0, 'warn', 'SP-7.4/點擊格漏線'],
+  ]) {
+    if (empty.has(c)) {
+      continue;
+    }
+    const rv = cellView(sheets.reactions, c, geom);
+    let drawn = 0;
+    const cut = new Int32Array(P).fill(-1);
+    const box = [
+      [Infinity, -Infinity, Infinity, -Infinity],
+      [Infinity, -Infinity, Infinity, -Infinity],
+    ];
+    for (let y = E.y0; y < E.y1; y++) {
+      for (let x = E.x0; x < E.x1; x++) {
+        if (rv.px(x, y)[3] >= 128) {
+          drawn++;
+          cut[x] = y;
+          const b = box[x < axis ? 0 : 1];
+          b[0] = Math.min(b[0], x);
+          b[1] = Math.max(b[1], x);
+          b[2] = Math.min(b[2], y);
+          b[3] = Math.max(b[3], y);
+        }
+      }
+    }
+    if (drawn === 0) {
+      continue; // 空格由 SP-7.4/空格 與眨眼核心那幾條處理
+    }
+    if (c === 7) {
+      // 修補塊比眼睛窄時，沒蓋到的那幾欄 cut = −1，會整欄掉出檢查範圍 —— 正好放過「上眼瞼沒蓋滿」。
+      // 眼睛的橫向範圍取「任一方向格與 master 不同」的像素；範圍內沒有修補塊的欄，
+      // 用同一隻眼睛已蓋欄的下緣中位數當眼皮線。
+      for (const half of [0, 1]) {
+        const cuts = [];
+        let x0 = Infinity;
+        let x1 = -Infinity;
+        for (let x = half ? axis : E.x0; x < (half ? E.x1 : axis); x++) {
+          if (cut[x] >= 0) {
+            cuts.push(cut[x]);
+          }
+          for (let y = E.y0; y < E.y1; y++) {
+            const m = dirs[4].px(x, y);
+            if (dirs.some((d, g) => g !== 4 && d.px(x, y).some((v, k) => k < 3 && Math.abs(v - m[k]) > 40))) {
+              x0 = Math.min(x0, x);
+              x1 = Math.max(x1, x);
+              break;
+            }
+          }
+        }
+        if (!cuts.length) {
+          continue;
+        }
+        cuts.sort((a, b) => a - b);
+        const med = cuts[cuts.length >> 1];
+        for (let x = x0; x <= x1; x++) {
+          if (cut[x] < 0) {
+            cut[x] = med;
+          }
+        }
+      }
+    }
+    const inScope = (x, y) => {
+      if (c === 6) {
+        return true;
+      }
+      if (c === 7) {
+        return cut[x] >= 0 && y <= cut[x] - 3;
+      }
+      const b = box[x < axis ? 0 : 1];
+      return x >= b[0] && x <= b[1] && y >= b[2] && y <= b[3];
+    };
+    let leak = 0;
+    let first = null;
+    let worstGaze = -1;
+    const perGaze = new Array(CELL_COUNT).fill(0);
+    for (let y = E.y0; y < E.y1; y++) {
+      for (let x = E.x0; x < E.x1; x++) {
+        if (!inScope(x, y)) {
+          continue;
+        }
+        const o = rv.px(x, y);
+        const a = o[3] / 255;
+        const base = dirs[4].px(x, y);
+        let leaked = false;
+        for (let g = 0; g < CELL_COUNT; g++) {
+          if (g === 4) {
+            continue;
+          }
+          const u = dirs[g].px(x, y);
+          for (let k = 0; k < 3; k++) {
+            if (Math.abs((u[k] - base[k]) * (1 - a)) > 40) {
+              perGaze[g]++;
+              leaked = true;
+              break;
+            }
+          }
+        }
+        if (leaked) {
+          leak++;
+          first ??= [x, y];
+        }
+      }
+    }
+    if (leak > 0) {
+      worstGaze = perGaze.indexOf(Math.max(...perGaze));
+      out.push({
+        id,
+        severity,
+        sheet: 'reactions',
+        cell: c,
+        message: `疊在其他方向格上時有 ${leak} px 與疊在 master 上不同（首例 ${first[0]},${first[1]}；最多的是方向格 ${worstGaze}，${perGaze[worstGaze]} px）—— 修補塊沒蓋住某些方向格的眼睛（眼皮線、睫毛、外眼角或往上下看的虹膜）`,
+        measured: leak,
+        limit: 0,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * SP-2.15 色彩擴張：離「畫出來的像素」（α ≥ 128）≤ 8px 的 α = 0 像素，RGB 應為最近那個像素的色。
+ *
+ * **warn，不是 error。** 規格寫「必須」，但 PR #8 複審實測：Chromium 縮放 CSS 背景圖前先預乘 alpha，
+ * α = 0 像素的 RGB 在 72 種尺寸×底色組合下**一個像素都不影響畫面**（全部換成洋紅也一樣）。
+ * 它防的是不預乘的縮放器（其他瀏覽器、匯出流程）上的暗環；先記錄，不擋交付。
+ *
+ * 最近像素用兩趟 8-鄰域傳播找（近似歐氏，誤差 < 1px）；只比到 > 40 的差才算。
+ */
+export function checkAlphaBleed(sheets, manifest) {
+  /** @type {Finding[]} */
+  const out = [];
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const R2 = 64;
+  for (const name of ['directions', 'reactions']) {
+    for (let c = 0; c < CELL_COUNT; c++) {
+      const v = cellView(sheets[name], c, geom);
+      const src = new Int32Array(P * P).fill(-1);
+      const d2 = new Float64Array(P * P).fill(Infinity);
+      const A = new Uint8Array(P * P);
+      for (let y = 0; y < P; y++) {
+        for (let x = 0; x < P; x++) {
+          const a = v.px(x, y)[3];
+          A[y * P + x] = a;
+          if (a >= 128) {
+            src[y * P + x] = y * P + x;
+            d2[y * P + x] = 0;
+          }
+        }
+      }
+      const relax = (x, y, nx, ny) => {
+        if (nx < 0 || ny < 0 || nx >= P || ny >= P) {
+          return;
+        }
+        const s = src[ny * P + nx];
+        if (s < 0) {
+          return;
+        }
+        const dx = (s % P) - x;
+        const dy = ((s / P) | 0) - y;
+        const dd = dx * dx + dy * dy;
+        if (dd < d2[y * P + x]) {
+          d2[y * P + x] = dd;
+          src[y * P + x] = s;
+        }
+      };
+      for (let y = 0; y < P; y++) {
+        for (let x = 0; x < P; x++) {
+          relax(x, y, x - 1, y);
+          relax(x, y, x, y - 1);
+          relax(x, y, x - 1, y - 1);
+          relax(x, y, x + 1, y - 1);
+        }
+        for (let x = P - 1; x >= 0; x--) {
+          relax(x, y, x + 1, y);
+        }
+      }
+      for (let y = P - 1; y >= 0; y--) {
+        for (let x = P - 1; x >= 0; x--) {
+          relax(x, y, x + 1, y);
+          relax(x, y, x, y + 1);
+          relax(x, y, x + 1, y + 1);
+          relax(x, y, x - 1, y + 1);
+        }
+        for (let x = 0; x < P; x++) {
+          relax(x, y, x - 1, y);
+        }
+      }
+      let near = 0;
+      let off = 0;
+      for (let i = 0; i < P * P; i++) {
+        if (A[i] !== 0 || d2[i] > R2) {
+          continue;
+        }
+        near++;
+        const s = src[i];
+        const p = v.px(i % P, (i / P) | 0);
+        const q = v.px(s % P, (s / P) | 0);
+        if (Math.max(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1]), Math.abs(p[2] - q[2])) > 40) {
+          off++;
+        }
+      }
+      // 1% 以下不記：「畫出來的像素」的界定（α ≥ 128）與產生端未必相同，細線邊上會有零星差異。
+      if (near > 0 && off / near > 0.01) {
+        out.push({
+          id: 'SP-2.15/未做色彩擴張',
+          severity: 'warn',
+          sheet: name,
+          cell: c,
+          message: `剪影外 8px 內的透明像素有 ${off}/${near} 個 RGB 與最近的畫出像素差 > 40（多半是匯出軟體把透明像素填黑）—— 不預乘的縮放器上會出現暗環；Chromium 不受影響，首版僅記錄`,
+          measured: off / near,
+          limit: 0.01,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
