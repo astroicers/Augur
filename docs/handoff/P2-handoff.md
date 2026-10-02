@@ -9,10 +9,10 @@
 > 下面每一節都補了狀態標記。**照著未標記狀態的舊文字做，會把已經對的東西改壞** ——
 > 例如把 `flap.ts` 拆掉重寫、白砍一次 Grafana volume、或重開一個已經走完的架構三選一。
 >
-> 仍然有效、仍需人類處理的只剩兩件：
+> 仍然有效、仍需人類處理的原有兩件（2026-10-02 起只剩第 1 件）：
 > 1. **`WEBHOOK_SECRET` 輪換**（§三的 🔴，AI 不代處理，至今未做）。
-> 2. **contactpoints / policies 的去留**（ADR-004 決策 7 vs 計畫 P3 的矛盾，
->    兩造逐字並列在 `docs/ROADMAP.md`〈未解決的衝突〉，追蹤於 `remaining-plan.md` 的 B3）。
+> 2. ~~**contactpoints / policies 的去留**~~ ✅ **2026-10-02 已裁定（經 PR 送審，merge 即為授權）**：兩檔刪除，
+>    ADR-004 決策 7 補訂正；裁定紀錄在 `docs/ROADMAP.md`〈已裁定的衝突〉，其餘追蹤見 `docs/ROADMAP.md`〈未完成項目〉。
 
 P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證。
 以下是 P2 刻意**沒有**做、需要你裁定的事。分三份。
@@ -95,7 +95,7 @@ P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證
 
 ~~`monitoring/` 的 Grafana 11.4.0 → 13.2.2 需要 `docker volume rm augur-monitoring_grafana-data`。~~
 
-❌ **實測推翻（ADR-004:232-233）：升版\*\*不需要\*\*砍 volume，11.4.0 → 13.2.2 乾淨遷移完成。**
+❌ **實測推翻（ADR-004〈待驗風險〉的 volume 條目；行號已因 2026-10-02 訂正位移）：升版\*\*不需要\*\*砍 volume，11.4.0 → 13.2.2 乾淨遷移完成。**
 原判定是靜態推理（「13.0 的 unified storage migration 不可降版」）而非實測，不成立。
 
 照舊文字做的後果：白砍一次 volume、admin 密碼回到 `.env` 初始值、
@@ -110,8 +110,9 @@ ADR-004 廢除整條 webhook 管線後，這個 secret 應該**輪換**，而不
 同時 `monitoring/grafana/provisioning/alerting/{contactpoints,policies}.yml` 要不要清，
 **ADR-004 決策 7 寫的是「monitoring/ 全套保留」，與計畫 P3 的刪除指示互相矛盾** —— 需裁定。
 
-⏳ **仍未裁定（2026-09-21）。** 兩造的逐字原文已並列在 `docs/ROADMAP.md`〈未解決的衝突〉，
-附三條可能的解；追蹤於 `docs/handoff/remaining-plan.md` 的 B3。
+~~⏳ **仍未裁定（2026-09-21）。**~~ ✅ **2026-10-02 已裁定（經 PR 送審，merge 即為授權）：刪除兩檔**，
+ADR-004 決策 7 補訂正。兩造原文與裁定並列在 `docs/ROADMAP.md`〈已裁定的衝突〉；
+既有 volume 的一次性清除見 `monitoring/README.md`〈告警通知〉；其餘追蹤見 `docs/ROADMAP.md`〈未完成項目〉。
 `WEBHOOK_SECRET` 的輪換**也仍未做**，且那件事不需要等上面的裁定。
 
 ### ✅ 已處理（2026-09-16 review 後）
@@ -247,7 +248,7 @@ fingerprint 改用 `alert:panel:${panelId}:${kind}`，不提 ruleUID。
   ⏳ **未實作，且依據已弱化**（§三點五：實測 90 秒連續發聲未截斷）。
   該節建議改為「本機聲線不切段、`localService === false` 才切段」——
   **本機聲線那一半等於現況**，遠端那一半未實作也未驗（手上沒有遠端聲線）。
-  追蹤於 `remaining-plan.md` 的 B7-2。
+  追蹤於 `docs/ROADMAP.md`〈未完成項目〉 的 B7-2。
 
 **dedup**：~~需新增 `forget(fingerprint)`，不要靠副作用達成。~~
 ❌ **已作廢。** `shouldSpeak` 對 `resolved` 的處理**本來就是** `lastFiring.delete(key)` 後回 true

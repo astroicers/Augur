@@ -1,3 +1,12 @@
+> # ⚠️ 本檔已退役（2026-10-02）
+>
+> **不要再照本檔操作。** 仍有效的待辦已逐項遷入 `docs/ROADMAP.md`〈未完成項目〉
+> （91 項盤點：43 已完成、7 已作廢、41 仍有效；遷移經一次對抗性查證，補回 5 項漏列、更正 11 處誤判）。
+>
+> 退役的理由是它自己的錨點：2026-09-28 的文件審計發現本檔有 **22 處「檔案:行號」解析到別的內容**，
+> 其中數處是祈使句（例如「改第 42 行的 `MIN_TESTS`」，那一行其實是閘門的 pass/fail 旗標）。
+> 照著做會改到錯的地方 —— 比斷鏈更糟。本檔保留在版控裡當歷史紀錄，內文不再維護。
+
 <!-- 產出自 2026-09-20 的「未實作部分」規劃 workflow：
      三路平行盤點（文件面／程式與設定面／風險與未驗面，彼此看不到對方）
      → 排序 → 兩路對抗性批評 → 收斂。共盤到 78 項、12 條 track。
@@ -801,7 +810,7 @@ SHA256 值的來源（上游 release 頁面 URL）與查證日期寫進 `monitor
 
 **卡在**：專案主人回想出當初產生 `assets/a1-augur-calm.png` 的生成式服務名稱。
 出處已調查到底：PNG 無任何 tEXt / iTXt / eXIf、repo 與 l2d-factory 全部 Markdown 關鍵字掃描、
-git 歷史皆無記錄（`7539cfb` 時就已在裡面）——**除了他的記憶之外沒有其他線索**。
+git 歷史皆無記錄（`14a481d` 時就已在裡面；原記的 `7539cfb` 是 filter-branch 前的舊 SHA，已解不開）——**除了他的記憶之外沒有其他線索**。
 `production-sop.md:40-56`（階段 0.2）記的就是這條路。
 
 **為什麼排在所有 blocked 的最前面**：它是整批 sprite 的版控入口。
@@ -976,6 +985,15 @@ SP-7.9 的四張合成聯絡表產出且人工複核過；A–I **九類**全綠
 
 ## B3 — monitoring 死 webhook 與 `WEBHOOK_SECRET`【卡在一份 Accepted ADR 與一份計畫的正面衝突】
 
+> **B3-1 已裁定、B3-2 檔案側完成（2026-10-02，經 PR 送審，merge 即為授權）**：裁定為刪除，ADR-004 決策 7 補訂正；
+> 兩支 yml、compose 的 `WEBHOOK_SECRET` 注入與檔頭註解、`monitoring/.env.example` 的三行、
+> CI 產 `.env` 那步的 `WEBHOOK_SECRET=ci-only` 一併拿掉。
+> ⚠️ **B3-2 的驗收「notification error 歸零」尚未達成**：只刪檔時，既有 volume 裡已 provision 的
+> `augur-bridge` 與政策樹重啟後仍在。開發環境要跑 `monitoring/README.md`〈告警通知〉的一次性清除，
+> 以 `augur-bridge/webhook` 累計行數兩次相同為準 —— 在那之前不算完成。
+> **仍未完成**：B3-3（`WEBHOOK_SECRET` 輪換，由人）、B3-4（兩份 `.env.example` 中根目錄那份、
+> `docs/sample-grafana-firing.json` 的去留）、B3-5。全部已遷入 `docs/ROADMAP.md`〈未完成項目〉。
+
 **卡在**：ADR-004 決策 7 寫「`monitoring/` **全套保留**」（實查 `:163`），
 計畫 P3 寫「丟掉 `alerting/contactpoints.yml` 與 `policies.yml`」——兩者正面衝突，
 修 ADR 需人類顯式授權（ASP 鐵則）。`WEBHOOK_SECRET` 輪換依 ASP 鐵則二由人處理。
@@ -1034,7 +1052,7 @@ SP-7.9 的四張合成聯絡表產出且人工複核過；A–I **九類**全綠
 
 1. **【解鎖後第一步】人類一句授權，然後把〈待驗風險〉第 4 條改寫成已裁定的相反結論並標日期。**
    驗收：照著修訂後的 ADR 做，不會有人去擴充 Emotion（找一個沒讀過脈絡的人／agent 讀一遍驗證）。規模：小
-2. **決策 5 的 `setGaze` 簽章與實作不符**（原計畫漏，性質與第 1 條相同）：
+2. ✅ **已完成（2026-10-02，經 PR 送審，merge 即為授權）** **決策 5 的 `setGaze` 簽章與實作不符**（原計畫漏，性質與第 1 條相同）：
    實查 ADR-004:152 逐字寫「新增 **`setGaze(dx, dy)`**」，而 `src/avatar/AvatarController.ts:36`
    實作是 **`setGaze(cell: number)`**（`:10` 也寫 `setGaze(cell)`）。既然要一次授權，一起改。
    驗收：ADR 的簽章與 `AvatarController.ts:36` 逐字一致。規模：小

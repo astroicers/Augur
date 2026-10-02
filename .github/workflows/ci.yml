@@ -119,7 +119,7 @@ jobs:
       - name: 產 CI 專用的 monitoring/.env
         # compose 宣告 env_file: ./.env，檔案缺席是 fatal。本機的 .env 不進版控
         # （裡面是真密碼），CI 用固定的 admin/admin —— plugin-e2e 的預設憑證。
-        run: printf 'GF_ADMIN_USER=admin\nGF_ADMIN_PASSWORD=admin\nWEBHOOK_SECRET=ci-only\n' > monitoring/.env
+        run: printf 'GF_ADMIN_USER=admin\nGF_ADMIN_PASSWORD=admin\n' > monitoring/.env
       - run: docker compose -f monitoring/docker-compose.yml up -d
       - name: 等 plugin 真的註冊進 Grafana
         run: bash tools/check-server.sh

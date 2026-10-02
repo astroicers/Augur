@@ -1,7 +1,7 @@
 # 執行期行為實測
 
 > 這裡放的是**對 live Grafana 量出來的行為**，不是推論。
-> ADR-004 的〈待驗風險〉與〈查不到〉回填需要人類授權（`remaining-plan.md` 的 B4），
+> ADR-004 的〈待驗風險〉與〈查不到〉回填需要人類授權（`docs/ROADMAP.md`〈未完成項目〉 的「ADR-004 的下一次修訂」），
 > 在那之前結論住這裡。每一則都記環境、日期、與怎麼複驗。
 >
 > 環境（除非另註）：Grafana **13.2.2**（`monitoring/docker-compose.yml`）、

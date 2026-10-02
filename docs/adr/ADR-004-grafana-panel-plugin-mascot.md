@@ -14,7 +14,7 @@
 > 看過的指令摘要項目：章節數 6、決策條目 7（**本 ADR 無附錄 A**，決策數取自 `###` 標題而非
 > skill 指定的唯一來源）、Verification Evidence 在（9 列外部事實查證 + 6 項查不到）、
 > **本次升級涉及的決策已回填機械證據 0 項**、無 `roadmap-ref`（四份 ADR 皆無，屬 repo 既有慣例）、
-> diff 範圍為單一 commit `0c9f382`；缺項清單四條：**5 個 POC gate（G-ADR004-1～5）全數未跑**、
+> diff 範圍為單一 commit `0c9f382`（**此 SHA 已解不開，同一個 commit 現為 `69b6ab1`**，見本段末【2026-10-02 訂正】）；缺項清單四條：**5 個 POC gate（G-ADR004-1～5）全數未跑**、
 > Verification Evidence 是外部事實查證而**非本 ADR 七項決策的 POC 證據**、本 repo 無 `.asp/gate.sh`
 > 故 skill 第 6 步的 `adr-draft`/`adr-index` 機械驗證跑不了、ADR 索引不在 `docs/adr/README.md`
 > 而在 `docs/ARCHITECTURE.md`。
@@ -25,6 +25,15 @@
 > **不需要為了動工而直升 Accepted**；而本 ADR 的 5 個 POC gate 本來就只能在 plugin 寫出來之後才跑得動。
 > 「POC 未跑」這個事實因此誠實留在檔上，未被 Accepted 掩蓋。
 > **人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
+>
+> **【2026-10-02 訂正，經 PR 送審，merge 即為授權】上方「diff 範圍為單一 commit `0c9f382`」的 SHA 已解不開。**
+> `git cat-file -t 0c9f382` → `fatal: Not a valid object name 0c9f382`。它是歷史經 `filter-branch`
+> 改寫**之前**的 SHA，與 `d428af1` 同屬被改寫的那段歷史（見 `docs/ROADMAP.md`〈⚠️ 引用 commit SHA 這件事已經出過一次錯〉）。
+> 那個 commit 現在是 **`69b6ab1`「docs: ADR-004（Draft）—— 改為 Grafana Panel Plugin，supersede ADR-001/002/003」**
+> （2026-09-16 21:08:32 +0800）。依據：`git log --all -- docs/adr/ADR-004-grafana-panel-plugin-mascot.md`
+> 最早的一筆就是它；本段升 FIRM 紀錄本身於 `ac17ca2` 進版控，而 `ac17ca2` 的父 commit 正是 `69b6ab1` ——
+> 升 FIRM 當下本檔只有這一個 commit，與「單一 commit」的原紀錄相符。
+> 原紀錄的 `0c9f382` 刻意不刪：那是授權當下呈給人類的字串，改掉等於改寫授權紀錄。
 >
 > ⬆️ **由 `FIRM` 升 `Accepted`（2026-09-18）**：astroicers 授權，逐字回覆
 > **「我認為沒問題adr04可以升了」**。
@@ -37,6 +46,15 @@
 > **人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
 >
 > 📌 **本 ADR 自此生效，ADR-001／002／003 轉 `Superseded`。**
+>
+> 📝 **正文訂正（2026-10-02；狀態維持 `Accepted`）**：三處文字與現況不符 ——
+> 決策 5 的 `setGaze` 簽名改成程式的實際契約；決策 7「`monitoring/` 全套保留」明定不含 bridge 告警投遞設定
+> （兩支 provisioning 檔刪除）；上方升 FIRM 紀錄裡解不開的 `0c9f382` 補上現行 SHA `69b6ab1`。
+> 逐處見各段的【2026-10-02 訂正】。
+> **授權**：astroicers 於 2026-10-02 就「是否修訂 ADR-004 這三處」詢問建議，得到「走 PR、merge 前審修訂文字、
+> merge 即授權」的建議後回覆逐字「**繼續**」。本段與各處訂正於該 PR 被 merge 時生效；
+> 同類但未納入本次的修訂（〈待驗風險〉第 4 條、編號重排、〈查不到〉第 6 項、180 天複查行）
+> 列於 `docs/ROADMAP.md`〈未完成項目〉，需另一次授權。
 
 > ⚠️ **證據鏈告示**：ADR-001/002/003 的 Verification Evidence 大量引用 `broadcaster-spikes/`（spike A/B/C）與本 repo 的 `.asp-fact-check.md`。**兩者在本 repo 皆不存在**（`.asp-fact-check.md` 另被根 `.gitignore` 排除）。前三份 ADR 的 POC 證據**已無法複驗**。本 ADR 的外部查證改記於下方 Verification Evidence，並同步寫入 `.asp-fact-check.md`。
 
@@ -149,7 +167,25 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 - **`BroadcastPlan` 事件契約**（ADR-002 §1）—— 導播與呈現之間的純資料邊界。
 - **`AvatarController` avatar-agnostic 介面**（ADR-002 §2）—— 換 avatar 格式不動上層。
   本 ADR 對它做兩項修改：`mount` 放寬為 `HTMLElement`、`setMouth` → `setSpeaking`；
-  並**新增 `setGaze(dx, dy)`**（9 方向格即其實作，含 dead zone 防抖）。
+  並**新增 `setGaze(cell: number): void`** —— 參數是 3×3 視線格號 0–8（row-major，`4` = 正中），
+  **不是**滑鼠位移。位移 → 格號的量化在介面**之前**完成：`src/avatar/gaze.ts` 的純函式
+  `gazeCell(dx, dy, current, opts)` 由呼叫端（`MascotPanel`）執行、目前格號也由呼叫端持有。
+  兩層防抖：dead zone（距吉祥物中心小於 `deadZonePx` 一律回格 `4`）與角度遲滯
+  （要深入新扇區超過 8° 才換格；從格 `4` 出發不套遲滯）。呼叫端只在格號改變時呼叫 `setGaze`。
+
+  > **【2026-10-02 訂正；經 PR 送審，merge 即為授權】原文寫「並新增 `setGaze(dx, dy)`（9 方向格即其實作，含 dead zone 防抖）」，與程式不符。**
+  > 程式自 `c1ebc95`（**早於**本 ADR 升 Accepted 的 `2799ed2`）起就是 `setGaze(cell: number): void`
+  > （`src/avatar/AvatarController.ts` 的介面宣告），升 Accepted 時文字沒有跟上。本訂正改文字去符合程式，不改程式。
+  > 收格號而不收位移的理由（皆可在程式查證；以符號名引用而不用行號，行號會漂）：
+  > 1. **遲滯需要狀態。** `gazeCell` 要拿「目前格號」才能決定換不換格，這個狀態由呼叫端
+  >    （`MascotPanel` 的 `gazeRef`）持有。介面若收 `(dx, dy)`，每個 avatar 實作都得各自重做量化與遲滯。
+  > 2. **dead zone 半徑依 stage 尺寸而定。** panel 量自己的 rect，以 `src/avatar/spriteSheet.ts` 的
+  >    `gazeDeadZonePx(side) = max(12, round(side × 0.25))` 覆寫 `gaze.ts` 的預設 28px。avatar 不需要知道這個尺寸。
+  > 3. **精靈圖要的本來就是格號。** `gaze.ts` 的 `cellToBackgroundPosition(cell)` 把格號直接換成
+  >    `background-position`；現行實作 `DiagnosticAvatar.setGaze` 只把輸入夾到 0–8。
+  > 原文「9 方向格即其實作，含 dead zone 防抖」的意思不變，改的是量化那一層住在介面之前、不在 avatar 裡；
+  > 原文漏寫的第二層防抖（角度遲滯）一併補上。`gaze.ts` 預設值旁的註解原寫「交界兩側各 4° 的緩衝」，
+  > 與程式（`delta <= 22.5 − hysteresisDeg`，`gaze.test.ts` 的遲滯測試釘住）不符，同一個 PR 一併更正。
 
 ### 6. 跨 panel 互動：漸進降級（**風險承擔決策**）
 「全局視線追蹤」與「區塊點擊偵測」需要伸手到自己 panel 以外的 DOM，**Grafana 官方不支援**。
@@ -159,8 +195,34 @@ ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零�
 **禁用** `data-panelid`、`panel-container`、`react-grid-item`（現行原始碼查無）。
 
 ### 7. 保留與廢除
-- **保留**：`src/core/*`（268 行，實測零 Node-only 相依，可直接在瀏覽器跑）
-  與其 4 支測試；`monitoring/` 全套（升 Grafana 13.2.x、加 plugin 掛載、補 provisioned dashboard）。
+- **保留**：`src/core/*`（實測零 Node-only 相依，可直接在瀏覽器跑）
+  與其 4 支測試；`monitoring/` 全套（升 Grafana 13.2.x、加 plugin 掛載、補 provisioned dashboard），
+  **但不含已失效的 bridge 告警投遞設定**：`grafana/provisioning/alerting/contactpoints.yml` 與 `policies.yml` 刪除。
+
+  > **【2026-10-02 訂正，經 PR 送審，merge 即為授權】「`monitoring/` 全套保留」不含 bridge 的告警投遞設定。**
+  > 原文寫於舊管線刪除（`fbd81f4`）之前，沒有把兩支只為 bridge 存在的檔案排除在外：
+  > `contactpoints.yml` 定義唯一的 contact point `augur-bridge`（webhook 打
+  > `http://host.docker.internal:3001/grafana/webhook`，Bearer 憑證內插 `$WEBHOOK_SECRET`）；
+  > `policies.yml` 把整棵通知政策樹覆寫成「全部送 `augur-bridge`」。接收端已不存在，
+  > 而決策 2 改由 panel 自己 pull，用不到 Grafana 的通知管線。
+  > 留著的後果：截至 2026-10-02 03:26 UTC，`docker logs augur-grafana` 自 2026-09-18 起累計
+  > **27,929 行** `Notify for alerts failed … augur-bridge/webhook[0] … connection refused`
+  > （`augur-grafana` 容器於 2026-09-18 重建，更早的日誌已不在；失敗自 `fbd81f4` 刪除接收端起即存在）。
+  > 本訂正同時裁定 `docs/ROADMAP.md` 記錄的「決策 7 vs 計畫 P3」衝突：採該檔列的解 1（刪兩檔）。
+  > 刪除後的行為（2026-10-02 以隔離的 `grafana/grafana:13.2.2` 掛本 repo 的 provisioning 實測）：
+  > - **全新 volume**：沒有任何 contact point，預設根政策的 receiver 是不帶 integration 的 `empty`。
+  >   `PocAlwaysFiring` 照常 firing（`/api/prometheus/grafana/api/v1/rules` 回 `firing`），
+  >   觀察約 2.5 分鐘通知失敗 0 行。少了兩檔 provisioning 不報錯（唯一的 provisioning error 是
+  >   本來就有的 `provisioning/plugins` 目錄不存在，刪檔前後都在）。
+  > - **既有 volume：只刪檔不夠。** 已 provision 進資料庫的 `augur-bridge` 與政策樹重啟後仍在、
+  >   provenance 仍是 `file`，失敗照舊。需要一次性清除，步驟寫在 `monitoring/README.md`。
+  >   **不要**把 `resetPolicies` 寫成常駐的 provisioning 檔：實測它每次重啟都把整棵政策樹重設回預設
+  >   （先以 API 改過的政策樹，重啟後即回到預設），日後任何人加的通知政策都會在下次重啟時消失 ——
+  >   等於換個形式留下同一個陷阱。
+  > 未在瀏覽器裡重驗 panel 念出；那一段由 CI 的 e2e（每次都是全新 volume）承接。
+  > `WEBHOOK_SECRET` 自此沒有任何消費者；輪換或作廢仍由人處理（ASP 鐵則二），不在本訂正範圍內。
+  > 另：本句原寫「`src/core/*`（268 行）」。行數會隨修正漂移（2026-10-02 實數 `wc -l src/core/*.ts` = 335），
+  > 這類數字留在 ADR 只會一再過期，故拿掉而不是更新。
 - **廢除且刪除，不封存**：`server.ts`/`config.ts`/`index.ts`/`airi.ts`/`sources/`/`sink/`/`tts/`/
   `web/`/`scripts/`/`airi-ops-bridge-spec.md`。
   **不封存的理由**：`src/airi.ts` 就是反例 —— dormant 之後 `.env.example` 至今躺著 20 行 AIRI 設定、
