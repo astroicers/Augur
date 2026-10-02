@@ -25,6 +25,15 @@ export interface MascotPanelOptions {
   enableTTS: boolean;
   /** 指名聲線；空字串 = 自動挑（優先 zh-TW 且為本機引擎）。 */
   ttsVoice: string;
+  /**
+   * directions 精靈圖（視線 9 格）的 URL；空字串 = plugin 內建素材（SP-8.4）。
+   * 接受任意 URL —— Grafana 的 CSP 預設關閉、開了 `img-src` 也是 `* data:`（規格 §10〈已有答案〉第 12 條）。
+   * ⚠️ 預設值**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的 `[hash][ext]`，
+   * 由 `SpriteController` 在空字串時改用 `spriteAssets.ts` 的 import 值。
+   */
+  directionsImgUrl: string;
+  /** reactions 精靈圖（表情 / 嘴 / 眨眼 9 格）的 URL；空字串 = 內建素材。同上。 */
+  reactionsImgUrl: string;
 }
 
 export const DEFAULT_OPTIONS: MascotPanelOptions = {
@@ -34,4 +43,6 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   alertLang: 'zh',
   enableTTS: true,
   ttsVoice: '',
+  directionsImgUrl: '',
+  reactionsImgUrl: '',
 };

@@ -26,6 +26,7 @@
 ⚠️ **這兩個 option 目前不存在** —— 實查全樹（排除 `node_modules`/`.git`/`dist`）零命中，
 `MascotPanelOptions` 只有 `minSeverity` / `repeatFiringMin` / `fallbackSeverity` /
 `alertLang` / `enableTTS` / `ttsVoice` 六個欄位。P5 需新增，工作項見 SP-8.4。
+✅ **2026-10-02 已新增**（ROADMAP B2-8）—— 上面那句是當時的實況，保留作背景。
 兩者留空時使用 plugin 內建的預設素材。
 
 **SP-0.3** `live2d/_archive/live2d-template-spec-v1.md` §3 的**絕對像素**錨點
@@ -1064,6 +1065,10 @@ webpack 已有 `test: /\.(png|jpe?g|gif|svg)$/ → asset/resource`
 預設值**必須是空字串**（不得寫死路徑字串）——
 production 建置的檔名是 `[hash][ext]`，由 `SpriteController` 在空字串時取
 `spriteAssets.ts` 的 import 值。
+
+兩個欄位**接受任意 URL，CSP 預設關閉不擋**（見 §10〈已有答案〉表中原 # 12 那一列：
+`content_security_policy = false`，開了 `img-src` 也是 `* data:`）。
+✅ **已於 2026-10-02 實作**（B2-8）：三處都已補上；填了外部 URL 時 panel 顯示「自訂圖，對齊未驗證」（SP-7.16）。
 
 **SP-8.5 【不得新增 `src/images.d.ts`】**
 `.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`（連 gif/jpg/jpeg/webp/svg 都有），

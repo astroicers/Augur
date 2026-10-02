@@ -12,10 +12,11 @@ import { fetchPanelRules } from '../sources/rulesFetcher';
 import { createSpeaker, type Speaker } from '../speech/speaker';
 import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
 import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
+import { CLICK_REACTION_MS, SpriteController } from '../avatar/SpriteController';
 import type { AvatarController } from '../avatar/AvatarController';
 import { CENTER_CELL, DEFAULT_GAZE, gazeCell } from '../avatar/gaze';
 import { createFlapDriver, type FlapDriver } from '../avatar/flap';
-import { gazeDeadZonePx, reactionFor, spriteSide } from '../avatar/spriteSheet';
+import { gazeDeadZonePx, reactionFor, shouldRenderSprite, spriteSide } from '../avatar/spriteSheet';
 
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
@@ -84,6 +85,10 @@ const getStyles = () => ({
     flex: 0 0 auto;
     aspect-ratio: 1;
     align-self: flex-start;
+    /* SP-1.7：邊長要等於內容區，padding / border 一律為 0。 */
+    padding: 0;
+    border: 0;
+    box-sizing: border-box;
   `,
   feed: css`
     flex: 1 1 auto;
@@ -169,6 +174,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
   /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
   const reactionRef = useRef<'click' | 'pending' | null>(null);
+  /**
+   * 反應層**想要**的值，與上面「已經送出的值」分開記。
+   * avatar 會在 panel 存活期間被換掉（跨過 128px 門檻、或 sprite 降級成 DiagnosticAvatar），
+   * 而反應層 effect 的依賴在那一刻沒變、不會重跑 —— 新的 avatar 由 mount effect 從這裡補送。
+   */
+  const wantReactionRef = useRef<'click' | 'pending' | null>(null);
   const clickTimerRef = useRef(0);
   const lastRawStateRef = useRef<string | null>(null);
 
@@ -195,6 +206,38 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   }, [dpr]);
 
   const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice } = options;
+  // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
+  const directionsImgUrl = options.directionsImgUrl ?? '';
+  const reactionsImgUrl = options.reactionsImgUrl ?? '';
+
+  // SP-1.8 / SP-1.9。dpr 是狀態而非每次 render 讀 window —— 視窗被拖到另一台螢幕時
+  // React 不會因為 devicePixelRatio 變了而重繪，必須自己監聽。
+  const side = spriteSide({ width, height, devicePixelRatio: dpr });
+
+  /**
+   * SP-8.7 的降級結果，**綁在當時的 URL 組合上**。改了 URL 就是一組新的圖，舊的失敗不再適用 ——
+   * 用 key 比對而不是在 effect 裡重置 state，免得多一輪 render。
+   */
+  const spriteKey = `${directionsImgUrl.trim()}\n${reactionsImgUrl.trim()}`;
+  const [spriteFault, setSpriteFault] = useState<{ key: string; reason: string; fatal: boolean } | null>(null);
+  const fault = spriteFault?.key === spriteKey ? spriteFault : null;
+  /**
+   * 掛哪一個 avatar。`side < 128` 不渲染 sprite（SP-1.8；A3-5 移來的規則）——
+   * 那個尺寸下視線與嘴窗都讀不出來，改掛 DiagnosticAvatar，視線指示器不會整個消失。
+   * sprite 載入或幾何驗證失敗（SP-8.7 第 2/3 條）同樣退回 DiagnosticAvatar。
+   */
+  const useSprite = shouldRenderSprite(side) && !fault?.fatal;
+
+  // 換 avatar 時要補送的狀態。ref 只在 effect 裡寫（render 期間寫 ref 會被 react-hooks/refs 擋下）；
+  // ⚠️ 這兩個 effect 必須宣告在 avatar mount effect **之前**，同一次 commit 裡才會先同步再補送。
+  const emotionRef = useRef<Emotion>('calm');
+  const speakingRef = useRef(false);
+  useEffect(() => {
+    emotionRef.current = emotion;
+  }, [emotion]);
+  useEffect(() => {
+    speakingRef.current = speaking;
+  }, [speaking]);
 
   /**
    * `alertState.state` 的原值。
@@ -225,8 +268,34 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     if (!host) {
       return;
     }
-    const a = new DiagnosticAvatar();
+    const a: AvatarController = useSprite
+      ? new SpriteController({
+          directionsUrl: directionsImgUrl,
+          reactionsUrl: reactionsImgUrl,
+          // 降級要顯示在畫面上（ADR-004 決策 6）。failed → useSprite 轉 false → 這個 effect 重跑、
+          // 改掛 DiagnosticAvatar；degraded → sprite 留著（只剩視線層），只多一個 chip。
+          onStatus: (st) =>
+            setSpriteFault(
+              st.state === 'ready' ? null : { key: spriteKey, reason: st.reason, fatal: st.state === 'failed' }
+            ),
+        })
+      : new DiagnosticAvatar();
     a.mount(host);
+    // 新的 avatar 從零開始。第一次 mount 時這些都是初值（無作用）；
+    // 中途換實作時（跨過 128px、sprite 降級）不補送的話，臉會回到 calm、視線回中央、
+    // 正在播報的嘴停住、pending 消失 —— 直到下一次對應的輸入才恢復。
+    a.setEmotion(emotionRef.current);
+    a.setGaze(gazeRef.current);
+    if (speakingRef.current) {
+      a.setSpeaking(true);
+    }
+    if (a.setReaction) {
+      const want = wantReactionRef.current;
+      if (want !== null) {
+        a.setReaction(want);
+      }
+      reactionRef.current = want;
+    }
     avatarRef.current = a;
     flapRef.current = createFlapDriver((open) => a.setMouthOpen?.(open));
     return () => {
@@ -239,7 +308,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       reactionRef.current = null;
       window.clearTimeout(clickTimerRef.current);
     };
-  }, []);
+  }, [useSprite, directionsImgUrl, reactionsImgUrl, spriteKey]);
 
   /**
    * 反應層（click / pending）。**一個 effect 決定一切**，不是兩處各自呼叫 `setReaction`。
@@ -264,16 +333,17 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
    * 這是實作時真的犯過的錯，由 MascotPanel.test.tsx 的 pending 測試抓到。
    */
   useEffect(() => {
-    const a = avatarRef.current;
-    if (!a?.setReaction) {
-      return;
-    }
     const want = reactionFor({
       clicking,
       pending: rawAlertState === 'pending',
       emotion,
       speaking,
     });
+    wantReactionRef.current = want;
+    const a = avatarRef.current;
+    if (!a?.setReaction) {
+      return;
+    }
     if (want === reactionRef.current) {
       return;
     }
@@ -355,7 +425,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       // 所以 click 結束時若 pending 仍成立，它會自己回到 pending 而不是 null。
       window.clearTimeout(clickTimerRef.current);
       setClicking(true);
-      clickTimerRef.current = window.setTimeout(() => setClicking(false), 420);
+      clickTimerRef.current = window.setTimeout(() => setClicking(false), CLICK_REACTION_MS);
     };
 
     target.addEventListener('pointermove', onMove, { passive: true });
@@ -545,9 +615,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const chipColor = theme.visualization.getColorByName(
     ({ calm: 'blue', warning: 'orange', critical: 'red', resolved: 'green' } as const)[emotion]
   );
-  // SP-1.8 / SP-1.9。dpr 是狀態而非每次 render 讀 window —— 視窗被拖到另一台螢幕時
-  // React 不會因為 devicePixelRatio 變了而重繪，必須自己監聽。
-  const side = spriteSide({ width, height, devicePixelRatio: dpr });
+  // SP-7.16：機械驗收只涵蓋內建的兩張 sheet。使用者自己填的圖要在畫面上標明。
+  const customSprite = useSprite && (directionsImgUrl.trim() !== '' || reactionsImgUrl.trim() !== '');
   // 「啟用語音」鈕的門檻與 stage 的門檻各自獨立、不共用（SP-1.8 末段明文）。
   const roomy = width >= 320 && height >= 180;
   // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
@@ -584,16 +653,34 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
             {speechErr}
           </span>
         )}
+        {customSprite && (
+          <span
+            className={styles.scopeChip}
+            data-testid="sprite-custom-chip"
+            title="panel option 指定了自訂精靈圖。tools/check-sprite-sheets.mjs 只驗內建的兩張，這組圖的格對齊沒有經過檢查（SP-7.16）。"
+          >
+            自訂圖，對齊未驗證
+          </span>
+        )}
+        {fault && (
+          <span
+            className={styles.chip}
+            style={{ color: theme.colors.warning.text }}
+            data-testid="sprite-fault-chip"
+            title={fault.reason}
+          >
+            {fault.fatal ? '精靈圖停用' : '精靈圖部分停用'}：{fault.reason}
+          </span>
+        )}
       </div>
 
       {lastClick && <div className={styles.when}>最後點擊：{lastClick}</div>}
 
       <div className={`${styles.body} ${sideBySide ? '' : styles.bodyStacked}`}>
         {/*
-          ⚠️ **`side < 128 不渲染` 這一條刻意還沒做**（留到 B2-4 的 SpriteController）。
-          現在掛在這裡的是 `DiagnosticAvatar`，它的 3×3 格是寫死 10px，放進 128px 的方形
-          stage 不會跟著長大 —— 現在就落地「窄 panel 不渲染」會把目前畫面上**唯一看得見的
-          視線指示器**整個藏掉，等於拿掉 G-ADR004-4 的目視證據。
+          stage 的邊長由這裡顯式設定（SP-8.17），avatar 只用 inset:0 填滿它。
+          side < 128 時掛的是 DiagnosticAvatar 而不是不掛（見上面的 useSprite）——
+          整個藏掉會拿掉畫面上唯一看得見的視線指示器，也就是 G-ADR004-4 的目視證據。
         */}
         <div
           ref={hostRef}

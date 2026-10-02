@@ -39,14 +39,14 @@ Implemented and in use:
 
 Not implemented:
 
-- **The sprite artwork.** The panel currently renders a `DiagnosticAvatar` — a plain
-  3×3 grid of dots that shows which direction the character *would* be looking. It is
-  deliberately abstract, not a placeholder character, so that nobody mistakes it for
-  the finished design. The rendering contract it implements is the same one the sprite
-  version will use, so swapping it in changes no wiring.
+- **The final sprite artwork.** The sprite renderer is in place — four stacked layers
+  for gaze, expression, mouth and blinking — but the character sheets are still being
+  produced. When the panel is too small for the sprite (under 128 px) or a sheet fails
+  to load, it falls back to a `DiagnosticAvatar`: a plain 3×3 grid of dots that shows
+  which direction the character *would* be looking, and says on the panel why it fell back.
 
 Install it if you want the speech and the alert reactions today, and do not mind that
-the character is a grid of dots.
+the artwork is not final.
 
 ## Installing
 
@@ -137,9 +137,14 @@ The panel's own options:
 | Language | Chinese | Language of the spoken text. |
 | Enable speech | on | Turn off to keep the visual reactions without any sound. |
 | Voice | auto | Name a specific system voice. Left empty, it prefers a local Chinese voice. |
+| Directions sprite URL | empty (built-in) | A 3×3 sheet of gaze directions. Must be square with a side divisible by 3. |
+| Reactions sprite URL | empty (built-in) | A 3×3 sheet of expression, mouth and blink overlays. Must be the same size as the directions sheet. |
 
-There are no options for sprite sheets or size. Size follows the panel; the artwork is
-not configurable.
+There is no size option: size follows the panel. The two sprite URLs accept any URL,
+but only the built-in sheets are checked for alignment — with a custom sheet the panel
+shows **自訂圖，對齊未驗證** ("custom sheet, alignment not verified"). If the reactions sheet
+fails to load or does not match, the character keeps tracking the cursor without
+expressions; if the directions sheet fails, the panel falls back to the dot grid.
 
 Browsers may require a user gesture before they will speak. The panel shows an
 **Enable speech** button when it has room for one; clicking it once per tab is enough.
