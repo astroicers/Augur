@@ -68,7 +68,7 @@
 ### 不卡人（可直接做）
 
 **開發環境**
-- **B3-2　開發環境的一次性清除（merge 後）** —— 刪掉 contactpoints/policies 只對全新 volume 生效；既有 `augur-grafana` 的資料庫裡 `augur-bridge` 與政策樹仍在，通知持續失敗。照 `monitoring/README.md`〈告警通知〉跑兩支 API DELETE（先政策樹、再 contact point），以 `augur-bridge/webhook` 累計行數兩次相同為驗收。
+- ~~**B3-2　開發環境的一次性清除（merge 後）**~~ ✅ **2026-10-02 完成**：PR #5 merge 後照 `monitoring/README.md`〈告警通知〉跑兩支 API DELETE（先政策樹 → 202、根 receiver 變 `empty`；再 contact point `augur_bridge_webhook` → 202）。驗收：`augur-bridge/webhook` 累計行數清除前 27,998、T+60s 27,999（Alertmanager 換設定前多一行，README 預告過）、T+180s 27,999 —— 兩次相同，停止累積。同日 main 的 CI e2e 在無 contactpoints/policies 的全新 volume 上全綠。
 
 **文件收尾**
 - **A0-1　P2-handoff 裡已廢除條款的殘留** —— docs/handoff/P2-handoff.md §三點六 還有三處把已廢除的 SP-2.6/SP-3.3/SP-5.3 寫成現行指示：〈進行中：可讀性實測〉整節、已裁定表的「產製路徑＝先跑可讀性實測再決定」、「規格（1169 行）」的過期行數。改法：三處都標「2026-09-20 廢除，見 sprite-sheet-spec.md〈可讀性實測：三輪，與它們證偽的東西〉」並拿掉行數；或判定 P2-handoff 整份一起退役。 另：`sprite-sheet-spec.md` §11 第 1 條的作廢標記後還接著一行沒劃線的「凍結後改不動，這是唯一不能省的前置實測。」，讀起來像現行指示。
