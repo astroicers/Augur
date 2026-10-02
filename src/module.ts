@@ -71,5 +71,22 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         defaultValue: DEFAULT_OPTIONS.ttsVoice,
         settings: { placeholder: 'Microsoft Hanhan - Chinese (Traditional, Taiwan)' },
         showIf: (c) => c.enableTTS,
+      })
+      .addTextInput({
+        // SP-8.4：兩個 sprite URL。預設空字串 = 內建素材（不得寫死路徑，見 panelOptions.ts）。
+        // 填了外部 URL，panel 會標「自訂圖，對齊未驗證」—— 機械驗收只涵蓋內建的兩張（SP-7.16）。
+        // ⚠️ 不要在這裡加 mascotSize：stage 尺寸由 SP-1.8 依 panel 大小自動計算。
+        path: 'directionsImgUrl',
+        name: '視線精靈圖 URL',
+        description: '3×3 directions sheet（正方形、邊長可被 3 整除）。留空 = 內建素材。自訂圖的對齊不經驗證。',
+        defaultValue: DEFAULT_OPTIONS.directionsImgUrl,
+        settings: { placeholder: '留空使用內建素材' },
+      })
+      .addTextInput({
+        path: 'reactionsImgUrl',
+        name: '表情精靈圖 URL',
+        description: '3×3 reactions sheet，尺寸必須與視線精靈圖相同。留空 = 內建素材。',
+        defaultValue: DEFAULT_OPTIONS.reactionsImgUrl,
+        settings: { placeholder: '留空使用內建素材' },
       });
   });

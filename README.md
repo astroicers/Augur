@@ -15,29 +15,28 @@
 P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位，5 個 POC gate 全數 PASS。
 
-目前有 91 個測試（11 個 suite）、156 條 sprite 工具自測。commit 閘共 10 道：
+目前有 120 個測試（12 個 suite）、156 條 sprite 工具自測。commit 閘共 10 道：
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
-P5 的工具側已完成，素材側還沒開工。精靈圖規格（`docs/sprite/sprite-sheet-spec.md`）、
-製作 SOP、SP-7 的機械驗收腳本、SP-V.1 的方向辨識盲測頁都已就位並自測通過，
-缺的是畫。這需要一個會用分層繪圖軟體的人，見 `docs/ROADMAP.md`〈未完成項目〉的「素材」。
+P5 的工具側已完成，素材目前是**暫定角色**：專案主人指定的「藍鯨布偶裝的疲憊男孩」，
+動漫 Q 版畫風（大眼、ω 嘴、腮紅、黑眼圈），由 `tools/sprite-gen/whale-boy.mjs` 程式生成（手寫 SVG 經 headless Chromium 光柵化，出處見
+`docs/asset-provenance.md`），照規格的錨點畫，通過整條 SP-7 機械驗收。正式畫師交付時整份取代；
+這個男孩只是暫定還是取代原角色，仍待裁定（見 `docs/ROADMAP.md`〈未完成項目〉的「素材」）。
 
-> ⚠️ commit 閘的綠燈不代表 sprite 檢查鏈已經驗過真圖，它綠是因為還沒有圖。
-> 素材未交付時 `SPRITE-CHECK` 走 `NOT-DELIVERED` 分支直接回 0，
-> 所以整條檢查鏈（SP-7.1 ~ SP-7.8）目前一次都不會對真素材觸發。
->
-> 這批檢查是對著 `tools/lib/syntheticSheet.mjs` 的合成假人校準的。這個假人預設就有 SP-2.14 要求的 2px 柔邊，
-> 能畫出內描邊、填色溢出、細髮束、matte 等真實畫稿的性質，畫出來的描邊寬度也用一把不經估計器的
-> 獨立量尺驗證過（selftest [2c]）。在它上面，描邊估計器、SP-6.6 的柔邊判定、SP-2.12 的腮紅位置都不會誤殺合規畫稿。
-> 但合成假人終究不是真圖，第一批素材到貨時要預期有些檢查會紅在錯的地方：
-> 覆蓋率與 128px 眉線對比目前只發 warn，門檻還沒用真素材校準；體積（SP-7.8）已經是硬失敗，
-> 預算同樣沒對真素材驗過；描邊估計器的偏差也要用同一批素材重量。
+> ⚠️ 驗收鏈現在每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
+> 不再走 `NOT-DELIVERED`。但暫定圖是照規格「畫給檢查看」的，跟它一起長大的合成假人
+> （`tools/lib/syntheticSheet.mjs`）也是。真正的考驗是第一批手繪素材：
+> 覆蓋率與 128px 眉線對比目前只發 warn，門檻還沒用手繪圖校準；體積（SP-7.8）已經是硬失敗，
+> 預算同樣沒對手繪圖驗過；描邊估計器的偏差也要用同一批素材重量。
 > 先校準，再當門檻用（`docs/ROADMAP.md`〈未完成項目〉B2-4、B2-6）。
 
-所以目前還沒有精靈圖。avatar 現在是 `DiagnosticAvatar`，它把契約的四個輸入
-（表情／講話／視線格／張口幅度）畫成儀表，刻意做得不像吉祥物，免得有人誤認成未完成的角色設計。
-`SpriteController` 會是同一個介面的第二個實作，屆時只要換 class，上層一行都不用動。
+avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，底層是視線格，
+上面三層是表情、嘴型與眨眼。stage 邊長不到 128px、或 directions 圖載入失敗或幾何不合時，
+改掛 `DiagnosticAvatar`。它把契約的四個輸入（表情／講話／視線格／張口幅度）畫成儀表，
+刻意做得不像吉祥物，免得有人誤認成角色設計。降級的原因會顯示在 panel 上。
+兩張圖由 `src/avatar/spriteAssets.ts` 以 `import` 取 URL（SP-8.3），build 時以帶 hash 的檔名進 `dist/`。
+> typecheck 與 jest 不受影響：型別由腳手架的 `*.png` 宣告承接，jest 把 png 換成 `tools/jest/fileMock.js`。
 
 ## ADR（決策權威，`docs/adr/`）
 
@@ -99,7 +98,8 @@ npm run e2e          # playwright，預設打 http://127.0.0.1:3002
 npm run package      # 產出可安裝的 zip
 
 # sprite 交付相關（素材還沒進來也都能跑）
-npm run check:sprites           # SP-7 素材驗收；未交付時印 NOT-DELIVERED 並回 0
+npm run check:sprites           # SP-7 素材驗收（manifest 不存在時印 NOT-DELIVERED 並回 0）
+node tools/sprite-gen/whale-boy.mjs  # 重新產生暫定角色的兩張圖與 manifest
 npm run check:sprites:selftest  # 上面那支自己的回歸測試（合成基準 + 逐條變異體）
 npm run blindtest               # SP-V.1 方向辨識盲測頁 → http://localhost:8787/
 npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身

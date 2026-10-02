@@ -26,6 +26,7 @@
 ⚠️ **這兩個 option 目前不存在** —— 實查全樹（排除 `node_modules`/`.git`/`dist`）零命中，
 `MascotPanelOptions` 只有 `minSeverity` / `repeatFiringMin` / `fallbackSeverity` /
 `alertLang` / `enableTTS` / `ttsVoice` 六個欄位。P5 需新增，工作項見 SP-8.4。
+✅ **2026-10-02 已新增**（ROADMAP B2-8）—— 上面那句是當時的實況，保留作背景。
 兩者留空時使用 plugin 內建的預設素材。
 
 **SP-0.3** `live2d/_archive/live2d-template-spec-v1.md` §3 的**絕對像素**錨點
@@ -149,6 +150,12 @@ if (side < 128) → 不渲染 sprite，只保留既有 chip 與 feed
 **任何情況下不得放大**（實測放大 1.875× 銳利度掉 56%、3.75× 掉 84%；
 縮小則無品質成本 —— 在任一固定的裝置像素尺寸下，所有未放大的來源給出完全相同的 Laplacian 數值）。
 既有的 `roomy = width >= 320 && height >= 180` 是「啟用語音」鈕的門檻，兩者各自獨立、不共用。
+
+> **【2026-10-02 訂正】** `side < 128` 的實作行為是**不渲染 sprite、改在 side×side 的 stage 裡掛
+> `DiagnosticAvatar`**（3×3 視線儀表加嘴條），chip 與 feed 照舊。上面那行「只保留既有 chip 與 feed」
+> 的字面是 A3-5 之前的寫法：什麼都不畫會把畫面上唯一的視線指示器一起拿掉，
+> 而那是 G-ADR004-4（視線追蹤）在窄 panel 上唯一看得到的證據。照字面實作的人會把它刪掉 —— 不要。
+> 同一條規則也見下文〈衝突 7〉的裁決。
 
 **SP-1.9** dpr 變動（視窗被拖到另一台螢幕）時必須重算 SP-1.8：
 監聽 `matchMedia(\`(resolution: ${dpr}dppx)\`)` 的 change 事件。
@@ -1065,6 +1072,10 @@ webpack 已有 `test: /\.(png|jpe?g|gif|svg)$/ → asset/resource`
 production 建置的檔名是 `[hash][ext]`，由 `SpriteController` 在空字串時取
 `spriteAssets.ts` 的 import 值。
 
+兩個欄位**接受任意 URL，CSP 預設關閉不擋**（見 §10〈已有答案〉表中原 # 12 那一列：
+`content_security_policy = false`，開了 `img-src` 也是 `* data:`）。
+✅ **已於 2026-10-02 實作**（B2-8）：三處都已補上；填了外部 URL 時 panel 顯示「自訂圖，對齊未驗證」（SP-7.16）。
+
 **SP-8.5 【不得新增 `src/images.d.ts`】**
 `.config/types/bundler-rules.d.ts` 已有 `declare module '*.png'`（連 gif/jpg/jpeg/webp/svg 都有），
 且 `.config/tsconfig.json` 的 `include` 是 `["../src", "./types"]`，該 `.d.ts` 在編譯範圍內。
@@ -1274,11 +1285,14 @@ onStart: (plan) => {
 
 **SP-9.12 【交付清單】** 進版控的交付物共四項，位置固定：
 ```
-src/img/sprite/augur-directions.png     (1536×1536)
-src/img/sprite/augur-reactions.png      (1536×1536)
+src/img/sprite/directions.png     (1536×1536)
+src/img/sprite/reactions.png      (1536×1536)
 src/img/sprite/sprite-manifest.json
 docs/sprite/SOURCE-PROMPTS.md
 ```
+> **【2026-10-02 訂正】** 原寫 `augur-directions.png` / `augur-reactions.png`。驗收工具的常數
+> （`tools/check-sprite-sheets.mjs` 的 `SHEET_FILES`）與本規格的盲測段都是不帶前綴的檔名；
+> 依檔頭規則（文件與程式衝突時文件錯）改本行。照舊檔名交付，驗收會回「directions.png 讀不到」。
 可編輯母本置於 `assets/sprite-src/`（是否進版控見 SP-9.11）。
 18 格的標號打樣圖由腳本按需產生到 `.sprite-check/`，**不進版控**。
 
@@ -1566,7 +1580,7 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 
 **衝突**：content 的複驗者代進錨點算出 96px 時虹膜 5.3px、瞳孔位移 2.1px、嘴窗高 10.6px；geometry 的複驗者算出 side 64/dpr1 時垂直瞳孔位移只有 1.15 裝置像素，低於 geometry §5.2 自己用來否決全身構圖的 1.4–1.8px 區間。兩邊的下限都低於自己的可讀性論證。
 
-**裁決**：下限 **128 CSS px**，低於此一律不渲染 sprite（只留既有 chip 與 feed）。上限 `min(256, 512/dpr)`，任何情況下不放大。連帶裁定：`MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數把 `deadZonePx` 改成 `round(side × 0.25)`（**此項已於 `de98011` 實作，下文「現行程式碼」指的是 2026-09-18 之前的狀態**）—— 當時的程式碼沒傳 opts，`deadZonePx` 恆為 28，那是為 34px 的 DiagnosticAvatar 訂的；在 224px 的 stage 上 dead zone 只佔直徑 25%，游標停在角色臉頰上時角色會把視線甩開自己，「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
+**裁決**：下限 **128 CSS px**，低於此一律不渲染 sprite（只留既有 chip 與 feed；**2026-10-02 訂正**：實作另掛 `DiagnosticAvatar` 保留視線指示器，見 SP-1.8 下的訂正）。上限 `min(256, 512/dpr)`，任何情況下不放大。連帶裁定：`MascotPanel` 呼叫 `gazeCell` 時必須傳第四參數把 `deadZonePx` 改成 `round(side × 0.25)`（**此項已於 `de98011` 實作，下文「現行程式碼」指的是 2026-09-18 之前的狀態**）—— 當時的程式碼沒傳 opts，`deadZonePx` 恆為 28，那是為 34px 的 DiagnosticAvatar 訂的；在 224px 的 stage 上 dead zone 只佔直徑 25%，游標停在角色臉頰上時角色會把視線甩開自己，「中央格＝游標壓在身上」的語意直接反過來。這只換一個既有 option 的值，不動 `gaze.ts`。
 
 ### 8. production §C3（tolPx = max(1, floor(cellPx /(maxRenderCssPx × DPR)))）與 §C4/§G3（封頂是驗收前提）× 本規格的疊合架構
 
