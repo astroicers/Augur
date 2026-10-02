@@ -90,3 +90,15 @@ test('SP-1.5：src/ 中出現的每個 background-size 都必須是 300% 300%', 
   }
   expect(bad).toEqual([]);
 });
+
+test('SP-8.3：spriteAssets.ts 以 `import x from` 取兩張 png 的 URL —— `export … from` 的 re-export 在 webpack 下是 undefined', () => {
+  // 2026-10-02 實測：寫成 `export { default as X } from '../img/sprite/directions.png'` 時，
+  // webpack build 只印 WARNING（"module has no exports"）且 exit 0、執行期 URL 是 undefined；
+  // 而 jest 的 CJS 轉譯保留那個 re-export —— SpriteController 的測試照樣全綠，CI 的 build 步驟也不紅。
+  // 只讀文字、不 import（SP-8.1：測試不得引用 spriteAssets.ts）。
+  const code = fs.readFileSync(path.join(SRC, 'avatar', 'spriteAssets.ts'), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+  expect(code).not.toMatch(/export\s*(\*|\{[^}]*\})\s*from\s*['"][^'"]+\.png['"]/);
+  // 檔名與 tools/check-sprite-sheets.mjs 的 SHEET_FILES 同一組 —— 驗收工具驗的必須是出貨的那兩張。
+  const imports = code.match(/^import\s+\w+\s+from\s+['"]\.\.\/img\/sprite\/(?:directions|reactions)\.png['"];?$/gm);
+  expect(imports).toHaveLength(2);
+});

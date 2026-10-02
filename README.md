@@ -15,7 +15,7 @@
 P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位，5 個 POC gate 全數 PASS。
 
-目前有 91 個測試（11 個 suite）、156 條 sprite 工具自測。commit 閘共 10 道：
+目前有 120 個測試（12 個 suite）、156 條 sprite 工具自測。commit 閘共 10 道：
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
@@ -35,9 +35,16 @@ P5 的工具側已完成，素材側還沒開工。精靈圖規格（`docs/sprit
 > 預算同樣沒對真素材驗過；描邊估計器的偏差也要用同一批素材重量。
 > 先校準，再當門檻用（`docs/ROADMAP.md`〈未完成項目〉B2-4、B2-6）。
 
-所以目前還沒有精靈圖。avatar 現在是 `DiagnosticAvatar`，它把契約的四個輸入
-（表情／講話／視線格／張口幅度）畫成儀表，刻意做得不像吉祥物，免得有人誤認成未完成的角色設計。
-`SpriteController` 會是同一個介面的第二個實作，屆時只要換 class，上層一行都不用動。
+所以目前還沒有精靈圖，但讀它的程式已經接上了。avatar 預設是 `SpriteController`：
+四層 `<div>` 疊在方形 stage 上，底層是視線格，上面三層是表情、嘴型與眨眼。
+stage 邊長不到 128px、或 directions 圖載入失敗或幾何不合時，改掛 `DiagnosticAvatar`。
+`DiagnosticAvatar` 把契約的四個輸入（表情／講話／視線格／張口幅度）畫成儀表，
+刻意做得不像吉祥物，免得有人誤認成未完成的角色設計。降級的原因會顯示在 panel 上。
+
+> ⚠️ 兩張 sheet（`src/img/sprite/directions.png`、`reactions.png`）還沒交付，也不在版控裡，
+> 而 `src/avatar/spriteAssets.ts` 是用 `import` 取它們的 URL（SP-8.3）。
+> 素材到位之前，`npm run build` 會因為找不到這兩個檔而失敗。
+> typecheck 與 jest 不受影響：型別由腳手架的 `*.png` 宣告承接，jest 把 png 換成 `tools/jest/fileMock.js`。
 
 ## ADR（決策權威，`docs/adr/`）
 

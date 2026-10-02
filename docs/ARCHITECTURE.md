@@ -2,7 +2,8 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-09-18（ADR-004 升 Accepted 後整份重寫）。
+> 最後更新：2026-10-02（B2-7 / B2-8：`SpriteController` 接上、兩個 sprite URL 選項）。
+> 前一次是 2026-09-18（ADR-004 升 Accepted 後整份重寫）。
 
 ## 一句話
 
@@ -37,8 +38,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
    src/speech/speaker.ts                  src/avatar/AvatarController
      佇列、逐則播、不疊音                    setEmotion / setSpeaking
      onboundary → 嘴型同步點                setGaze / setMouthOpen?
-     watchdog（先 cancel 再 finish）         現行實作：DiagnosticAvatar
-                                            未來：SpriteController（P5）
+     watchdog（先 cancel 再 finish）         預設：SpriteController（四層疊合）
+                                            stage < 128px 或圖壞掉：DiagnosticAvatar
                                                   ▲
                                      src/dom/dashboardPanels.ts
                                        跨 panel 能力偵測 + 漸進降級
@@ -59,7 +60,10 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
 | `src/avatar/AvatarController.ts` | avatar-agnostic 契約（繼承 ADR-002 §2） |
 | `src/avatar/gaze.ts` | 視線格計算。兩層防抖：dead zone + 角度遲滯 |
-| `src/avatar/DiagnosticAvatar.ts` | 契約的第一個實作。**刻意不是吉祥物**，把四個輸入畫成儀表 |
+| `src/avatar/DiagnosticAvatar.ts` | 契約的第一個實作。**刻意不是吉祥物**，把四個輸入畫成儀表。現在是退路：stage < 128px 或 sprite 載入失敗時掛它 |
+| `src/avatar/spriteSheet.ts` | 18 格精靈圖的純計算層（格號、expr 優先序、嘴型幀、眨眼排程、尺寸）。零圖片 import、零 DOM |
+| `src/avatar/SpriteController.ts` | 契約的第二個實作（SP-8）。四層 div 疊合、眨眼與定速嘴型的時序、載入與四條降級 |
+| `src/avatar/spriteAssets.ts` | 只有兩行 png import，取內建 sheet 的 URL（SP-8.3）。**測試不得 import** |
 | `src/dom/dashboardPanels.ts` | 跨 panel DOM 能力偵測。本專案**唯一** unsupported 的部分 |
 | `monitoring/` | docker-compose 開發環境 + alert rules + provisioned dashboard |
 | `tools/` | `check-js-suffix.sh`（守門）、`asp-test.sh`（ASP commit 閘） |
@@ -83,7 +87,9 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 ## 設定
 
 Panel options（`src/panelOptions.ts`）：`minSeverity`、`repeatFiringMin`、
-`fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`。
+`fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`、`directionsImgUrl`、`reactionsImgUrl`。
+後兩個預設空字串（= 內建素材，不得寫死路徑：production 檔名是 `[hash][ext]`）；
+填了外部 URL，panel 會標「自訂圖，對齊未驗證」（SP-7.16）。**沒有尺寸選項**，stage 邊長由 SP-1.8 自動算。
 
 **Threshold 不在這裡** —— ADR-004 決策 2 要求走 standard field config
 （`fieldConfig.defaults.thresholds`），自訂 option 會失去 overrides 與原生編輯 UI。
@@ -106,7 +112,7 @@ ADR-001／002 引用的 `broadcaster-spikes/` 在 repo 中已不存在，那兩�
 
 `@grafana/create-plugin` 7.11.0 腳手架（**webpack**，非 Vite）·
 執行期 Grafana **13.2.x**、編譯期 pin `@grafana/*` **13.1.0**（externals，不進 bundle）·
-React 18 · Emotion（`@grafana/ui` 的 `useStyles2`）· Jest + @swc/jest（91 測試 / 11 suites；另有 156 條 sprite 工具自測，不走 jest）· npm。
+React 18 · Emotion（`@grafana/ui` 的 `useStyles2`）· Jest + @swc/jest（120 測試 / 12 suites；另有 156 條 sprite 工具自測，不走 jest）· npm。
 
 **`.config/` 由 create-plugin 託管，禁止手改** —— 手改的後果不是被覆寫而是**靜默失效**
 （migration 全是 `if (!AST match) return` 的早退）。要擴充就改根層的 wrapper。
