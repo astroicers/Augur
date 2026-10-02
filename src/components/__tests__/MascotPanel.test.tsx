@@ -376,9 +376,7 @@ test('StrictMode 下 feed 順序必須與正式模式相同（updater 不得就�
  * 這支測試把那四步逐一走過。對著舊實作跑，第 3 步與第 4 步都會停在 0 則。
  */
 test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（source/dedup 生命週期一致）', async () => {
-  mockedFetch.mockResolvedValue([
-    { alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 },
-  ]);
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 }]);
 
   // 1) 先燒起來，播一則 firing。
   const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
@@ -391,9 +389,7 @@ test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（
   //    那次 evaluate 會把 episodes 重新填回去，缺陷就被治好了、測試也就白寫。
   //    （我第一版正是這樣寫的，對著舊實作跑**是綠的**。）
   //    真實情境是選項改動與告警恢復落在同一個 refresh 週期內。
-  view.rerender(
-    <MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />);
 
   // 3) 必須播得出「已恢復」。舊實作在這裡對著空的 episodes 迭代 → 靜默。
   await waitFor(() => expect(spoken.length).toBeGreaterThan(afterFiring));
@@ -401,9 +397,7 @@ test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（
   const afterResolved = spoken.length;
 
   // 4) 再燒一次 —— 必須再播一則。舊實作在這裡永久靜音。
-  view.rerender(
-    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />);
   await waitFor(() => expect(spoken.length).toBeGreaterThan(afterResolved));
   expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
 });
@@ -455,9 +449,7 @@ test('改 fallbackSeverity 後，新的降級 episode 用新值（ref 同步不�
   await waitFor(() => expect(spoken.length).toBe(2));
   expect(spoken[1]!.emotion).toBe('resolved');
 
-  view.rerender(
-    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />);
   await waitFor(() => expect(spoken.length).toBe(3));
   // ref 同步拿掉的話，這裡讀到的是掛載時捕捉的 'critical'。
   expect(spoken[2]!.emotion).toBe('warning');
@@ -599,5 +591,121 @@ test('兩張圖尺寸不一致：sprite 留著（只剩視線層），顯示「�
     expect(stage.querySelector<HTMLElement>('[data-layer="expr"]')!.style.backgroundImage).toBe('');
   } finally {
     restoreImage();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PR #8 複審：換 avatar 時要帶過去的狀態
+// ---------------------------------------------------------------------------
+
+test('點擊後 420ms 內換 avatar：click 照樣在 420ms 後結束、回到 pending（不得卡在 click）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const diagReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  try {
+    const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(100);
+    });
+    // 點擊進行中縮到 84px → 換成 DiagnosticAvatar。先前 avatar effect 的 cleanup 會清掉
+    // click 計時器（那是 clicking 翻回 false 的唯一途徑），而這個 effect 換 avatar 時也會跑。
+    view.rerender(<MascotPanel {...props({ alertState: PENDING })} width={200} />);
+    await settle();
+    expect(stage.querySelector('[data-layer]')).toBeNull();
+    expect(diagReaction).toHaveBeenLastCalledWith('click');
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(diagReaction).toHaveBeenLastCalledWith('pending');
+  } finally {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
+});
+
+test('420ms 內連點：每一下都重送 click，第二下之後的 420ms 仍看得到點擊格（SP-8.12）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const restoreImage = installFakeImage();
+  const spriteReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    // 走完假 Image 的 decode → ready（微任務，fake timers 不影響）。
+    for (let i = 0; i < 10; i++) {
+      await settle();
+    }
+    const stage = view.getByTestId('mascot-stage');
+    const expr = () => stage.querySelector<HTMLElement>('[data-layer="expr"]')!;
+    const click = () =>
+      act(async () => {
+        stage.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }));
+      });
+    spriteReaction.mockClear();
+
+    await click();
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+    await click();
+    // 先前第二下是 setClicking(true) 的同值更新，反應層不重跑 —— SpriteController 只收到一次
+    // 'click'，它自己的 420ms 從第一下算起，t=420 起點擊格就消失了。
+    expect(spriteReaction.mock.calls.filter((c) => c[0] === 'click')).toHaveLength(2);
+    await act(async () => {
+      jest.advanceTimersByTime(400); // t = 700
+    });
+    expect(expr().style.display).not.toBe('none');
+    expect(expr().style.backgroundPosition).toBe('0% 0%');
+
+    await act(async () => {
+      jest.advanceTimersByTime(100); // t = 800，第二下的 420ms 已過
+    });
+    expect(spriteReaction).toHaveBeenLastCalledWith(null);
+  } finally {
+    jest.restoreAllMocks();
+    restoreImage();
+    jest.useRealTimers();
+  }
+});
+
+test('跨過 128px 換 avatar 時補送視線格（不回中央）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const spriteGaze = jest.spyOn(SpriteController.prototype, 'setGaze');
+  const diagGaze = jest.spyOn(DiagnosticAvatar.prototype, 'setGaze');
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    jest.spyOn(stage, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 252,
+      height: 252,
+      right: 252,
+      bottom: 252,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    // 游標在右下遠處 → 視線格 8。
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 900 }));
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    expect(spriteGaze).toHaveBeenLastCalledWith(8);
+
+    // 縮到 84px：新掛上的 DiagnosticAvatar 預設看中央。游標沒動 → pointermove 不會再來，
+    // 不補送的話視線就停在中央，直到游標換格。
+    diagGaze.mockClear();
+    view.rerender(<MascotPanel {...props({})} width={200} />);
+    await settle();
+    expect(diagGaze).toHaveBeenLastCalledWith(8);
+  } finally {
+    jest.restoreAllMocks();
   }
 });

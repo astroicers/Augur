@@ -20,7 +20,7 @@ typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗�
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
 P5 的工具側已完成，素材目前是**暫定角色**：專案主人指定的「藍鯨布偶裝的疲憊男孩」，
-由 `tools/sprite-gen/whale-boy.mjs` 程式生成（手寫 SVG 經 headless Chromium 光柵化，出處見
+動漫 Q 版畫風（大眼、ω 嘴、腮紅、黑眼圈），由 `tools/sprite-gen/whale-boy.mjs` 程式生成（手寫 SVG 經 headless Chromium 光柵化，出處見
 `docs/asset-provenance.md`），照規格的錨點畫，通過整條 SP-7 機械驗收。正式畫師交付時整份取代；
 這個男孩只是暫定還是取代原角色，仍待裁定（見 `docs/ROADMAP.md`〈未完成項目〉的「素材」）。
 

@@ -167,6 +167,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [lastClick, setLastClick] = useState<string | null>(null);
   /** 點擊回饋是**事件**：翻一個 state，420ms 後翻回來。要顯示什麼由反應層依優先序決定。 */
   const [clicking, setClicking] = useState(false);
+  /**
+   * 第幾次點擊。`clicking` 已經是 true 時再點一下，`setClicking(true)` 是同值、React 不重跑
+   * 反應層 —— SpriteController 自己的 420ms 計時器就只從**第一下**算起，連點的後幾下沒有回饋。
+   * 這個序號讓每一下都重送 'click'（SpriteController 收到會重啟自己的計時器）。
+   */
+  const [clickSeq, setClickSeq] = useState(0);
   const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1));
   // ⚠️ speaking 先前**只經 avatarRef.setSpeaking 送出去，React 側沒留** ——
   // 而 pending 的顯示條件含「未播報」，沒有這個 state 就判不出來。
@@ -181,6 +187,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
    */
   const wantReactionRef = useRef<'click' | 'pending' | null>(null);
   const clickTimerRef = useRef(0);
+  /** 已經送給 avatar 的是第幾次點擊。與 `clickSeq` 不同時，同樣是 'click' 也要重送。 */
+  const sentClickSeqRef = useRef(0);
   const lastRawStateRef = useRef<string | null>(null);
 
   /**
@@ -306,7 +314,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       // ⚠️ 守門旗標必須跟著 avatar 一起重置，否則 StrictMode 的第二次 mount
       // 會以為「已經送過了」而讓新的 avatar 永遠停在 null。
       reactionRef.current = null;
-      window.clearTimeout(clickTimerRef.current);
+      // ⚠️ **不在這裡清 click 計時器。** 這個 effect 換 avatar 時也會跑（deps 不是 []），
+      // 而 420ms 計時器是 `clicking` 翻回 false 的唯一途徑：點擊後 420ms 內換 avatar
+      // （跨過 128px、sprite 載入失敗、改 URL 選項）就會讓 click 卡住、pending 不再出現。
+      // 計時器屬於建立它的互動層，unmount 時由那邊清。
     };
   }, [useSprite, directionsImgUrl, reactionsImgUrl, spriteKey]);
 
@@ -344,13 +355,16 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     if (!a?.setReaction) {
       return;
     }
-    if (want === reactionRef.current) {
+    const newClick = want === 'click' && clickSeq !== sentClickSeqRef.current;
+    if (want === reactionRef.current && !newClick) {
       return;
     }
     reactionRef.current = want;
+    if (want === 'click') {
+      sentClickSeqRef.current = clickSeq;
+    }
     a.setReaction(want);
-  }, [clicking, rawAlertState, emotion, speaking]);
-
+  }, [clicking, clickSeq, rawAlertState, emotion, speaking]);
 
   // 情緒衰減。沒有這個，一則 resolved 播完後臉會頂著閃光停到下一次告警。
   useEffect(() => {
@@ -425,6 +439,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       // 所以 click 結束時若 pending 仍成立，它會自己回到 pending 而不是 null。
       window.clearTimeout(clickTimerRef.current);
       setClicking(true);
+      setClickSeq((n) => n + 1);
       clickTimerRef.current = window.setTimeout(() => setClicking(false), CLICK_REACTION_MS);
     };
 
@@ -434,6 +449,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       cancelAnimationFrame(raf);
       target.removeEventListener('pointermove', onMove);
       target.removeEventListener('click', onClick);
+      window.clearTimeout(clickTimerRef.current);
       domRef.current = null;
     };
   }, []);
@@ -625,10 +641,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
-        <span
-          className={styles.chip}
-          style={{ background: chipColor, color: theme.colors.getContrastText(chipColor) }}
-        >
+        <span className={styles.chip} style={{ background: chipColor, color: theme.colors.getContrastText(chipColor) }}>
           {emotion}
         </span>
         {pending > 0 && <span className={styles.chip}>佇列 {pending}</span>}

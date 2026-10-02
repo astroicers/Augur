@@ -14,8 +14,9 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
 
 ### The mascot has a face (2026-10-02)
 
-- The panel now renders a sprite mascot instead of the diagnostic dot grid: a tired boy
-  with dark circles under his eyes, wearing a blue-whale onesie. He looks toward the
+- The panel now renders a sprite mascot instead of the diagnostic dot grid: a sleepy
+  chibi anime boy with big honey-coloured eyes and dark circles under them, wearing a
+  blue-whale onesie (whale-eyed hood, water spout, a tail curling up behind him). He looks toward the
   cursor (nine gaze cells), changes expression with the alert severity, blinks, moves
   his mouth while speaking, and startles awake when clicked.
 - This is **placeholder art**, drawn by a script in this repository

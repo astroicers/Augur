@@ -1,5 +1,5 @@
 {
-  "_note": "暫定角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師交付時整份重做。",
+  "_note": "暫定角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師交付時整份重做。",
   "version": 1,
   "sheet": {
     "width": 1536,
@@ -56,12 +56,12 @@
   },
   "colours": {
     "_source": "SP-6.0 / SP-6.1 / SP-6.2。線稿色與虹膜色必須明文記錄 —— SP-7.3 的方向綁定檢查要拿虹膜色做遮罩。",
-    "lineart": "#000010",
-    "iris": "#28875F",
+    "lineart": "#3B2226",
+    "iris": "#D98A2B",
     "irisToleranceRgb": 40,
-    "skin": "#E2C8B1",
+    "skin": "#ECC4B3",
     "skinToleranceRgb": 24,
-    "hair": "#3A66A0",
+    "hair": "#6EA8E8",
     "hairToleranceRgb": 24,
     "exemptToleranceRgb": 24,
     "_note_hair": "本角色沒有外露的髮頂：藍鯨頭套占了頭髮的位置，所以 colours.hair 宣告為頭套色 —— SP-7.5 的頭部 bbox（膚色＋髮色）因此量到頭套。從頭套下露出的瀏海是另一個顏色。"
@@ -145,7 +145,7 @@
   },
   "sha256": {
     "_note": "兩張 PNG 的 sha256。腳本先比對再做像素檢查 —— 換圖而不更新 manifest 必須是紅的（SP-7.15）。",
-    "directions": "c0931494e679a254a821a9603c44da02d786566bf0fa375450257110ff2bea4d",
-    "reactions": "b21eb18649f0614449f0ce244a1e35a7c86dd7dbfe50c368e1eb3b8984833415"
+    "directions": "7b654f5e34c59bad3fac9775e6c8883b4c64ebc0208485284af50c741e6a258d",
+    "reactions": "0e3c20daf3ab84a9f935edd441a111ada8104607abaa7c5d0ca31f0328e29948"
   }
 }

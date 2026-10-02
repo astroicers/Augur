@@ -566,24 +566,41 @@ test('dispose 清掉所有計時器、DOM 與 matchMedia 監聽；之後的呼�
   expect(r.host.childElementCount).toBe(0);
   expect(removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
 
-  expect(() => {
-    r.c.setGaze(1);
-    r.c.setEmotion('critical');
-    r.c.setSpeaking(false);
-    r.c.setSpeaking(true);
-    r.c.setMouthOpen(0.6);
-    r.c.setReaction('click');
-    r.c.setReaction('pending');
-  }).not.toThrow();
-  expect(jest.getTimerCount()).toBe(0);
+  // ⚠️ **每一次呼叫後各查一次。** 先前是整串呼叫完才查一次 getTimerCount()，
+  // 而 setSpeaking(true) 排的嘴計時器會被下一個 setMouthOpen 清掉、setReaction('click') 的
+  // 計時器會被下一個 setReaction('pending') 清掉 —— 拿掉 disposed 守門照樣綠（複審實測）。
+  const calls = [
+    () => r.c.setGaze(1),
+    () => r.c.setEmotion('critical'),
+    () => r.c.setSpeaking(false),
+    () => r.c.setSpeaking(true),
+    () => r.c.setMouthOpen(0.6),
+    () => r.c.setReaction('click'),
+    () => r.c.setReaction('pending'),
+  ];
+  for (const call of calls) {
+    expect(call).not.toThrow();
+    expect(jest.getTimerCount()).toBe(0);
+  }
 });
 
-test('dispose 之後才到的載入結果被丟棄：不回報、不碰 DOM、不排眨眼', async () => {
-  const resolvers: Array<(s: LoadedSheet) => void> = [];
-  const r = await rig({ loadSheet: () => new Promise((res) => resolvers.push(res)) }, { ready: false });
+// ⚠️ reject 那一支不能省。resolve 路徑在 applyVerdict 會被「layers 已經是 null」擋下，
+// 那一層把 load() 裡的 disposed 守門遮住了；失敗路徑走 fail() → emit()，不看 layers。
+// 真實情境：使用者改 URL 選項時每次按鍵都換一個 controller，舊的那個晚到的 404
+// 會蓋掉目前這組 URL 的降級狀態。
+test.each(['resolve', 'reject'] as const)('dispose 之後才到的載入結果（%s）被丟棄：不回報、不碰 DOM、不排眨眼', async (outcome) => {
+  const pending: Array<{ res: (s: LoadedSheet) => void; rej: (e: Error) => void }> = [];
+  const r = await rig(
+    { loadSheet: () => new Promise((res, rej) => pending.push({ res, rej })) },
+    { ready: false }
+  );
   r.c.dispose();
-  for (const res of resolvers) {
-    res(SHEET);
+  for (const p of pending) {
+    if (outcome === 'resolve') {
+      p.res(SHEET);
+    } else {
+      p.rej(new Error('404'));
+    }
   }
   await flush();
   expect(r.statuses).toEqual([]);

@@ -12,7 +12,7 @@
 
 | `live2d/_archive/nami/layout.json`<br>`live2d/_archive/nami/manifest.json` | 純座標與 z-order，**無美術資料** | 自產（拆層工具輸出） | 隨 repo Apache-2.0 | 對應的 34 張圖已移除，見下 |
 | `src/img/logo.svg` | plugin 圖示 | `@grafana/create-plugin` 7.11.0 腳手架 | Apache-2.0（隨腳手架） | 尚未替換成自有圖示 |
-| `src/img/sprite/directions.png`<br>`src/img/sprite/reactions.png`<br>`src/img/sprite/sprite-manifest.json` | **暫定角色**「藍鯨布偶裝的疲憊男孩」的兩張精靈圖與 manifest | **自產（程式生成）**：`tools/sprite-gen/whale-boy.mjs` 以手寫 SVG 經 headless Chromium 光柵化。角色由專案主人於 2026-10-02 指定 | 隨 repo Apache-2.0 | 重跑該腳本即可完整重建（SP-9.11 的「無法單獨重建」不適用）。未使用任何生成式服務，故無 SP-9.3 的 prompt 可記。正式畫師交付時整份取代 |
+| `src/img/sprite/directions.png`<br>`src/img/sprite/reactions.png`<br>`src/img/sprite/sprite-manifest.json` | **暫定角色**「藍鯨布偶裝的疲憊男孩」的兩張精靈圖與 manifest | **自產（程式生成）**：`tools/sprite-gen/whale-boy.mjs` 以手寫 SVG 經 headless Chromium 光柵化。角色與畫風（動漫 Q 版、萌系；只參考風格，造型原創）由專案主人於 2026-10-02 指定 | 隨 repo Apache-2.0 | 重跑該腳本即可完整重建（SP-9.11 的「無法單獨重建」不適用）。未使用任何生成式服務，故無 SP-9.3 的 prompt 可記。正式畫師交付時整份取代 |
 
 ## A1 已退出版控（2026-09-21）
 
