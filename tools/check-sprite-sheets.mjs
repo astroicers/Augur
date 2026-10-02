@@ -32,13 +32,17 @@ import {
   CELL_COUNT,
   skinMask,
   cellView,
+  checkAlphaBleed,
   checkAnchors,
   checkDownsampleReadability,
+  checkEyeCoverage,
   checkFileSize,
   checkFormatAndHygiene,
   checkGazeBinding,
   checkHeadImmobility,
+  checkHem,
   checkLuminanceAndStroke,
+  checkOutlineContinuity,
   checkOverlayOwnership,
   optional as effective,
   windowRect,
@@ -830,6 +834,11 @@ export function runCheck({ spriteDir = SPRITE_DIR, outDir = OUT_DIR, log = conso
   findings.push(...checkOverlayOwnership(sheets, manifest));
   findings.push(...checkAnchors(sheets.directions, manifest, gaze.centroids));
   findings.push(...checkLuminanceAndStroke(sheets.directions, manifest));
+  // ROADMAP B2-9：第一版暫定圖同時違反這四條而全綠（PR #8 複審）。
+  findings.push(...checkHem(sheets.directions, manifest));
+  findings.push(...checkOutlineContinuity(sheets.directions, manifest));
+  findings.push(...checkEyeCoverage(sheets, manifest));
+  findings.push(...checkAlphaBleed(sheets, manifest));
   findings.push(...checkDownsampleReadability(sheets, manifest));
   findings.push(...checkFileSize(sizes, manifest));
 
