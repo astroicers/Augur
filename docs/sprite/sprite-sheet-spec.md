@@ -1274,11 +1274,14 @@ onStart: (plan) => {
 
 **SP-9.12 【交付清單】** 進版控的交付物共四項，位置固定：
 ```
-src/img/sprite/augur-directions.png     (1536×1536)
-src/img/sprite/augur-reactions.png      (1536×1536)
+src/img/sprite/directions.png     (1536×1536)
+src/img/sprite/reactions.png      (1536×1536)
 src/img/sprite/sprite-manifest.json
 docs/sprite/SOURCE-PROMPTS.md
 ```
+> **【2026-10-02 訂正】** 原寫 `augur-directions.png` / `augur-reactions.png`。驗收工具的常數
+> （`tools/check-sprite-sheets.mjs` 的 `SHEET_FILES`）與本規格的盲測段都是不帶前綴的檔名；
+> 依檔頭規則（文件與程式衝突時文件錯）改本行。照舊檔名交付，驗收會回「directions.png 讀不到」。
 可編輯母本置於 `assets/sprite-src/`（是否進版控見 SP-9.11）。
 18 格的標號打樣圖由腳本按需產生到 `.sprite-check/`，**不進版控**。
 
