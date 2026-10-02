@@ -384,3 +384,26 @@ test('全部恢復之後必須清掉 rules 快取（否則會念一個沒燒過�
   await tick('alerting');
   expect(spoken).toEqual(['A/firing', 'A/resolved', 'B/firing']);
 });
+
+test('降級 episode 的 severity 跟著目前的 fallbackSeverity 走 —— 調高選項救得回被過濾的告警', async () => {
+  // 2026-09-29 複審：severity 在 episode 建立當下定格，於是
+  // fallbackSeverity=info + minSeverity=warning 的組合下告警被濾掉，
+  // 使用者調高 fallbackSeverity 也救不回來（episode 還是舊的 info）。
+  let fallback = 'info';
+  const src = createPanelAlertSource({
+    panelId: 7,
+    fetchRules: async () => {
+      throw new Error('down');
+    },
+    fallbackSeverity: () => fallback,
+  });
+  const first = await src.evaluate({ state: 'alerting', panelId: 7, dashboardUID: 'd' }, 'd');
+  expect(first[0]!.severity).toBe('info');
+
+  fallback = 'critical'; // 使用者調高選項
+  const second = await src.evaluate({ state: 'alerting', panelId: 7, dashboardUID: 'd' }, 'd');
+  expect(second[0]!.severity).toBe('critical'); // 同一個 episode，severity 已跟上
+  expect(second[0]!.fingerprint).toBe(first[0]!.fingerprint);
+  // startsAt 仍然釘死在第一次 —— 跟上的只有猜測值，不是事實欄位。
+  expect(second[0]!.startsAt).toBe(first[0]!.startsAt);
+});

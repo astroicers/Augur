@@ -13,6 +13,12 @@
  * 只看「壞的會紅」分辨不出「每一列都恆紅」這種壞掉的檢查。
  *
  * 改估計器時先跑這支，判對數不得下降。
+ *
+ * **退出碼**：0 = 判錯的列與 `KNOWN_FAIL` 逐列相符；1 = 不相符（兩個方向都算）；2 = 工具錯誤。
+ * 這支先前**只印不判** —— 沒有 `process.exit`、不在 `asp-test.sh`、不在 `ci.yml`、
+ * 不在 selftest，全 repo 只有四處散文提到它。實測把 `measureStrokeWidths` 換成
+ * 回傳定值的樁，計分板由 19/20 崩到 5/20，而它**仍然回 0**。
+ * 上面那句「判對數不得下降」於是沒有任何機械承接。
  */
 import { buildManifest, buildSheets } from './lib/syntheticSheet.mjs';
 import { measureStrokeWidths } from './lib/spriteChecks.mjs';
@@ -22,7 +28,11 @@ const TOL = m.stroke.tolerance * m.sheet.cellPx;
 
 /** 正規電池。`want` = 這個案例**應該**通過還是應該紅。 */
 export const BATTERY = [
-  ['A 基準（外描邊、1-bit）',        {},                                                        'pass'],
+  // ⚠️ A 列必須顯式寫 `alphaRampPx: 0`。先前它是 `{}`，而 `aa7ef08` 把
+  // syntheticSheet 的預設羽化由 0 改成 2 —— 於是 A 與 B 變成**同一張 fixture**
+  // （兩列都讀 7.553），電池裡再也沒有 1-bit 那一列，而估計器 docblock 第 1 點
+  // 講的正是 1-bit 邊緣。標籤說它是 1-bit，實際上不是，沒有東西會發現。
+  ['A 基準（外描邊、1-bit）',        { alphaRampPx: 0 },                                         'pass'],
   ['B 抗鋸齒 2px（SP-2.14 下限）',   { alphaRampPx: 2 },                                         'pass'],
   ['C 抗鋸齒 4px',                  { alphaRampPx: 4 },                                         'pass'],
   ['D 內描邊',                      { strokeInside: true },                                     'pass'],
@@ -43,6 +53,22 @@ export const BATTERY = [
   ['S 窗內邊緣 9.0px',              { strokePx: 9.0 },                                          'pass'],
   ['T 單格不同寬（SP-6.5）',         { perCellStrokePx: { 5: 10.0 } },                           'fail'],
 ];
+
+/**
+ * 目前**已知**會判錯的列（取列首字母）。空集合 = 全對。
+ *
+ * **R 曾在這裡（2026-09-28～29）**：讀 6.716（−1.476）誤紅。當時歸因於估計器的
+ * 內緣半像素偏差 —— 但真正的大頭是 **fixture 自己**：applyAlphaRamp 的斜坡相位
+ * 以邊界像素中心為零點（幾何邊界在它外緣 +0.5px），每條羽化邊覆蓋積分淨損 0.5px，
+ * 也就是「7.4px 的列」實際只畫出 ~6.9px。修正相位（守恆斜坡）後 R 讀 7.170、
+ * 全電池 20/20，估計器一行都沒改。剩餘 −0.2 上下的偏差與獨立複審用解析地面真值
+ * 量到的 −0.29 一致，來源是內緣（描邊↔填色）的硬分類 —— 合成 fixture 內緣無混色
+ * 所以量不到它，真素材才會。
+ *
+ * **為什麼釘「哪幾列」而不是釘「判對幾列」**：只釘數量分辨不出
+ * 「R 修好了但 S 壞了」—— 總數不變，而護欄該紅。兩個方向都要對。
+ */
+export const KNOWN_FAIL = new Set([]);
 
 export function run(measure) {
   const rows = [];
@@ -72,4 +98,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const ok = rows.filter((r) => r.correct).length;
   console.log(`\n判對 ${ok} / ${rows.length}`);
+
+  const wrong = rows.filter((r) => !r.correct).map((r) => r.name.split(' ')[0]).sort();
+  const pinned = [...KNOWN_FAIL].sort();
+  const unexpected = wrong.filter((k) => !KNOWN_FAIL.has(k));
+  const fixed = pinned.filter((k) => !wrong.includes(k));
+
+  if (unexpected.length === 0 && fixed.length === 0) {
+    console.log(`STROKE-BATTERY: PASS  判錯的列與 KNOWN_FAIL 相符（${pinned.join(', ') || '空集合'}）`);
+  } else {
+    if (unexpected.length) {
+      console.error(`STROKE-BATTERY: FAIL  新增判錯的列：${unexpected.join(', ')} —— 估計器退步了`);
+    }
+    if (fixed.length) {
+      console.error(
+        `STROKE-BATTERY: FAIL  ${fixed.join(', ')} 不再判錯 —— 這是好事，` +
+          '但要把它從 tools/stroke-battery.mjs 的 KNOWN_FAIL 移除，否則下次退步時看不出來'
+      );
+    }
+    process.exitCode = 1;
+  }
 }

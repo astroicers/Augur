@@ -34,7 +34,7 @@ import {
   PngFormatError,
 } from './lib/png.mjs';
 import { encodeGif } from './lib/gif.mjs';
-import { buildManifest, buildSheets, S, SHEET, SP_2_12_MARKS } from './lib/syntheticSheet.mjs';
+import { buildManifest, buildSheets, S, SHEET, SP_2_12_MARKS, FIXTURE_GEOMETRY } from './lib/syntheticSheet.mjs';
 import {
   CENTER_CELL,
   MIN_QUESTIONS_PER_CELL,
@@ -118,6 +118,15 @@ console.log('\n[1] PNG 解碼器（驗收 b —— 原訂的 A1 cutout fixture �
   // 本身的錯誤 100% 隱形。實證：把 tie-break 的 `<=` 改成 `<`（違反 PNG spec §6.6）
   // 或把 Average 改成四捨五入，上面那條都照樣全綠，而外部產生的 PNG 會錯十幾個像素。
   // 下面比對的是**照 spec 虛擬碼手算**的值，不是從本檔實作產生的。
+  // ⚠️ **先釘表的長度。** 不釘的話「把表清空」這個突變會讓兩條斷言變成
+  // `[].filter(...)` = 空陣列 = 通過 —— 而那兩張表是 `paeth()` / `average()`
+  // 的**唯一**覆蓋（round trip 對編解碼共用的錯誤 100% 隱形）。
+  // 實測：清空後 selftest 仍然全綠，只是標題印出「0 組」而沒有人看。
+  ok(`PAETH_SPEC_VECTORS 至少 11 組（實際 ${PAETH_SPEC_VECTORS.length}）`,
+    PAETH_SPEC_VECTORS.length >= 11, '表被清空或刪減，兩條斷言會退化成零覆蓋');
+  ok(`AVERAGE_SPEC_VECTORS 至少 9 組（實際 ${AVERAGE_SPEC_VECTORS.length}）`,
+    AVERAGE_SPEC_VECTORS.length >= 9, '同上');
+
   const bad = PAETH_SPEC_VECTORS.filter(([a, b, c, want]) => paeth(a, b, c) !== want);
   ok(
     `Paeth 對 PNG spec §6.6 的 ${PAETH_SPEC_VECTORS.length} 組手算向量全部相符`,
@@ -649,6 +658,137 @@ const base = buildSheets();
 }
 
 // ===========================================================================
+console.log('\n[2b] 從未被本檔呼叫過的函式（2026-09-29 變異測試：多個存活變異體的來源）');
+// ---------------------------------------------------------------------------
+{
+  // checkFileSize —— 三個存活變異體（單張預算 ×2、error→warn、合計 ×99）全因它零呼叫。
+  const per = manifest.budget.perSheetBytes;
+  const overPer = C.checkFileSize({ directions: per + 1, reactions: 1000 }, manifest);
+  ok('checkFileSize：單張超 1 byte → SP-7.8/單張體積 error',
+    overPer.length === 1 && overPer[0].id === 'SP-7.8/單張體積' && overPer[0].severity === 'error',
+    JSON.stringify(overPer.map((f) => [f.id, f.severity])));
+  const half = Math.floor(manifest.budget.totalBytes / 2) + 1;
+  const overTotal = C.checkFileSize({ directions: Math.min(per, half), reactions: Math.min(per, half) }, manifest);
+  ok('checkFileSize：單張皆合規但合計超 → SP-7.8/合計體積',
+    overTotal.some((f) => f.id === 'SP-7.8/合計體積' && f.severity === 'error'),
+    JSON.stringify(overTotal.map((f) => f.id)));
+  ok('checkFileSize：兩張皆遠低於上限 → 零 finding',
+    C.checkFileSize({ directions: 1000, reactions: 1000 }, manifest).length === 0, '');
+
+  // windowRect —— 四個邊都要釘。變異測試：x0 round→floor、x1/y1 round→ceil 都活著。
+  const r = C.windowRect({ x0: 0.33, x1: 0.66, y0: 0.33, y1: 0.66 }, 512);
+  ok('windowRect 四邊都是 round（169/338/169/338）',
+    r.x0 === 169 && r.x1 === 338 && r.y0 === 169 && r.y1 === 338, JSON.stringify(r));
+  // ⚠️ 上面那組的小數部分都是 .96/.92 ≥ 0.5 —— ceil 與 round 在它上面**恆等**，
+  // 「x1/y1 round→ceil」的變異體對它免疫（2026-09-29 複審實測 152/152 全綠存活）。
+  // 補一組小數 < 0.5 的探測值把 ceil 與 round 分開：0.331·512 = 169.472。
+  const r2 = C.windowRect({ x0: 0.331, x1: 0.661, y0: 0.331, y1: 0.661 }, 512);
+  ok('windowRect 對小數 < 0.5 的邊也是 round 不是 ceil（169/338，非 170/339）',
+    r2.x0 === 169 && r2.x1 === 338 && r2.y0 === 169 && r2.y1 === 338, JSON.stringify(r2));
+
+  // relativeLuminance —— 通道權重次序。變異測試把 (r,g,b) 換 (b,g,r) 仍全綠。
+  const lg = C.relativeLuminance(0, 255, 0);
+  const lr = C.relativeLuminance(255, 0, 0);
+  const lb = C.relativeLuminance(0, 0, 255);
+  ok('relativeLuminance 權重次序 G > R > B（0.7152 / 0.2126 / 0.0722）',
+    lg > lr && lr > lb && Math.abs(lg - 0.7152) < 1e-4, lg.toFixed(4) + '/' + lr.toFixed(4) + '/' + lb.toFixed(4));
+
+  // cellView 的出界守門 —— 拿掉後讀的是**鄰格**的像素。
+  const v4 = C.cellView(base.directions, 4, manifest.sheet);
+  const midY = Math.floor(manifest.sheet.cellPx / 2);
+  // 出界座標的選擇有講究：無守門時 px(cellPx + k, y) 算出的 offset 恰是
+  // **cell 5 的 (k, y)** —— 所以 k 要選在鄰格剪影內（k=200, y=256 實測 alpha 255），
+  // 否則鄰格該處本來就是 0，守門拿掉了測試照樣綠（第一版就是這樣白寫的）。
+  const inside5 = C.cellView(base.directions, 5, manifest.sheet).px(200, midY);
+  ok('cellView 出界（x = cellPx+200）回全 0，即使無守門時會讀到的鄰格位置有內容',
+    JSON.stringify(v4.px(manifest.sheet.cellPx + 200, midY)) === '[0,0,0,0]' && inside5[3] !== 0,
+    '出界讀到 ' + JSON.stringify(v4.px(manifest.sheet.cellPx + 200, midY)) + '，鄰格 alpha=' + inside5[3]);
+  ok('cellView 出界（負座標）回全 0', JSON.stringify(v4.px(-1, midY)) === '[0,0,0,0]', '');
+
+  // intentionally_empty 的底線拼法（行為級 —— declaredEmpty 未 export）。
+  const emptied = clone(base);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      emptied.reactions.data[(y * SHEET + x) * 4 + 3] = 0;
+    }
+  }
+  const mUnder = JSON.parse(JSON.stringify(manifest));
+  mUnder.intentionallyEmpty = [];
+  mUnder.intentionally_empty = [{ sheet: 'reactions', cell: 0 }];
+  const fUnder = C.checkOverlayOwnership(emptied, mUnder).filter((f) => f.cell === 0);
+  ok('底線拼法 intentionally_empty 的宣告必須生效（規格用的就是這個拼法）',
+    !fUnder.some((f) => f.id === 'SP-7.4/空格'), JSON.stringify(fUnder.map((f) => f.id)));
+  const mNone = JSON.parse(JSON.stringify(mUnder));
+  mNone.intentionally_empty = [];
+  const fNone = C.checkOverlayOwnership(emptied, mNone).filter((f) => f.cell === 0);
+  ok('未宣告時清空的格必須紅 SP-7.4/空格（上一條的反方向）',
+    fNone.some((f) => f.id === 'SP-7.4/空格'), JSON.stringify(fNone.map((f) => f.id)));
+}
+
+// ===========================================================================
+console.log('\n[2c] fixture 自己畫的描邊寬度（不經估計器）');
+// ---------------------------------------------------------------------------
+{
+  // 估計器與 fixture 互相校準是循環論證：2026-10-01 之前 fixture 的描邊從核心
+  // **像素中心**量距，真實寬度比宣告窄 ~0.23px，而電池照樣 20/20 —— 估計器
+  // 讀得「準」，因為兩邊錯在同一個方向。這一段用一把**獨立的尺**量 fixture：
+  // 沿頭部橢圓的解析法線（不是遮罩梯度），對 1-bit 渲染的像素做線積分，
+  // 取大量法線的**平均**（不是眾數）。法線起點在各種次像素相位上，
+  // 像素場的線積分對相位平均是無偏的。
+  const { head: Hd, bodyTopY } = FIXTURE_GEOMETRY;
+  const strokeRgbFx = [0x6e, 0x76, 0x81];
+  const fixtureWidth = (sheets, cell) => {
+    const d = sheets.directions;
+    const ox = (cell % 3) * S;
+    const oy = Math.floor(cell / 3) * S;
+    const isStroke = (X, Y) => {
+      const px = Math.floor(X);
+      const py = Math.floor(Y);
+      if (px < 0 || py < 0 || px >= S || py >= S) {
+        return 0;
+      }
+      const o = ((oy + py) * SHEET + ox + px) * 4;
+      return d.data[o + 3] === 255 && d.data[o] === strokeRgbFx[0] && d.data[o + 1] === strokeRgbFx[1] &&
+        d.data[o + 2] === strokeRgbFx[2] ? 1 : 0;
+    };
+    let sum = 0;
+    let n = 0;
+    for (let k = 0; k < 600; k++) {
+      // 上半弧（遠離身體），參數角 t ∈ (π+0.25, 2π−0.25)
+      const t = Math.PI + 0.25 + ((Math.PI - 0.5) * (k + 0.5)) / 600;
+      const ex = Hd.cx + Hd.rx * Math.cos(t);
+      const ey = Hd.cy + Hd.ry * Math.sin(t);
+      if (ey > bodyTopY - 40) {
+        continue;
+      }
+      // 外法線 ∝ (cos t / rx, sin t / ry)
+      let nx = Math.cos(t) / Hd.rx;
+      let ny = Math.sin(t) / Hd.ry;
+      const L = Math.hypot(nx, ny);
+      nx /= L;
+      ny /= L;
+      let acc = 0;
+      const step = 0.02;
+      for (let u = -3; u <= 16; u += step) {
+        acc += isStroke(ex + nx * u, ey + ny * u);
+      }
+      sum += acc * step;
+      n++;
+    }
+    return sum / n;
+  };
+  for (const [label, opts, want] of [
+    ['預設（宣告 8.192）', { alphaRampPx: 0 }, 8.192],
+    ['strokePx 7.4（電池 R 列）', { alphaRampPx: 0, strokePx: 7.4 }, 7.4],
+    ['strokePx 9.0（電池 S 列）', { alphaRampPx: 0, strokePx: 9.0 }, 9.0],
+  ]) {
+    const w = fixtureWidth(buildSheets(opts), 4);
+    ok(`fixture 實際畫出的描邊寬 ≈ 宣告值：${label} → ${w.toFixed(3)}`, Math.abs(w - want) <= 0.06,
+      `差 ${(w - want).toFixed(3)} px（容許 ±0.06）`);
+  }
+}
+
+// ===========================================================================
 console.log('\n[3] 變異體：做壞一處，紅的必須是那一條');
 // ---------------------------------------------------------------------------
 const mutants = [
@@ -889,6 +1029,29 @@ const mutants = [
           }
         }
       }
+    },
+  },
+
+  {
+    // 2026-09-28 變異測試指出 SP-2.14 的兩個 id 在本檔一次都沒出現 ——
+    // 也就是「合成基準改回 1-bit」這種最根本的退化，沒有任何斷言會發現。
+    name: 'SP-2.14 整張 1-bit 硬邊（合成基準退回舊預設）',
+    expect: 'SP-2.14/1-bit硬邊',
+    sheets: () => buildSheets({ alphaRampPx: 0 }),
+  },
+
+  {
+    // 自我廢除防護的紅方向：半透明但離視窗超過 3×下限（羽化帶蓋不到的距離）
+    // 仍必須硬紅 —— 沒有這條，「把整個違規畫成 a=200」就能穿過產權檢查。
+    // ⚠️ 這條第一次寫的時候插錯陣列（放進 NON_MUTANTS），forbid 是 undefined
+    //    使它**恆過** —— 顯示 ok 而什麼都沒驗。expect 的案例只能住在 mutants。
+    name: '半透明像素離視窗超過羽化帶仍須觸發視窗產權',
+    expect: 'SP-7.4/視窗產權',
+    apply: (s) => {
+      // cell 4 的產權是 M（無 K），(30,30) 離 M 窗遠超過 6px
+      const o = ((Math.floor(4 / 3) * S + 30) * SHEET + ((4 % 3) * S + 30)) * 4;
+      s.reactions.data[o] = 255;
+      s.reactions.data[o + 3] = 120;
     },
   },
 ];
@@ -1152,6 +1315,29 @@ const NON_MUTANTS = [  {
     },
   },
   {
+    // SP-2.14 對 overlay 一樣強制羽化，而羽化帶必然溢出視窗邊界。
+    // 4px 羽化（電池 C 列，合規）先前在兩條 limit:0 上硬紅（溢 13/22 px）——
+    // 規格要求羽化、不設上限，檢查卻要求 0 個出界像素，三者不可同時成立。
+    // 現在完全不透明的出界仍硬紅；半透明允許在「該格量到的羽化寬度」內，
+    // 上限夾 3×下限（自我廢除防護：整片半透明的缺陷會抬高量到的羽化）。
+    name: 'SP-2.14 合規的 4px 羽化不得觸發視窗產權',
+    forbid: 'SP-7.4/視窗產權',
+    sheets: () => buildSheets({ alphaRampPx: 4 }),
+  },
+  {
+    name: 'SP-2.14 合規的 4px 羽化不得觸發皮膚遮罩',
+    forbid: 'SP-6.6/皮膚遮罩',
+    sheets: () => buildSheets({ alphaRampPx: 4 }),
+  },
+  {
+    // SP-6.4 規範的是亮度帶（0.18–0.24），#7c7c7c（L=0.2016）完全合規。
+    // 未宣告 stroke.colour 時參考色改為自素材取樣 —— 硬編 #6E7681 曾讓這張圖
+    // 九格全 NaN 硬紅，訊息還把成因謊報成「亮度帶內沒有像素」。
+    name: '亮度帶內的替代描邊色 #7c7c7c（未宣告 stroke.colour）不得量不到',
+    forbid: 'SP-7.7/描邊',
+    sheets: () => buildSheets({ strokeColour: '#7c7c7c' }),
+  },
+  {
     name: '角色內部貼著邊緣的亮度帶內色不得拉高描邊量測',
     forbid: 'SP-7.7/描邊寬度',
     apply: (s) => {
@@ -1191,6 +1377,64 @@ for (const m of NON_MUTANTS) {
   }
   const got = ids(runAll(sheets, manifest));
   ok(`（不得誤紅）${m.name}`, !got.includes(m.forbid), `卻紅了 [${got.join(', ')}]`);
+}
+
+// ===========================================================================
+console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外釘）');
+// ---------------------------------------------------------------------------
+{
+  // 兩個方向都要有：h=1 必須 warn；h=2（規格下限的可繪製值）不得有任何 SP-2.14 輸出。
+  // 門檻的單位錯誤（比值 2 被當成像素 2，執法下限實為 1.5px）就是因為
+  // 沒有這一段而活了下來。
+  const warn1 = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 1 }), manifest)
+    .filter((f) => f.id === 'SP-2.14/漸層過窄');
+  ok('h=1 的過渡寬度必須被記為 SP-2.14/漸層過窄', warn1.length === CELL_COUNT * 2,
+    `實得 ${warn1.length} 筆（應為 18）`);
+  ok('h=1 記到的 implied 過渡寬度落在 0.8–1.2px', warn1.every((f) => f.measured > 0.8 && f.measured < 1.2),
+    warn1.map((f) => f.measured.toFixed(2)).join(','));
+  const at2 = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 2 }), manifest)
+    .filter((f) => f.id.startsWith('SP-2.14'));
+  ok('h=2（合規下限）不得有任何 SP-2.14 輸出（含 warn）', at2.length === 0,
+    at2.map((f) => `${f.sheet}#${f.cell} ${f.measured?.toFixed(3)}`).join(' '));
+
+  // ⚠️ 上面兩條在「門檻寫錯單位」（執法下限實為 1.5px）的舊版下**也都會過**
+  // —— 整數羽化畫不出落在 1.5 與 2 之間的過渡寬度。
+  // 這裡手工構造一張：把 h=2 的格每 4 個半透明像素殺掉 1 個
+  // （一階矩 × 3/4，perimeter 不動）→ implied 過渡寬度 ≈ 1.5px。
+  // （原本是每 3 殺 1 —— 那是對「計數比值法」校準的；換成矩法後比例跟著換。）
+  // 過鬆的門檻對它視而不見；正確門檻（< 2 − 容差）必須 warn。
+  const midSheets = clone(base);
+  {
+    const d = midSheets.directions;
+    let k = 0;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const o = (y * SHEET + x) * 4;
+        const a = d.data[o + 3];
+        if (a > 0 && a < 255 && k++ % 4 === 0) {
+          d.data[o + 3] = a >= 128 ? 255 : 0;
+        }
+      }
+    }
+  }
+  const mid = C.checkFormatAndHygiene(midSheets, manifest)
+    .filter((f) => f.id === 'SP-2.14/漸層過窄' && f.sheet === 'directions' && f.cell === 0);
+  ok('過渡寬度 1.5px（合規下限的 75%）必須 warn —— 這是單位錯誤唯一的判別點', mid.length === 1,
+    `實得 ${mid.length} 筆`);
+  if (mid.length === 1) {
+    ok('1.5px 案例記到的 implied 過渡寬度落在 1.4–1.6px', mid[0].measured > 1.4 && mid[0].measured < 1.6,
+      mid[0].measured.toFixed(3));
+  }
+
+  // SP-6.5「寬度一致」的跨格統計（warn 級）。兩個方向：
+  // 單格加寬 1.8px（每格獨立檢查抓不到 —— 仍在 ±tol 內）必須被 spread 記下；基準不得誤記。
+  const spreadWarn = C.checkLuminanceAndStroke(buildSheets({ perCellStrokePx: { 5: 10.0 } }).directions, manifest)
+    .filter((f) => f.id === 'SP-7.7/描邊不一致');
+  ok('單格 10px（其餘 8.192px）必須觸發 SP-7.7/描邊不一致', spreadWarn.length === 1,
+    `實得 ${spreadWarn.length} 筆`);
+  const spreadBase = C.checkLuminanceAndStroke(clone(base).directions, manifest)
+    .filter((f) => f.id === 'SP-7.7/描邊不一致');
+  ok('基準九格同寬不得觸發描邊不一致', spreadBase.length === 0, `卻有 ${spreadBase.length} 筆`);
 }
 
 // ===========================================================================
@@ -1529,6 +1773,35 @@ function materialise(dir, sheets, patch = {}) {
     }
     return { total, hit };
   };
+  // 腮紅矩形的上緣一度與眼窗 E 重疊（每側 123px），而 SP-7.4 把 E 從記號區 K 排除 ——
+  // 照規格畫腮紅會硬失敗。
+  // ⚠️ 座標讀 `SP_2_12_MARKS.blush`，**不要在測試裡寫死** ——
+  // 寫死的話唯一的變數輸入就只剩 `windows.E`，把規格改回 0.440 仍然全綠。
+  // 隔壁的汗滴／怒紋兩條就是讀共用常數並帶對照組的。
+  {
+    const Erect = C.windowRect(manifest.windows.E, cp);
+    const overlapOf = (y0) => {
+      let n = 0;
+      for (let y = Math.round(y0 * cp); y < Math.round(SP_2_12_MARKS.blush.y1 * cp); y++) {
+        for (const [bx0, bx1] of SP_2_12_MARKS.blush.xs) {
+          for (let x = Math.round(bx0 * cp); x < Math.round(bx1 * cp); x++) {
+            if (x >= Erect.x0 && x < Erect.x1 && y >= Erect.y0 && y < Erect.y1) { n++; }
+          }
+        }
+      }
+      return n;
+    };
+    ok('SP-2.12 建議的腮紅範圍與眼窗 E 不相交（重疊 ' + overlapOf(SP_2_12_MARKS.blush.y0) + ' px）',
+      overlapOf(SP_2_12_MARKS.blush.y0) === 0);
+    // 對照組：原值 0.440 必須是**會**重疊的，否則上一條在測一個恆真的東西。
+    ok('（對照）原建議的腮紅上緣 0.440 確實與 E 重疊（' + overlapOf(0.440) + ' px）',
+      overlapOf(0.440) > 0);
+    // SP-2.14 強制羽化，所以餘裕要容得下軟邊 —— 剛好不重疊只對硬邊成立。
+    const gapPx = Math.round(SP_2_12_MARKS.blush.y0 * cp) - Erect.y1;
+    ok('SP-2.12 腮紅上緣離眼窗 E 至少 8px（容得下 SP-2.14 強制的羽化）—— 實測 ' + gapPx + ' px',
+      gapPx >= 8);
+  }
+
   const sw = SP_2_12_MARKS.sweat;
   const a = inside((x, y) => {
     const dx = (x - sw.cx * cp) / sw.rx;

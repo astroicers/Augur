@@ -38,7 +38,8 @@ services:
       - "127.0.0.1:3101:3100"
 
   grafana:
-    # 13.2.x：ADR-004 的目標執行期版本，也滿足 src/plugin.json 的 grafanaDependency >=12.3.0。
+    # 13.2.x：ADR-004 的目標執行期版本。plugin.json 的 >=12.3.0 已於 2026-10-01 在
+    # 12.3.0/12.3.11/12.4.0/13.0.1/13.2.2 實跑 e2e 驗證（見 src/README.md）。
     # 11.4.0 載不動本 plugin，而在舊兩個大版本上測到的 alertState 也不能代表 13.x。
     image: grafana/grafana:13.2.2
     container_name: augur-grafana

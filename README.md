@@ -14,7 +14,8 @@
 
 **P2–P4 完成**：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位。**5 個 POC gate 全數 PASS。**
-60 個測試、9 個 suite，116 條 sprite 工具自測。commit 閘共 **9 道**：typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / Grafana 版本 / jest。
+91 個測試、11 個 suite，156 條 sprite 工具自測。commit 閘共 **10 道**：typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
+（CI 跑同樣 10 道；先前 CI 少了 bundle 相依那一道，而三份文件都寫「9 道」。）
 
 **P5 的工具側完成、素材側未開工**：精靈圖規格（`docs/sprite/sprite-sheet-spec.md`）、
 製作 SOP、SP-7 的機械驗收腳本、SP-V.1 的方向辨識盲測頁都已就位並自測通過。
@@ -54,6 +55,38 @@ ADR-004 的 5 個 POC gate 全數 PASS 後才升 Accepted —— 它先前刻意
 
 ADR-002 有兩個抽象被 ADR-004 **明文繼承**，不隨 supersede 作廢：
 `BroadcastPlan` 事件契約、`AvatarController` avatar-agnostic 介面。
+
+## 安裝（給要在自己的 Grafana 上跑這個 panel 的人）
+
+> 前提：Grafana **≥ 12.3.0**。兩道瀏覽器 e2e（plugin 載入、告警以規則名念出）
+> 於 2026-10-01 在 **12.3.0 / 12.3.11 / 12.4.0 / 13.0.1 / 13.2.2** 實跑通過；
+> Frontend Sandbox 那道（G-ADR004-4）只在 13.2.2 驗過。plugin 未簽署，Grafana Cloud 裝不了。
+> （12.3.x 是修過才過的：它的 `alertState` 欄位叫 `dashboardId`，12.4.0 才改名
+> `dashboardUID`；修正前 panel 在 12.3.x 載得起來但每則告警都退成泛用句。）
+
+1. 拿到 zip：`npm run package` 會產出 `augur-mascot-panel-<版本>.zip`
+   （或向專案要現成的產物）。
+2. 解壓到 Grafana 的 plugins 目錄（預設 `/var/lib/grafana/plugins`）：
+   ```bash
+   unzip augur-mascot-panel-0.1.0.zip -d /var/lib/grafana/plugins/
+   ```
+   解出來的目錄名就是 plugin id（`augur-mascot-panel/`），不要改名。
+3. 允許載入未簽署的 plugin —— 兩種寫法擇一：
+   ```ini
+   # grafana.ini
+   [plugins]
+   allow_loading_unsigned_plugins = augur-mascot-panel
+   ```
+   ```bash
+   # 容器環境變數
+   GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=augur-mascot-panel
+   ```
+4. **重啟 Grafana**。它只在行程啟動時掃描 plugins 目錄 —— 不重啟就是沒裝。
+   成功的話啟動日誌會有一行 `Plugin registered pluginId=augur-mascot-panel`
+   （前面跟著一句 `Permitting unsigned plugin` 的警告，那是預期的）。
+5. 在 dashboard 加一個 **Mascot** panel，並讓它的告警規則把
+   `__dashboardUid__` 與 `__panelId__` 寫進 annotations —— alertState
+   才到得了 panel（範例見 `monitoring/grafana/provisioning/alerting/`）。
 
 ## 開發
 

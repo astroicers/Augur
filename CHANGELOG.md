@@ -12,6 +12,40 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
+### Fixed since the first cut (2026-09-30)
+
+A full-project adversarial review (three rounds, every finding independently
+re-verified) landed as PRs #4's fix batch. The parts a user of the panel would
+notice:
+
+- **The panel could go permanently silent.** Changing the fallback-severity
+  option while an alert was firing desynchronized the alert source from the
+  dedup state; the alert's recovery was swallowed and every later firing of it
+  was suppressed forever, with nothing in the UI. Options no longer rebuild
+  any pipeline state (the dedup window is updated in place).
+- **Changing any TTS option discarded queued announcements** that were already
+  marked as spoken — they were simply never heard. Same class of fix.
+- **The speech queue could stall forever** if voice loading threw (restricted
+  contexts) or an utterance failed to construct; both paths now degrade and
+  keep the queue moving, with tests that fail on the pre-fix structure.
+- **Voice selection now follows `voiceschanged`** properly: the first non-empty
+  voice list is no longer final, and a better match arriving mid-utterance is
+  applied between utterances instead of being dropped. Windows/Chrome delivers
+  the zh voices late routinely; previously that could mean a whole session on
+  the wrong voice.
+- **`npm run server` verifies the plugin actually registered** (Grafana only
+  scans its plugins directory at process start; `up -d` on a running container
+  is a no-op — this combination used to fail silently). CI now brings up the
+  full compose stack and runs the browser e2e tests on every push.
+- **`npm run package` produces an installable zip** and the README gained an
+  install section for people who are not developing the plugin.
+
+The sprite acceptance toolchain (the gate that will judge the artwork when it
+arrives) was reworked far more heavily — a fixture that could not draw the
+stroke width it claimed, a check that could be self-disabled by the defect it
+hunts, and five fixes that no test could fail were all found and closed. The
+commit log of PR #4 carries the full account with measurements.
+
 ### What it does
 
 - Reads the panel's own alert state and pulls per-rule detail (severity, summary,
@@ -40,5 +74,8 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   Expect them to need attention across Grafana upgrades.
 - Speech quality is whatever the viewer's operating system provides. This is the price
   of removing the backend; the previous architecture used Edge TTS neural voices.
-- Developed and tested against Grafana 13.2.x. The declared minimum of 12.3.0 is the
-  scaffold's default and has not been verified.
+- Declared minimum Grafana 12.3.0, now actually verified: the browser e2e gates pass
+  on 12.3.0, 12.3.11, 12.4.0, 13.0.1 and 13.2.2. Before the 2026-10-01 fix the panel
+  *loaded* on 12.3.x but silently degraded — Grafana renamed the internal
+  `alertState.dashboardId` to `dashboardUID` in 12.4.0, so on 12.3.x rule details were
+  never fetched and every alert was read as a generic "alert" at the fallback severity.

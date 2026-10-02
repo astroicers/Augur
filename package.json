@@ -10,7 +10,7 @@
     "lint": "eslint --cache .",
     "lint:fix": "npm run lint -- --fix && prettier --write --list-different .",
     "e2e": "playwright test",
-    "server": "npm run build && docker compose -f monitoring/docker-compose.yml up -d",
+    "server": "npm run build && docker compose -f monitoring/docker-compose.yml up -d && bash tools/check-server.sh",
     "sign": "sign-plugin",
     "test:unit": "jest --maxWorkers=2",
     "server:down": "docker compose -f monitoring/docker-compose.yml down",
@@ -20,7 +20,8 @@
     "check:sprites:selftest": "node tools/check-sprite-sheets.selftest.mjs",
     "blindtest": "node tools/blind-test/serve.mjs",
     "blindtest:fixture": "node tools/blind-test/make-fixture.mjs",
-    "check:monitoring": "node tools/check-monitoring.mjs"
+    "check:monitoring": "node tools/check-monitoring.mjs",
+    "package": "npm run build && bash tools/package.sh"
   },
   "author": "Augur",
   "license": "Apache-2.0",

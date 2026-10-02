@@ -215,24 +215,69 @@ export function checkFormatAndHygiene(sheets, manifest) {
        *  - **過渡寬度 < 2.0 → warn。** 那個門檻**未經真素材校準**，
        *    而猜一個數字放進硬失敗，第一次交付就會紅在一個沒有根據的值上（SP-7.6 的前例）。
        */
-      let semiCount = 0;
+      // 兩遍掃描。第一遍找輪廓（α≥128 遮罩的邊界）；第二遍只在
+      // 「輪廓 ± 3×下限」的帶內累計半透明統計。
+      //
+      // ⚠️ **不能對整格積分（2026-09-29 對抗性複審抓到的自我廢除）。**
+      // 第一版把全格的半透明像素都灌進 semiCount 與一階矩，於是一張
+      // 完全 1-bit 硬邊的剪影，只要身體內部有一塊 70×70、α=120 的軟陰影，
+      // 就同時逃過 error（semiCount>0）與 warn（矩被灌大到 impliedH=5.78）——
+      // 檢查零輸出，而「半透明塗抹」與「硬邊」正是這條要抓的缺陷族。
+      // 這與眨眼侵蝕、羽化寬度兩次踩過的是同一個坑：門檻參數取自缺陷會影響的量。
+      const boundary = new Uint8Array(cellPx * cellPx);
       let perimeter = 0;
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
-          const a = v.px(x, y)[3];
-          if (a > 0 && a < 255) {
-            semiCount++;
+          if (v.px(x, y)[3] < 128) {
+            continue;
           }
-          if (a >= 128) {
-            const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
-            if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
-              perimeter++;
-            }
+          const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          if (nb.some(([p, q]) => p < 0 || q < 0 || p >= cellPx || q >= cellPx || v.px(p, q)[3] < 128)) {
+            boundary[y * cellPx + x] = 1;
+            perimeter++;
+          }
+        }
+      }
+      const rampBandReach = 3 * Math.max(1, Math.floor(0.004 * cellPx));
+      const rampBand = dilate(boundary, cellPx, rampBandReach);
+      let semiCount = 0;
+      let rampMoment = 0;
+      for (let y = 0; y < cellPx; y++) {
+        for (let x = 0; x < cellPx; x++) {
+          const a = v.px(x, y)[3];
+          if (a > 0 && a < 255 && rampBand[y * cellPx + x]) {
+            semiCount++;
+            // 一階矩：2·min(α, 1−α)。對寬 h 的線性斜坡，沿法線的積分恰為 h/2。
+            // 「數半透明像素」不行：守恆斜坡下 h=1 與 h=2 的半透明像素一樣多
+            // （各 2 顆/邊），計數法對 h<2 失去鑑別力，還把合規下限誤 warn 成 1.5。
+            rampMoment += (2 * Math.min(a, 255 - a)) / 255;
           }
         }
       }
       if (perimeter > 0) {
-        const rampPx = semiCount / perimeter;
+        // ⚠️ **量到的是比值，門檻要換算回同一個單位再比。**
+        // 第一版寫成 `ratio < 2`，把規格的像素數 2 直接當門檻用 ——
+        // 但上表推導的是 `比值 = 2h − 1`，比值 2 對應的是 h = **1.5px**：
+        // 實際的執法下限比規格低 25%，一張 1.5px 羽化的圖從整套檢查拿到**零輸出**。
+        // 變數名叫 rampPx 也是共犯（聽起來是像素，裝的是比值）。
+        // 現在先把比值換回過渡寬度 h，再對規格自己的 0.004·S 比。
+        // implied h = 2 × (矩總和 / 周長)。校準（兩種斜坡實測）：
+        // 舊相位 h=1/2/4 → 1.00/2.00/4.00；守恆斜坡 h=1/2/4 → 1.00/2.01/4.02。
+        // ⚠️ **上表是軸向邊、整數相位下的數字，不是普遍性質**（2026-09-29 複審實測）：
+        // 次像素相位讓 h=2 讀 2.01–2.50（+25% 擺動）、45° 斜邊高估 ~1.5×、
+        // 曲線剪影 h=1.5 讀 1.9 貼線 —— 方向恆為**高估**，所以不會誤紅合規素材，
+        // 但「≥2px 下限」對非軸向素材的實際執法力只有 ~1.0–1.5px。
+        // 這是已知限制：warn 級、未經真素材校準，等真素材再決定要不要換
+        // 沿法線的量測（成本高一個量級）。
+        const impliedH = (2 * rampMoment) / perimeter;
+        // 0.004·S 在 S=512 是 2.048 —— 但羽化只能畫整數像素，2px 就是最接近的
+        // 可畫值，整個 repo（含電池 B 列「SP-2.14 下限」）也都以 2px 為下限。
+        // 直接拿 2.048 比會把合規下限自己 warn 掉，故向下取整到可繪製像素。
+        const minH = Math.floor(0.004 * cellPx);
+        // 小塊（reactions 的 overlay）的角落讓比值略低於大周長極限的 2h−1：
+        // 實測 h=2 時五個小塊的 impliedH 是 1.983–1.992（偏差 ≤ 0.017px）。
+        // 給 0.05px 的量測容差 —— 足以蓋掉角落效應，吞不掉 h=1（impliedH ≈ 1.0）。
+        const measureTol = 0.05;
         if (semiCount === 0) {
           out.push({
             id: 'SP-2.14/1-bit硬邊',
@@ -243,15 +288,15 @@ export function checkFormatAndHygiene(sheets, manifest) {
             measured: 0,
             limit: 1,
           });
-        } else if (rampPx < 2) {
+        } else if (impliedH < minH - measureTol) {
           out.push({
             id: 'SP-2.14/漸層過窄',
             severity: 'warn',
             sheet: name,
             cell: c,
-            message: `剪影邊緣的平均過渡寬度 ${rampPx.toFixed(2)} px，SP-2.14 要求 ≥ 0.004·S（S=512 時 2px）。此門檻**未經真素材校準**，首版僅記錄`,
-            measured: rampPx,
-            limit: 2,
+            message: `剪影邊緣的平均過渡寬度約 ${impliedH.toFixed(2)} px（一階矩法），SP-2.14 要求 ≥ 0.004·S = ${minH.toFixed(2)}px。此門檻**未經真素材校準**，首版僅記錄`,
+            measured: impliedH,
+            limit: minH,
           });
         }
       }
@@ -321,7 +366,15 @@ export function checkFormatAndHygiene(sheets, manifest) {
       // 樣本太少時不判（1-bit alpha 的圖沒有半透明像素 —— 那是 SP-2.14 的事，不是本條的）。
       residuals.sort((p, q) => p - q);
       const residMed = residuals.length ? residuals[residuals.length >> 1] : 0;
-      if (residuals.length >= 200 && residMed > (stroke?.colourToleranceRgb ?? 12)) {
+      // ⚠️ **不要借用 `stroke.colourToleranceRgb`。** 那個值是「描邊色的容差」，
+      // 驗證器允許 0–255，而它與「matte 殘差多大才算異常」沒有任何關係 ——
+      // 有人為了描邊而把它調鬆，matte 偵測就跟著失效：實測調到 40 時
+      // 白 matte 由 18 格掉到 11 格，調到 80 時黑白兩種都只剩 2 格。
+      // 一個檢查的靈敏度不該被另一個檢查的參數左右。
+      // 用自己的門檻：直通 alpha 的殘差在 SP-2.15 之下應為 **0**，
+      // 而 matte 實測 64（黑）／72（白），所以 12 有很寬的餘裕。
+      const MATTE_RESIDUAL_MAX = 12;
+      if (residuals.length >= 200 && residMed > MATTE_RESIDUAL_MAX) {
         out.push({
           id: 'SP-7.1/預乘alpha',
           severity: 'error',
@@ -329,7 +382,7 @@ export function checkFormatAndHygiene(sheets, manifest) {
           cell: c,
           message: `半透明像素的 RGB 與最近不透明像素的 RGB 差距中位數 ${residMed}（${residuals.length} 個樣本）—— SP-2.15 強制兩者相等，有系統性差距代表匯出時對底色合成過（matte）。SP-2.13 要求非預乘（straight）alpha`,
           measured: residMed,
-          limit: stroke?.colourToleranceRgb ?? 12,
+          limit: MATTE_RESIDUAL_MAX,
         });
       }
       const matteRatio = matte / (cellPx * cellPx);
@@ -1030,6 +1083,10 @@ export function checkOverlayOwnership(sheets, manifest) {
     let nonZero = 0;
     let fullyOpaque = 0;
     let firstOut = null;
+    let semiCount = 0;
+    let perim = 0;
+    const softOutAllow = [];
+    const softOutSkin = [];
     for (let y = 0; y < cellPx; y++) {
       for (let x = 0; x < cellPx; x++) {
         const a = v.px(x, y)[3];
@@ -1040,14 +1097,67 @@ export function checkOverlayOwnership(sheets, manifest) {
         if (a === 255) {
           fullyOpaque++;
         }
-        if (!allow[y * cellPx + x]) {
-          outsideWindows++;
-          if (!firstOut) {
-            firstOut = [x, y];
+        if (a < 255) {
+          semiCount++;
+        }
+        if (a >= 128) {
+          const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          if (nb.some(([px2, py2]) => px2 < 0 || py2 < 0 || px2 >= cellPx || py2 >= cellPx || v.px(px2, py2)[3] < 128)) {
+            perim++;
           }
         }
-        if (!skin[y * cellPx + x]) {
-          outsideSkin++;
+        const i = y * cellPx + x;
+        // ⚠️ **兩級判定，不再是「任何非零 alpha 出界即違規」。**
+        // SP-2.14 對 overlay 一樣強制 ≥ 0.004·S 的羽化（syntheticSheet 也刻意
+        // 這樣畫），而羽化帶必然溢出遮罩邊界 —— 4px 羽化（電池 C 列，合規）
+        // 先前在這兩條 limit:0 上硬紅（溢 13/22 px）。規格要求羽化、規格不設
+        // 羽化上限、檢查要求 0 個出界像素：三者不可同時成立，先前輸的是素材。
+        // 完全不透明的出界仍是硬違規（那是畫上去的內容，不是羽化）；
+        // 半透明的出界先收著，迴圈後對「按該格量到的羽化寬度膨脹過的遮罩」再判。
+        if (!allow[i]) {
+          if (a >= 250) {
+            outsideWindows++;
+            if (!firstOut) {
+              firstOut = [x, y];
+            }
+          } else {
+            softOutAllow.push(i);
+          }
+        }
+        if (!skin[i]) {
+          if (a >= 250) {
+            outsideSkin++;
+          } else {
+            softOutSkin.push(i);
+          }
+        }
+      }
+    }
+    if (softOutAllow.length || softOutSkin.length) {
+      // 該格自己的羽化寬度（SP-2.14 的比值法：implied h = (semi/perim + 1) / 2），
+      // 夾在 [下限, 3×下限]。**夾上限是自我廢除防護** —— 「整片半透明」正是這類
+      // 檢查要抓的缺陷之一，它會抬高量到的羽化；眨眼檢查踩過同一個坑
+      // （侵蝕深度取自缺陷會影響的量，缺陷越重檢查越鬆）。
+      const minH = Math.max(1, Math.floor(0.004 * cellPx));
+      const impliedH = perim > 0 ? (semiCount / perim + 1) / 2 : minH;
+      const featherPx = Math.min(3 * minH, Math.max(minH, Math.ceil(impliedH)));
+      if (softOutAllow.length) {
+        const allowFeather = dilate(allow, cellPx, featherPx);
+        for (const i of softOutAllow) {
+          if (!allowFeather[i]) {
+            outsideWindows++;
+            if (!firstOut) {
+              firstOut = [i % cellPx, Math.floor(i / cellPx)];
+            }
+          }
+        }
+      }
+      if (softOutSkin.length) {
+        const skinFeather = dilate(skin, cellPx, featherPx);
+        for (const i of softOutSkin) {
+          if (!skinFeather[i]) {
+            outsideSkin++;
+          }
         }
       }
     }
@@ -1150,8 +1260,53 @@ export function checkOverlayOwnership(sheets, manifest) {
       }
       const declared = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
       const measured = patchPerim > 0 ? Math.ceil(patchSemi / patchPerim) : 0;
-      const feather = Math.max(declared, measured) + 1;
-      const core = erode(filled, cellPx, feather);
+      const want = Math.max(declared, measured) + 1;
+
+      /**
+       * ⚠️ **這個侵蝕深度會讓檢查自我廢除，而且缺陷越嚴重越容易發生。**
+       *
+       * `measured = patchSemi / patchPerim` 取自**半透明像素的數量**，
+       * 而「整片半透明的眼瞼」正是本檢查要抓的缺陷之一 —— 它讓每一個像素都變成
+       * 半透明，於是 `measured` 暴增、侵蝕深度暴增、核心被侵蝕成空。
+       * 先前沒有 `coreArea === 0` 的守衛，所以空核心 = 兩條檢查都不發 finding。
+       *
+       * 實測：把格 6 與格 7 的眼瞼整片改成 alpha 130，**只有格 6 報告**——
+       * 格 7 比較薄（SP-4.8 的半閉眼），核心是 0 px，零 finding。
+       * 而 selftest 的兩個眨眼變異體都只動格 6，所以沒有任何東西釘住這件事。
+       * 合規的 6px 羽化也會把格 7 的核心清空。
+       *
+       * 兩層修正：
+       *  1. **逐步退讓**：從 `want` 往下試到 1，取第一個「核心非空」的深度。
+       *     那保證量得到東西，而且用的是仍然可行的最深侵蝕。
+       *  2. **連深度 1 都空 → 出聲，不要靜默**。那種修補塊細到量不出核心，
+       *     可能是合法的細線閉眼、也可能是畫壞了，但兩者都不該是「靜默通過」。
+       */
+      let feather = 0;
+      let core = null;
+      for (let d = want; d >= 1; d--) {
+        const cand = erode(filled, cellPx, d);
+        let any = 0;
+        for (let i = 0; i < cand.length && !any; i++) {
+          any = cand[i];
+        }
+        if (any) {
+          feather = d;
+          core = cand;
+          break;
+        }
+      }
+      if (!core) {
+        out.push({
+          id: 'SP-7.4/眨眼核心量不到',
+          severity: 'warn',
+          sheet: 'reactions',
+          cell: c,
+          message: `修補塊侵蝕 1px 之後核心即為空（輪廓 ${nonZero} px）—— 太細，量不到「本來就該完全不透明」的核心。細線閉眼是合法的畫法，但本輪無法驗證它的不透明度`,
+          measured: 0,
+          limit: 1,
+        });
+        continue;
+      }
       const master = cellView(sheets.directions, 4, geom); // master frame（與本檔 :277 / :503 同一個常數）
       const iris = hexToRgb(manifest.colours.iris);
       const irisTol = manifest.colours.irisToleranceRgb;
@@ -1339,7 +1494,15 @@ export function checkAnchors(directions, manifest, centroids) {
   /** @type {Finding[]} */
   const out = [];
   const { cellPx } = manifest.sheet;
-  const tol = (manifest.anchorToleranceS ?? 0.004) * cellPx;
+  // ⚠️ **只從這裡讀容差，不要在下面再讀一次 `manifest.anchorToleranceS`。**
+  // :1438 與 :1481 一度直接讀原值，而這一行有 `?? 0.004` 的預設 ——
+  // 兩種讀法在「欄位缺席」時的行為不同：這裡拿到 0.004，那兩處拿到 `undefined`，
+  // 而 `m < lo - undefined` 是 `m < NaN` = **false**，於是
+  // `SP-7.5/頭頂` 與 `SP-7.5/頭寬` 在該紅的輸入上**靜默不發**（實測確認）。
+  // CLI 有 validateManifest 擋著，但 selftest 直接呼叫本函式，繞過它。
+  // 這正是本 repo 記錄過的第一類缺陷：「刪欄位比放寬門檻更強大」。
+  const tolS = manifest.anchorToleranceS ?? 0.004;
+  const tol = tolS * cellPx;
   const a = manifest.anchors;
 
   /** 點值比對：實測必須落在 `expected ± tol`。 */
@@ -1390,7 +1553,7 @@ export function checkAnchors(directions, manifest, centroids) {
       return;
     }
     const m = measured / cellPx;
-    if (m < lo - manifest.anchorToleranceS || m > hi + manifest.anchorToleranceS) {
+    if (m < lo - tolS || m > hi + tolS) {
       out.push({
         id,
         severity: 'error',
@@ -1433,7 +1596,7 @@ export function checkAnchors(directions, manifest, centroids) {
     // 要恢復雙側精度，規格必須凍結一個**量得到**的橫向錨點（例如「側髮最外緣 X」）——
     // 那是規格修訂不是程式修正，已記進 ROADMAP。
     const headW = box ? (box.x1 - box.x0 + 1) / cellPx : NaN;
-    if (Number.isFinite(headW) && headW < a.headWidth - manifest.anchorToleranceS) {
+    if (Number.isFinite(headW) && headW < a.headWidth - tolS) {
       out.push({
         id: 'SP-7.5/頭寬',
         severity: 'error',
@@ -1502,7 +1665,6 @@ export function checkAnchors(directions, manifest, centroids) {
    * 真正的瞳孔位置驗收在 SP-V.1 的人眼盲測 —— 那才是這件事的權威，本條是輔助。
    */
   const eyes = eyeCentroids(directions, 4, manifest);
-  const tolS = tol / cellPx; // :995 的 tol 是像素，這裡要 S 比例
   const soft = (id, label, measured, want, why) => {
     if (!Number.isFinite(measured)) {
       return;
@@ -1737,7 +1899,20 @@ export function checkLuminanceAndStroke(directions, manifest) {
   for (let c = 0; c < CELL_COUNT; c++) {
     const w = widths[c];
     if (!Number.isFinite(w)) {
-      out.push({ id: 'SP-7.7/描邊', severity: 'error', sheet: 'directions', cell: c, message: '量不到描邊（剪影邊緣沒有落在亮度帶內的像素）' });
+      // ⚠️ 訊息不可以只講亮度帶。樣本是「亮度帶 ∩ 接近描邊參考色」的交集，
+      // 先前的訊息只提亮度帶 —— 當像素明明在帶內、是被顏色閘殺掉時
+      // （宣告了 stroke.colour 而畫的墨色偏了），畫師會拿著一句
+      // 對著檔案看顯然不成立的話排查九次。護欄講假話是它被關掉的最短路徑。
+      const colourHint = stroke.colour
+        ? `且接近宣告色 ${stroke.colour}（±${stroke.colourToleranceRgb ?? 12}/通道）`
+        : '且接近自素材取樣的描邊色';
+      out.push({
+        id: 'SP-7.7/描邊',
+        severity: 'error',
+        sheet: 'directions',
+        cell: c,
+        message: `量不到描邊 —— 剪影邊緣沒有「落在亮度帶內${colourHint}」的連續像素。兩個篩哪個殺的都有可能，先檢查墨色亮度，再檢查它與宣告色的距離`,
+      });
       continue;
     }
     if (Math.abs(w - target) > tol) {
@@ -1746,9 +1921,32 @@ export function checkLuminanceAndStroke(directions, manifest) {
         severity: 'error',
         sheet: 'directions',
         cell: c,
-        message: `描邊中位寬度 ${(w / cellPx).toFixed(4)}·S，宣告 ${stroke.width}·S ±${stroke.tolerance}·S`,
+        message: `描邊寬度 ${(w / cellPx).toFixed(4)}·S，宣告 ${stroke.width}·S ±${stroke.tolerance}·S`,
         measured: w / cellPx,
         limit: stroke.width,
+      });
+    }
+  }
+
+  // SP-6.5「描邊在 18 格中的寬度必須一致」的跨格統計。
+  // 每格獨立的 |w − target| ≤ tol 只隱含 spread ≤ 2·tol —— 兩格可以一格貼上限、
+  // 一格貼下限（差 0.032·S）而全綠，那正是「一致」要禁止的樣子。
+  // reactions 不在這裡量：SP-6.6 禁止 overlay 覆寫描邊（⊆ 臉部皮膚遮罩），
+  // 所以 overlay 上不存在也不准存在可量的描邊，「18 格」的另外 9 格由
+  // SP-7.4/視窗產權 與 SP-6.6 承接。
+  // 門檻取 tol（與電池 run() 的 spread 判定同值）；**未經真素材校準，首版僅 warn**。
+  const finite = widths.filter(Number.isFinite);
+  if (finite.length >= 2) {
+    const spread = Math.max(...finite) - Math.min(...finite);
+    if (spread > tol) {
+      out.push({
+        id: 'SP-7.7/描邊不一致',
+        severity: 'warn',
+        sheet: 'directions',
+        cell: widths.indexOf(Math.max(...finite)),
+        message: `九格描邊寬度極差 ${(spread / cellPx).toFixed(4)}·S（${spread.toFixed(2)}px），SP-6.5 要求一致；門檻 ${stroke.tolerance}·S 未經真素材校準，首版僅記錄`,
+        measured: spread / cellPx,
+        limit: stroke.tolerance,
       });
     }
   }
@@ -1917,11 +2115,16 @@ export const STROKE_MEASURE_TUNING = {
  *    軸向邊界上，描邊帶的像素中心距離全是整數，真實寬度 D 只能被夾在
  *    `[floor(D), floor(D)+1)` —— 那一格資訊**根本不在圖裡**，量到的一定是 floor(D)。
  *    斜法線與晶格不可通約，相位連續變動，弦長平均後才回到 D。
- *    實測殘差（量到值 − D）在 D ∈ [7.4, 9.0] 為 −0.07 ~ −0.03；不篩的話是 −0.21 ~ −0.06，
- *    而電池的 R（7.4px）與 S（9.0px）兩列合起來只留 ±0.22 的餘裕，那個斜率誤差吃不下。
+ *    ⚠️ 這一點原記「實測殘差 −0.07 ~ −0.03」—— 那是對著 1-bit fixture 量的
+ *    （2026-09-29 複審查出實際是 −0.68 上下，差 20 倍；根因一半在 fixture 的
+ *    斜坡相位錯，一半在內緣硬分類，兩者都已修）。當前數字見檔尾校準段。
  *    斜樣本少於 `minObliqueSamples` 時退回不篩（量化好過 NaN）。
  * 4. **兩端都是次像素，靠覆蓋率積分而不是找交界。** 沿法線以 `stepPx` 積
- *    `覆蓋率 du`：不透明描邊算 1，屬於描邊的半透明環算 `alpha / 255`。
+ *    `覆蓋率 du`：不透明描邊算 1，屬於描邊的半透明環算 `alpha / 255`，
+ *    內緣（描邊↔填色）的不透明混色像素算解混出的描邊成分 t。
+ *    ⚠️ 內緣那一項是 2026-09-29 補的 —— 在那之前這一點的敘述是假的：
+ *    只有外緣是次像素，內緣是 colourNear 硬門檻，每條游程系統性少半個像素，
+ *    而且少多少隨填色顏色變（解析地面真值：偏差 −0.31 ~ −0.34、隨填色擺 0.08px）。
  *    抗鋸齒環因此**按它實際遮住多少貢獻寬度**，不是整格算或整格不算 ——
  *    2px 與 4px 漸層量到的值相差 0.013px（電池 B 與 C）。
  * 5. **matte 偵測而不是投降。** 半透明像素若其直通道色是描邊色，
@@ -1940,11 +2143,79 @@ export const STROKE_MEASURE_TUNING = {
  *   但不讓它們進 bin 可以省掉直方圖的長尾）。
  *
  * **沒有任何為了湊電池而加的常數**：兩端的半像素約定是 0（`edgeConvention` 不存在），
- * 量到的就是覆蓋率積分本身。實測 20 列全對，最窄餘裕 0.159px（R 列），
- * 且 11 個可調項逐一掃過（半徑 1–4、斜度門檻 0.2–0.55、步長 0.05–0.25 等）都維持 20/20。
+ * 量到的就是覆蓋率積分本身。
+ *
+ * **校準現況（2026-09-29，fixture 斜坡相位修正 + 內緣解混之後）**：
+ * - 電池 20/20（`node tools/stroke-battery.mjs`，有退出碼、在閘門與 CI 裡）。
+ * - 解析地面真值（8× supersample disc，含內緣真實混色）：
+ *   D ∈ [6, 10] 偏差 **+0.03 ~ +0.08**、填色相依擺動 <0.01px，
+ *   且對內緣過渡寬 wIn ∈ [0, 2px] 穩定（兩圈解混 + 填色搜尋 3×3→5×5 之後；
+ *   一圈版在 wIn=2 時偏差 −0.26，真 7.4px 的合規描邊被推出下限硬紅）。
+ * - 合成 fixture 上：電池 B 列（2px 羽化、合規基準）+0.031、C/D/E/H/I/L/M 全在 ±0.013、
+ *   R 列（7.4px）讀 7.542、S 列（9.0px）讀 9.066 —— 與解析地面真值一致。
+ *   ⚠️ 2026-09-29 這裡記的「合成圖 −0.2 殘餘、來源未定位、R 列餘裕 0.002px」
+ *   **來源已定位且已修（2026-10-01）**：是 fixture 的描邊從核心**像素中心**量距，
+ *   真實寬比宣告窄 ~0.21px（selftest [2c] 用不經估計器的獨立尺實量：
+ *   舊 7.984/7.192/8.824，新 8.181/7.422/9.026）。估計器本身沒有那 −0.2。
  *
  * 成本：9 格 512×512 實測 96–103 ms（同機器上 fixture 自己建一張 sheet 要 ~2 s）。
  */
+/**
+ * 從 master 格（cell 4）自取描邊參考色：剪影邊界向內 1.2·target 的環帶內，
+ * 完全不透明且亮度落在描邊帶（含 slack）的像素，4-bit 量化桶取眾數桶的實際平均。
+ * 環帶把「同亮度但在角色內部」的色塊（衣物主體）排除在取樣之外；
+ * 貼著描邊的窄衣物帶仍可能混入，但描邊繞整圈周長，眾數穩定屬於描邊
+ * （電池 J/K 列實測）。樣本太少（< 200）回 null，由呼叫端退回參考色。
+ */
+function sampleStrokeColour(directions, manifest, lumLo, lumHi) {
+  const geom = manifest.sheet;
+  const P = geom.cellPx;
+  const v = cellView(directions, 4, geom);
+  const N = P * P;
+  const mask = new Uint8Array(N);
+  for (let y = 0; y < P; y++) {
+    for (let x = 0; x < P; x++) {
+      mask[y * P + x] = v.px(x, y)[3] >= 128 ? 1 : 0;
+    }
+  }
+  const depth = Math.ceil(manifest.stroke.width * P * 1.2);
+  const core = erode(mask, P, depth);
+  const hist = new Map();
+  for (let y = 0; y < P; y++) {
+    for (let x = 0; x < P; x++) {
+      const i = y * P + x;
+      if (!mask[i] || core[i]) {
+        continue;
+      }
+      const [r, g, b, a] = v.px(x, y);
+      if (a < 250) {
+        continue;
+      }
+      const L = fastLuminance(r, g, b);
+      if (L < lumLo || L > lumHi) {
+        continue;
+      }
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const bin = hist.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+      bin.n++;
+      bin.r += r;
+      bin.g += g;
+      bin.b += b;
+      hist.set(key, bin);
+    }
+  }
+  let best = null;
+  for (const bin of hist.values()) {
+    if (!best || bin.n > best.n) {
+      best = bin;
+    }
+  }
+  if (!best || best.n < 200) {
+    return null;
+  }
+  return [Math.round(best.r / best.n), Math.round(best.g / best.n), Math.round(best.b / best.n)];
+}
+
 export function measureStrokeWidths(directions, manifest) {
   const tune = STROKE_MEASURE_TUNING;
   const geom = manifest.sheet;
@@ -1954,10 +2225,19 @@ export function measureStrokeWidths(directions, manifest) {
   const lumLo = stroke.luminanceMin - slack;
   const lumHi = stroke.luminanceMax + slack;
   const target = stroke.width * P;
-  // 亮度帶是第一道篩、宣告色是第二道 —— 兩道都要，缺一不可：
+  // 亮度帶是第一道篩、參考色是第二道 —— 兩道都要，缺一不可：
   // 只看亮度，合法的同亮度衣物（#7c7c7c，L = 0.2016）會被當成描邊；
   // 只看顏色，SP-6.4 規範的是亮度帶而 #6E7681 只是參考色。
-  const ref = hexToRgb(stroke.colour ?? '#6E7681');
+  //
+  // ⚠️ **未宣告 stroke.colour 時，參考色從素材自己取樣，不用硬編的 #6E7681。**
+  // 2026-09-28 複審實測：SP-6.4 是亮度帶規範（0.18–0.24），#7c7c7c（L=0.2016）
+  // 完全合規，但它離參考色 ΔRGB = 14/6/5 > 預設容差 12 —— 於是一張合規的圖
+  // 九格全 NaN 硬紅，訊息還說「亮度帶內沒有像素」（像素明明在帶內，是被
+  // 顏色閘殺的）。更糟的是 #6E7681 自己 L = 0.1786，**低於**帶的下限 0.18，
+  // 只靠 luminanceSlack 才活著 —— 唯一被乾淨接受的色系反而不滿足規範本身。
+  // 自取樣讓「畫師實際畫的描邊色」成為第二道篩的基準；宣告值仍然優先。
+  const sampled = stroke.colour ? null : sampleStrokeColour(directions, manifest, lumLo, lumHi);
+  const ref = stroke.colour ? hexToRgb(stroke.colour) : (sampled ?? hexToRgb('#6E7681'));
   const colourTol = stroke.colourToleranceRgb ?? 12;
   const maxRun = Math.ceil(target * 2.6);
   const firstHitLimit = Math.max(6, 0.8 * target);
@@ -2075,6 +2355,105 @@ export function measureStrokeWidths(directions, manifest) {
     const coverage = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       coverage[i] = cls[i] === 3 ? 1 : (cls[i] === 1 && rimIsStroke(i) ? A[i] / 255 : 0);
+    }
+    // **內緣次像素**：描邊↔填色邊界的不透明混色像素，對鄰接填色解混出描邊成分 t。
+    //
+    // 沒有這一段時只有外緣（描邊↔透明）是次像素，內緣是 colourNear 的硬門檻 ——
+    // 一顆 80% 描邊 / 20% 膚色的邊界像素貢獻 0，每條游程系統性少掉內側半個像素，
+    // 而少掉多少取決於**填色的顏色**（門檻切在哪）。解析地面真值（8× supersample
+    // disc、內緣含真實混色）實測：修正前偏差 −0.31 ~ −0.34（與獨立複審的 −0.29 一致）
+    // 且隨填色擺動 0.08px；解混後 +0.03 ~ +0.08、擺動 0.017px。
+    // 合成 fixture 的內緣是硬過渡（無混色像素），所以這一段在電池上零影響 ——
+    // 它保護的是真素材。
+    {
+      // 兩圈，不是一圈（2026-09-29 複審抓到）：內緣過渡 1px 時一圈就夠，
+      // 但 SP-2.14 自己對外緣要求 2px 軟邊，軟筆刷/高解析縮圖的內緣一樣會有
+      // ≥1.5px 的過渡 —— 第二圈混色像素（~25% 描邊成分）既不與 cls-3 四鄰接
+      // （永遠標不進第一圈），還會混進第一圈的鄰域填色平均把 t 壓低。
+      // 實測（解析地面真值、skin 填色）：只解一圈時 wIn=2 偏差 −0.26，
+      // 真 7.4px 的合規描邊被推出下限硬紅（7.137 < 7.168）。
+      const isInnerEdge = new Uint8Array(N);
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
+          if (cls[i] !== 2) {
+            continue;
+          }
+          if (cls[i - 1] === 3 || cls[i + 1] === 3 || cls[i - P] === 3 || cls[i + P] === 3) {
+            isInnerEdge[i] = 1;
+          }
+        }
+      }
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
+          if (isInnerEdge[i] || cls[i] !== 2) {
+            continue;
+          }
+          if (isInnerEdge[i - 1] === 1 || isInnerEdge[i + 1] === 1 || isInnerEdge[i - P] === 1 || isInnerEdge[i + P] === 1) {
+            isInnerEdge[i] = 2; // 第二圈
+          }
+        }
+      }
+      for (let y = 1; y < P - 1; y++) {
+        for (let x = 1; x < P - 1; x++) {
+          const i = y * P + x;
+          if (!isInnerEdge[i]) {
+            continue;
+          }
+          // 鄰接填色 = 「非邊界（兩圈都不是）」的不透明非描邊像素平均。
+          // ⚠️ 先找 3×3，找不到再擴 5×5 —— 軸向的內緣帶上，第一圈像素的
+          // 8 鄰域可以**全部**是描邊/一圈/二圈（上=cls3、左右=一圈、下與對角=二圈），
+          // 只搜 3×3 會 n=0 而放棄解混：實測整排 t=0.37~0.84 的混色像素被歸零，
+          // wIn=0 的偏差從 +0.05 惡化到 −0.18 —— 比不修還糟。
+          let fr = 0;
+          let fg = 0;
+          let fb = 0;
+          let n = 0;
+          for (let radius = 1; radius <= 2 && n === 0; radius++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dy), Math.abs(dx)) !== radius) {
+                  continue; // 只掃這一圈殼，內圈上一輪掃過了
+                }
+                const j = i + dy * P + dx;
+                if (j < 0 || j >= N || cls[j] !== 2 || isInnerEdge[j]) {
+                  continue;
+                }
+                fr += R[j];
+                fg += G[j];
+                fb += B[j];
+                n++;
+              }
+            }
+          }
+          if (!n) {
+            continue;
+          }
+          fr /= n;
+          fg /= n;
+          fb /= n;
+          const dr = ref[0] - fr;
+          const dg = ref[1] - fg;
+          const db2 = ref[2] - fb;
+          const den = dr * dr + dg * dg + db2 * db2;
+          if (den < 400) {
+            // 填色與描邊太接近時解不出：den 是解混的分母，8-bit 捨入誤差被放大
+            // ref−fill 距離的倒數倍。門檻取 400（≈ 每通道 12）；#E2C8B1 膚色的
+            // den ≈ 22,000，不受影響。
+            // ⚠️ 誠實記：**近色填色（如 #7c7c7c 整片當填色）的殘餘偏差 +0.42px
+            // 不是這個分支能救的** —— 它的內緣混色像素離 ref 只差 7/3/2.5，
+            // 在 colourNear 的 tol 12 內，直接被 cls 判成描邊，根本走不到解混。
+            // 顏色分不開時內緣位置本來就不可分辨；現實情境（J 列：衣物「帶」
+            // 貼邊而非整片填色）不受影響，電池 20/20。
+            continue;
+          }
+          const t = ((R[i] - fr) * dr + (G[i] - fg) * dg + (B[i] - fb) * db2) / den;
+          if (t > 0.02) {
+            coverage[i] = Math.min(1, t);
+          }
+        }
+      }
     }
 
     const smooth = boxBlurMask(mask, P, P, tune.blurRadius, tune.blurPasses);

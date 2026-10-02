@@ -56,8 +56,17 @@ export interface PanelAlertSourceOptions {
   panelId: number;
   /** 取規則細節。注入以利測試。 */
   fetchRules: RulesFetcher;
-  /** rules 端點取不到細節時用的嚴重度。 */
-  fallbackSeverity: string;
+  /**
+   * rules 端點取不到細節時用的嚴重度。
+   *
+   * **可以給函式** —— 它在 `evaluate` 當下才被讀,不是建構當下。
+   * 呼叫端因此不必為了換這個值而重建整個 source,而重建 source 會把 `episodes`
+   * 清空;若同一時間 dedup 沒有一起重建(兩個 effect 的 deps 不同),
+   * 就會留下「episodes 空了而 lastFiring 還記得」的組合 —— 那是**永久靜音**:
+   * 告警恢復時對著空的 episodes 比對,resolved 不播、key 不刪,
+   * 而預設窗是 Infinity,於是這個 fingerprint 再也不會出聲。
+   */
+  fallbackSeverity: string | (() => string);
   /** 規則細節的快取秒數；同一個 episode 期間不必反覆打端點。 */
   ruleCacheSec?: number;
   /**
@@ -223,13 +232,22 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         const fp = `alert:panel:${opts.panelId}`;
         const existing = episodes.get(fp);
         if (existing) {
+          // ⚠️ severity 要**就地跟上目前的選項值**（2026-09-29 複審抓到）：
+          // 降級 episode 的 severity 是猜的（不是事實），而它一旦建立就定格 ——
+          // 最壞組合是 fallbackSeverity=info、minSeverity=warning 時告警被過濾掉，
+          // 使用者發現沒聲音、把 fallbackSeverity 調高想救，**也救不回來**：
+          // episode 還是舊的 info，直到 resolved 前永遠沉默。
+          // 具名規則的 episode 不在此列 —— 它們的 severity 是 label 記錄的事實，
+          // 「複製不重算」的不變量仍然成立；這裡改的只是自己合成的猜測值。
+          existing.severity =
+            typeof opts.fallbackSeverity === 'function' ? opts.fallbackSeverity() : opts.fallbackSeverity;
           return [existing];
         }
         const ep: ParsedAlert = {
           status: 'firing',
           source: 'grafana-alertstate',
           name: '告警',
-          severity: opts.fallbackSeverity,
+          severity: typeof opts.fallbackSeverity === 'function' ? opts.fallbackSeverity() : opts.fallbackSeverity,
           startsAt: nowIso,
           fingerprint: fp,
         };

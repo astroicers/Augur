@@ -359,3 +359,121 @@ test('StrictMode 下 feed 順序必須與正式模式相同（updater 不得就�
   const feedText = view.container.textContent ?? '';
   expect(feedText.indexOf('第二則')).toBeLessThan(feedText.indexOf('第一則'));
 });
+
+/**
+ * 改選項不得讓 source 與 dedup 的生命週期分岔 —— 分岔的後果是**永久靜音**。
+ *
+ * 缺陷長這樣（2026-09-28 全專案複審抓到，實際存在於 `630cd81`）：
+ * source 的 deps 是 `[id, fallbackSeverity]`、dedup 的是 `[repeatFiringMin]`。
+ * 改 `fallbackSeverity` 於是**只**重建 source：`episodes` 清空，而 `lastFiring` 還記得。
+ * 接著告警恢復 → `resolvedAll()` 對著空的 episodes 迭代 → 不播 resolved、key 不刪；
+ * 再次 firing → 預設窗是 `Infinity` → `t - last < Infinity` 恆真 → **從此再也不出聲**，
+ * 而且不留任何錯誤訊息、UI 上沒有任何跡象。
+ *
+ * 這支測試把那四步逐一走過。對著舊實作跑，第 3 步與第 4 步都會停在 0 則。
+ */
+test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（source/dedup 生命週期一致）', async () => {
+  mockedFetch.mockResolvedValue([
+    { alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 },
+  ]);
+
+  // 1) 先燒起來，播一則 firing。
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  const afterFiring = spoken.length;
+  expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
+
+  // 2) **在同一次 rerender 裡**改選項並恢復。
+  //    這一步的寫法很要緊：如果先用 ALERTING 重繪一次再恢復，
+  //    那次 evaluate 會把 episodes 重新填回去，缺陷就被治好了、測試也就白寫。
+  //    （我第一版正是這樣寫的，對著舊實作跑**是綠的**。）
+  //    真實情境是選項改動與告警恢復落在同一個 refresh 週期內。
+  view.rerender(
+    <MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />
+  );
+
+  // 3) 必須播得出「已恢復」。舊實作在這裡對著空的 episodes 迭代 → 靜默。
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(afterFiring));
+  expect(spoken[spoken.length - 1]!.emotion).toBe('resolved');
+  const afterResolved = spoken.length;
+
+  // 4) 再燒一次 —— 必須再播一則。舊實作在這裡永久靜音。
+  view.rerender(
+    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(afterResolved));
+  expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
+});
+
+/**
+ * repeatFiringMin 的接線：換窗必須「生效」且「不重建」。
+ * 2026-09-29 變異測試抓到這條接線整個無法失敗：把 setWindow effect 清空、
+ * 或把 dedup 建立 effect 的 deps 改回 [id, repeatFiringMin]（重建式 —— setWindow
+ * 存在的唯一理由就是取代它），78/78 都全綠。這一條同時殺兩個變異體。
+ */
+test('改 repeatFiringMin：不重播目前告警（不重建），但新窗真的生效（setWindow 不是空殼）', async () => {
+  jest.useFakeTimers();
+  try {
+    jest.setSystemTime(1_000_000);
+    mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '高', value: 95 }]);
+    const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+    await settle();
+    expect(spoken).toHaveLength(1);
+
+    // 換窗（0 → 1 分鐘）。重建式實作會把 lastFiring 清掉 → 這裡立刻重播。
+    view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { repeatFiringMin: 1 } })} />);
+    await settle();
+    expect(spoken).toHaveLength(1);
+
+    // 61 秒後：60 秒的新窗已過 → 必須重播。setWindow 若是空殼，窗仍是
+    // Infinity（repeatFiringMin: 0 的初始值）→ 永不重播 → 這裡抓到。
+    jest.setSystemTime(1_000_000 + 61_000);
+    view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { repeatFiringMin: 1 } })} />);
+    await settle();
+    expect(spoken).toHaveLength(2);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+/**
+ * fallbackSeverity 的接線：改選項後，「新建立」的降級 episode 必須用新值。
+ * 同一輪變異測試：把 fallbackSeverityRef 的同步賦值拿掉，78/78 全綠 ——
+ * 永久靜音測試只驗了「改選項後管線還活著」，沒驗「改後的值真的被用到」。
+ */
+test('改 fallbackSeverity 後，新的降級 episode 用新值（ref 同步不是裝飾）', async () => {
+  mockedFetch.mockRejectedValue(new Error('rules endpoint down')); // 走降級路徑
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBe(1));
+  expect(spoken[0]!.emotion).toBe('critical'); // 預設 fallbackSeverity
+
+  // 恢復（episode 結清、fingerprint 忘掉），然後改選項再燒。
+  view.rerender(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(spoken.length).toBe(2));
+  expect(spoken[1]!.emotion).toBe('resolved');
+
+  view.rerender(
+    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBe(3));
+  // ref 同步拿掉的話，這裡讀到的是掛載時捕捉的 'critical'。
+  expect(spoken[2]!.emotion).toBe('warning');
+});
+
+/**
+ * Grafana 12.3.x 的 alertState 沒有 dashboardUID（欄位叫 dashboardId、是數字 id）。
+ * 2026-10-01 在 12.3.0 / 12.3.11 實測：plugin 會載入，但 rules 查詢被跳過，
+ * 念出來的是泛用的「告警」—— 規則名、數值都沒了，嚴重度一律用 fallback。
+ * dashboard uid 改由公開型別的 data.request.dashboardUID 後備。
+ */
+test('alertState 沒有 dashboardUID（Grafana 12.3.x 的形狀）時，改用 data.request.dashboardUID 查規則', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'PocAlwaysFiring', severity: 'critical', summary: '恆定', value: 1 }]);
+  const legacyAlertState = { state: 'alerting', id: 3, panelId: 7, dashboardId: 42 }; // 12.3.x 的實際形狀
+  const p = props({ alertState: legacyAlertState });
+  (p.data as unknown as { request: { dashboardUID: string } }).request = { dashboardUID: 'dash-1' };
+  render(<MascotPanel {...p} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(mockedFetch).toHaveBeenCalledWith('dash-1', 7);
+  // 沒有後備時這裡會是泛用降級句「告警」，不是規則名。
+  expect(spoken[0]!.text).toContain('PocAlwaysFiring');
+});
