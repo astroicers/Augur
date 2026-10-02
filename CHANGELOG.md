@@ -12,6 +12,20 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
+### The mascot has a face (2026-10-02)
+
+- The panel now renders a sprite mascot instead of the diagnostic dot grid: a tired boy
+  with dark circles under his eyes, wearing a blue-whale onesie. He looks toward the
+  cursor (nine gaze cells), changes expression with the alert severity, blinks, moves
+  his mouth while speaking, and startles awake when clicked.
+- This is **placeholder art**, drawn by a script in this repository
+  (`tools/sprite-gen/whale-boy.mjs`) to the sprite specification, and it passes every
+  mechanical acceptance check. It will be replaced when hand-drawn artwork is delivered.
+- Two new panel options, *Directions sheet URL* and *Reactions sheet URL*, let you point
+  the panel at your own sheets; the panel marks them as unverified custom art.
+- If the sheets fail to load or have the wrong geometry, the panel falls back to the
+  diagnostic grid and says why, rather than breaking.
+
 ### Fixed since the first cut (2026-09-30)
 
 A full-project adversarial review (three rounds, every finding independently
