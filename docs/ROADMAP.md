@@ -35,14 +35,27 @@
 ### 卡在人
 
 **素材**
+
+> **暫定素材已上線（2026-10-02）**：專案主人指定的「藍鯨布偶裝的疲憊男孩」，同日依專案主人要求改成動漫 Q 版萌系畫風；
+> 由 `tools/sprite-gen/whale-boy.mjs` 程式生成、照規格錨點畫，`SPRITE-CHECK: PASS`（整條驗收鏈第一次對交付物執行）。它讓下列項目有圖可跑，
+> 但**不取代**它們 —— B2-1～B2-6 仍是為正式素材而設。另有一題角色設定待裁定：這個男孩是暫定、
+> 還是取代 `live2d-template-spec-v1.md` §7 與 SP-6.0 色票所定義的原角色。
+
 - **B2-1　凍結比例** —— 凍結清單的數值在 docs/sprite/sprite-sheet-spec.md §2 都已到位，已廢除的兩項也已從 docs/sprite/production-sop.md 階段 1 劃掉。剩下的只是把規格檔頭「尚未凍結」改成「已凍結 YYYY-MM-DD」。凍結後改一個比例就是 18 格全部重畫，需要專案主人點頭；髮色（SP-0.8）屬可調的顏色，不擋凍結。
 - **B2-2　自繪或委外、發包 brief** —— 要裁定自繪或委外，然後交出 brief：docs/sprite/production-sop.md 階段 2 的七項加 6b 硬數字，盲測固定每個非中央方向 10 題；不要求畫師交參數值。委外的話，書面著作權讓與或授權書的形式與歸檔位置要在發包時就約定好。這題就是 sprite-sheet-spec.md §10〈仍然開著〉的「master frame 由誰畫」。 **前置**：發包前必須先裁定 B7-5 髮色（現行色票照畫會被亮度夾制擋下）。
 - **B2-3　分層原始檔、描邊變體、授權書歸檔** —— 三題一起裁：分層原始檔要不要進版控（SP-9.11；不進的話要在 docs/asset-provenance.md 註明存放位置與負責人，並寫明本 repo 無法單獨重建）；描邊走 SP-6.4 烘進（變體 A）還是 SP-6.7 執行期 drop-shadow（變體 B）；委外授權書放在哪。產製若用到生成式服務，要實讀其條款並逐字內嵌進版控（SP-9.5a/SP-9.6）。
 - **B2-4　交付後跑機械驗收** —— 素材交付四項：src/img/sprite/ 下的兩張 PNG 與 sprite-manifest.json，以及 docs/sprite/SOURCE-PROMPTS.md。驗收：node tools/check-sprite-sheets.mjs exit 0、sentinel 消失；.sprite-check/ 下的逐格診斷表、洋紅診斷圖，以及 SP-7.9 的四張聯絡表都要產出並經人工複核。同一批素材也要重量描邊估計器的偏差（docs/ROADMAP.md〈measureStrokeWidths〉）。
 - **B2-5　真素材的 SP-V.1 盲測** —— 用 tools/blind-test/（npm run blindtest）讀真的 directions sheet，門檻是整體 ≥85% 且任一方向不低於 60%。沒達標就把誤判的方向與被誤認成什麼回饋給畫師做局部修正，不得放行。這一關是人工測試，check-sprite-sheets.mjs 量不到。
 - **B2-6　回填三個留白門檻** —— 第一批素材到貨後回填三個門檻：SP-7.1 格內不透明覆蓋率（起點 54.7%）與 SP-7.6 的 128px 眉線對比（暫定 0.25）目前只發 warn，校準後改成硬限；SP-7.8 pngquant 後的體積（每張 ≤900KB、合計 ≤1.2MB，以及 S=384 的退路）**已經是硬失敗**，要確認的是預算本身對真素材合不合理。改完拿交付素材重跑，必須仍然 exit 0。
-- **B2-7　SpriteController / spriteAssets** —— 這步卡在素材。實作 src/avatar/SpriteController.ts 與 spriteAssets.ts（後者只放兩行 png import，測試不得引用），換掉 MascotPanel 的 new DiagnosticAvatar()。必做：SP-8.7 四條降級、SP-8.10 定速 fallback、SP-8.11 檔頭寫明語意差異、SP-8.12 click 420ms、SP-8.9 幀選擇器（不自跑迴圈）、從 A3-5 移來的 side<128 不渲染、SP-7.16 外部圖標示。在 224px stage 上目視確認 18 格都被走到過。 另兩條驗收：在 224px stage 把游標壓在臉頰（離中心約 60px），視線不得甩開自己（dead zone，由 A3-5 移來）；SP-8.7 四條降級各一條單元測試（用 jest 的 fileMock）。
-- **B2-8　兩個 sprite URL 選項** —— src/panelOptions.ts 與 src/module.ts 要補 directionsImgUrl / reactionsImgUrl：預設空字串，空字串時用 spriteAssets 的 import 值，欄位接受任意 URL。唯一卡點是 B2-7 的消費端。三條路徑各實測一次：留空、相對路徑、壞路徑走 onerror 降級。填外部 URL 時要出現「自訂圖，對齊未驗證」。 實作時在 SP-8.4 補一句「接受任意 URL，CSP 預設關閉不擋」並指向規格 §10〈已有答案〉的 CSP 條目。**不要**順手加回 `mascotSize`（尺寸由 SP-1.8 自動計算）。
+- ~~**B2-7　SpriteController / spriteAssets**~~ ✅ **2026-10-02 完成**：四層（視線／表情／嘴型／眨眼）、SP-8.7 四條降級、SP-8.10 定速 fallback、SP-8.12 click 420ms、pending 加速眨眼；25 條測試、9 個關鍵行為反向驗證。PR #8 複審後補修：點擊後 420ms 內換 avatar 會讓 click 卡住、420ms 內連點只有第一下有回饋、兩條 dispose 測試拔掉守門照樣綠（各補回歸測試並反向驗證）。開發環境 Grafana 實測：表情、視線、點擊反應都正確疊層。**仍未驗**：224px stage 上「游標壓在臉頰（離中心約 60px）視線不得甩開」—— `gazeDeadZonePx(224)` = 56，60px 已在 dead zone 外，這條驗收與公式本身矛盾，待裁定是改公式還是改驗收；18 格是否都被走到過的目視確認。
+- ~~**B2-8　兩個 sprite URL 選項**~~ ✅ **2026-10-02 完成**：`directionsImgUrl` / `reactionsImgUrl`，空字串時用打包的圖，填外部 URL 時顯示「自訂圖，對齊未驗證」；三條路徑（留空、相對路徑、壞路徑降級）以單元測試覆蓋，尚未在真 Grafana 裡各跑一次。
+- **B2-9　驗收工具的五個盲點（PR #8 複審找到）** —— 第一版暫定圖有五個違規，`SPRITE-CHECK` 全部放行；產生器已修，但檢查本身還是看不見它們，下一份素材照樣會過：
+  (1) SP-7.4 的眨眼檢查只疊在 master 格、只數虹膜色 —— 閉眼／半閉眼疊在其他八個方向時漏出來的眼皮線與睫毛（線稿色）看不到。修產生器時用的量法：`composite(directions[g], reactions[c])` 對 g = 0..8 逐像素比 g = 4，格 0、6 應為零差異；
+  (2) SP-2.8 下襬漸隱沒有檢查（不透明止於 0.890·S、0.890→0.950 線性漸隱、0.955·S 以下全零）；
+  (3) 描邊連續性沒有檢查 —— `measureStrokeWidths` 的法線在 firstHitLimit 內找不到描邊就靜默丟掉，局部缺口量不到；
+  (4) SP-2.15 對 alpha = 0 像素沒有檢查（production-sop.md 已記）；
+  (5) SP-2.14 的一階矩法對 45° 邊的漸層變窄不敏感（L1 斜坡在斜邊只剩 h/√2）。
+  每一條補上時要先拿第一版暫定圖（commit `7f8933a` 的兩張 PNG）當會紅的 fixture。
 - **B7-5　髮色亮度超出夾制（SP-0.8，角色設定）** —— SP-0.8：髮色主色 #C0D0E0 的相對亮度 0.617，超出 SP-6.2 上限 0.61（次要色 #D0D0E0 為 0.639）。建議維持色相、整體降 2–3%，改成 #BCCCDC 與 #C8C8D7。這是角色設定，留給人裁定。裁定後同步三處：SP-6.0 色票表、docs/sprite/sprite-manifest.example.json 的 colours.hair、live2d/_archive/live2d-template-spec-v1.md §7。
 - **logo　替換腳手架 logo** —— `src/plugin.json` 的 `logos` 仍指向 create-plugin 的預設 `src/img/logo.svg`（`docs/asset-provenance.md` 也記「尚未替換」）。A1 退出版控後，原本「用 A1 衍生圖」的路已斷；新路徑是素材交付後由 master frame 裁一張、放在 `src/` 底下。卡在 B2-4。改 plugin.json 後要重啟 Grafana。
 

@@ -21,6 +21,7 @@ import type { BroadcastPlan } from '../../core/types';
 import type { SpeakerEvents } from '../../speech/speaker';
 import { fetchPanelRules } from '../../sources/rulesFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
+import { SpriteController } from '../../avatar/SpriteController';
 
 jest.mock('../../sources/rulesFetcher', () => ({
   RULES_ENDPOINT: '/api/prometheus/grafana/api/v1/rules',
@@ -53,6 +54,8 @@ const OPTIONS: MascotPanelOptions = {
   alertLang: 'zh',
   enableTTS: true,
   ttsVoice: '',
+  directionsImgUrl: '',
+  reactionsImgUrl: '',
 };
 
 function props(over: {
@@ -141,7 +144,7 @@ test('(c) onStart 用的是正在念的那一則的 emotion，不是 plans[0]', 
     { alertname: 'A', severity: 'warning', summary: '先來的' },
     { alertname: 'B', severity: 'critical', summary: '後來的' },
   ]);
-  const setEmotion = jest.spyOn(DiagnosticAvatar.prototype, 'setEmotion');
+  const setEmotion = jest.spyOn(SpriteController.prototype, 'setEmotion');
 
   render(<MascotPanel {...props({ alertState: ALERTING })} />);
   await waitFor(() => expect(spoken.length).toBe(2));
@@ -169,7 +172,7 @@ test('(c) onStart 用的是正在念的那一則的 emotion，不是 plans[0]', 
 
 test('pending：calm 且未播報時顯示，播報中不顯示，離開即清除', async () => {
   mockedFetch.mockResolvedValue([]);
-  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  const setReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
 
   const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
   await settle();
@@ -202,7 +205,7 @@ test('pending：calm 且未播報時顯示，播報中不顯示，離開即清�
 
 test('pending：依賴變了但顯示條件沒變時不碰 setReaction —— 否則會掃掉 click 反應', async () => {
   mockedFetch.mockResolvedValue([]);
-  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  const setReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
 
   render(<MascotPanel {...props({ alertState: OK })} />);
   await settle();
@@ -241,7 +244,7 @@ test('觀測出口：chip 顯示 alertState.state 的原值', async () => {
 test('click 結束後若 pending 仍成立，必須回到 pending 而不是 null', async () => {
   mockedFetch.mockResolvedValue([]);
   jest.useFakeTimers();
-  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  const setReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
   try {
     const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
     await act(async () => {
@@ -273,10 +276,10 @@ test('click 結束後若 pending 仍成立，必須回到 pending 而不是 null
 
 test('StrictMode 重複 mount 時，真正在畫面上的那個 avatar 收得到 pending', async () => {
   mockedFetch.mockResolvedValue([]);
-  const setReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
-  const disposed: DiagnosticAvatar[] = [];
-  const origDispose = DiagnosticAvatar.prototype.dispose;
-  jest.spyOn(DiagnosticAvatar.prototype, 'dispose').mockImplementation(function (this: DiagnosticAvatar) {
+  const setReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
+  const disposed: SpriteController[] = [];
+  const origDispose = SpriteController.prototype.dispose;
+  jest.spyOn(SpriteController.prototype, 'dispose').mockImplementation(function (this: SpriteController) {
     disposed.push(this);
     return origDispose.call(this);
   });
@@ -294,7 +297,7 @@ test('StrictMode 重複 mount 時，真正在畫面上的那個 avatar 收得到
     // 於是第二個（真正在畫面上的）永遠停在 null。
     const pendingCalls = setReaction.mock.contexts.filter((_, i) => setReaction.mock.calls[i]![0] === 'pending');
     expect(pendingCalls.length).toBeGreaterThan(0);
-    const live = pendingCalls.filter((c) => !disposed.includes(c as DiagnosticAvatar));
+    const live = pendingCalls.filter((c) => !disposed.includes(c as SpriteController));
     expect(live.length).toBeGreaterThan(0);
   } finally {
     jest.restoreAllMocks();
@@ -373,9 +376,7 @@ test('StrictMode 下 feed 順序必須與正式模式相同（updater 不得就�
  * 這支測試把那四步逐一走過。對著舊實作跑，第 3 步與第 4 步都會停在 0 則。
  */
 test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（source/dedup 生命週期一致）', async () => {
-  mockedFetch.mockResolvedValue([
-    { alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 },
-  ]);
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: 'CPU 過高', value: 93 }]);
 
   // 1) 先燒起來，播一則 firing。
   const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
@@ -388,9 +389,7 @@ test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（
   //    那次 evaluate 會把 episodes 重新填回去，缺陷就被治好了、測試也就白寫。
   //    （我第一版正是這樣寫的，對著舊實作跑**是綠的**。）
   //    真實情境是選項改動與告警恢復落在同一個 refresh 週期內。
-  view.rerender(
-    <MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: OK, options: { fallbackSeverity: 'warning' } })} />);
 
   // 3) 必須播得出「已恢復」。舊實作在這裡對著空的 episodes 迭代 → 靜默。
   await waitFor(() => expect(spoken.length).toBeGreaterThan(afterFiring));
@@ -398,9 +397,7 @@ test('改 fallbackSeverity 之後，恢復與再次 firing 都還播得出來（
   const afterResolved = spoken.length;
 
   // 4) 再燒一次 —— 必須再播一則。舊實作在這裡永久靜音。
-  view.rerender(
-    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />);
   await waitFor(() => expect(spoken.length).toBeGreaterThan(afterResolved));
   expect(spoken[spoken.length - 1]!.emotion).toBe('critical');
 });
@@ -452,9 +449,7 @@ test('改 fallbackSeverity 後，新的降級 episode 用新值（ref 同步不�
   await waitFor(() => expect(spoken.length).toBe(2));
   expect(spoken[1]!.emotion).toBe('resolved');
 
-  view.rerender(
-    <MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />
-  );
+  view.rerender(<MascotPanel {...props({ alertState: { ...ALERTING }, options: { fallbackSeverity: 'warning' } })} />);
   await waitFor(() => expect(spoken.length).toBe(3));
   // ref 同步拿掉的話，這裡讀到的是掛載時捕捉的 'critical'。
   expect(spoken[2]!.emotion).toBe('warning');
@@ -476,4 +471,241 @@ test('alertState 沒有 dashboardUID（Grafana 12.3.x 的形狀）時，改用 d
   expect(mockedFetch).toHaveBeenCalledWith('dash-1', 7);
   // 沒有後備時這裡會是泛用降級句「告警」，不是規則名。
   expect(spoken[0]!.text).toContain('PocAlwaysFiring');
+});
+
+// ---------------------------------------------------------------------------
+// B2-7 / B2-8：SpriteController 的接線
+// ---------------------------------------------------------------------------
+
+/**
+ * jsdom 不解碼圖（`Image` 沒有 decode、也不觸發 load/error），所以預設情況下 sprite 永遠停在
+ * loading —— 上面那些測試正是靠這一點安全地建構 SpriteController。要走完載入路徑時才換成這個假的：
+ * src 含 `broken` → 解碼失敗；含 `small` → 1152²（與內建的 1536² 對不上）；其餘 1536²。
+ */
+function installFakeImage() {
+  const original = window.Image;
+  class FakeImage {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    decoding = 'auto';
+    naturalWidth = 0;
+    naturalHeight = 0;
+    src = '';
+    decode() {
+      if (this.src.includes('broken')) {
+        return Promise.reject(new Error('EncodingError'));
+      }
+      const side = this.src.includes('small') ? 1152 : 1536;
+      this.naturalWidth = side;
+      this.naturalHeight = side;
+      return Promise.resolve();
+    }
+  }
+  Object.defineProperty(window, 'Image', { value: FakeImage, configurable: true, writable: true });
+  return () => Object.defineProperty(window, 'Image', { value: original, configurable: true, writable: true });
+}
+
+test('side < 128 掛 DiagnosticAvatar、≥ 128 掛 SpriteController；跨過門檻時換實作並補送目前狀態', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const diagReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  const diagEmotion = jest.spyOn(DiagnosticAvatar.prototype, 'setEmotion');
+  const diagSpeaking = jest.spyOn(DiagnosticAvatar.prototype, 'setSpeaking');
+  const spriteReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
+  try {
+    // width 200 → side = floor(min(200 × 0.42, 400 × 0.8)) = 84 < 128（SP-1.8）
+    const view = render(<MascotPanel {...props({ alertState: PENDING })} width={200} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    expect(stage.querySelector('[data-layer]')).toBeNull();
+    expect(diagReaction).toHaveBeenLastCalledWith('pending');
+
+    // 放大到 600 → side 252。反應層 effect 的依賴沒變（還是 pending、calm、未播報），
+    // 不會重跑 —— 新的 avatar 必須由 mount effect 補送，否則 pending 會從畫面上消失。
+    view.rerender(<MascotPanel {...props({ alertState: PENDING })} />);
+    await settle();
+    expect(stage.querySelector('[data-layer="base"]')).not.toBeNull();
+    expect(spriteReaction).toHaveBeenLastCalledWith('pending');
+
+    // 播報中縮回 84：情緒與「正在講話」也要補給新掛上的 DiagnosticAvatar。
+    act(() => {
+      capturedEvents?.onStart?.({ text: 'x', emotion: 'critical' } as BroadcastPlan);
+    });
+    diagEmotion.mockClear();
+    diagSpeaking.mockClear();
+    view.rerender(<MascotPanel {...props({ alertState: PENDING })} width={200} />);
+    await settle();
+    expect(stage.querySelector('[data-layer]')).toBeNull();
+    expect(diagEmotion).toHaveBeenLastCalledWith('critical');
+    expect(diagSpeaking).toHaveBeenLastCalledWith(true);
+  } finally {
+    jest.restoreAllMocks();
+  }
+});
+
+test('B2-8 三條路徑：留空用內建圖；相對路徑原樣使用並標「自訂圖，對齊未驗證」；壞路徑走 onerror 退回 DiagnosticAvatar 並顯示原因', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const restoreImage = installFakeImage();
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    const stage = view.getByTestId('mascot-stage');
+    const base = () => stage.querySelector<HTMLElement>('[data-layer="base"]');
+
+    // 1) 留空 → spriteAssets 的 import 值（jest 下是 fileMock 的字串）。
+    await waitFor(() => expect(base()?.style.backgroundImage).toContain('sprite-sheet-stub.png'));
+    expect(view.queryByTestId('sprite-custom-chip')).toBeNull();
+    expect(view.queryByTestId('sprite-fault-chip')).toBeNull();
+
+    // 2) 相對路徑 → 原樣交給 CSS，並標示未經驗證（SP-7.16）。
+    const rel = 'public/plugins/augur-mascot-panel/img/my-directions.png';
+    view.rerender(<MascotPanel {...props({ options: { directionsImgUrl: rel } })} />);
+    await waitFor(() => expect(base()?.style.backgroundImage).toContain(rel));
+    expect(view.getByTestId('sprite-custom-chip').textContent).toBe('自訂圖，對齊未驗證');
+
+    // 3) 壞路徑 → onerror → DiagnosticAvatar 接手，原因寫在畫面上（SP-8.7 第 2 條）。
+    view.rerender(<MascotPanel {...props({ options: { directionsImgUrl: 'https://broken.example/d.png' } })} />);
+    await waitFor(() => expect(view.getByTestId('sprite-fault-chip').textContent).toContain('directions'));
+    expect(view.getByTestId('sprite-fault-chip').textContent).toContain('精靈圖停用');
+    expect(stage.querySelector('[data-layer]')).toBeNull();
+    expect(stage.childElementCount).toBe(1);
+    expect(view.queryByTestId('sprite-custom-chip')).toBeNull();
+
+    // 失敗綁在那組 URL 上：改回留空，sprite 重新上場、原因消失。
+    view.rerender(<MascotPanel {...props({})} />);
+    await waitFor(() => expect(base()).not.toBeNull());
+    expect(view.queryByTestId('sprite-fault-chip')).toBeNull();
+  } finally {
+    restoreImage();
+  }
+});
+
+test('兩張圖尺寸不一致：sprite 留著（只剩視線層），顯示「部分停用」而不是退回 DiagnosticAvatar', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const restoreImage = installFakeImage();
+  try {
+    const view = render(
+      <MascotPanel {...props({ options: { reactionsImgUrl: 'https://cdn.example/small-r.png' } })} />
+    );
+    await waitFor(() => expect(view.getByTestId('sprite-fault-chip').textContent).toContain('部分停用'));
+    const stage = view.getByTestId('mascot-stage');
+    expect(stage.querySelector<HTMLElement>('[data-layer="base"]')!.style.display).not.toBe('none');
+    expect(stage.querySelector<HTMLElement>('[data-layer="expr"]')!.style.backgroundImage).toBe('');
+  } finally {
+    restoreImage();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PR #8 複審：換 avatar 時要帶過去的狀態
+// ---------------------------------------------------------------------------
+
+test('點擊後 420ms 內換 avatar：click 照樣在 420ms 後結束、回到 pending（不得卡在 click）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const diagReaction = jest.spyOn(DiagnosticAvatar.prototype, 'setReaction');
+  try {
+    const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(100);
+    });
+    // 點擊進行中縮到 84px → 換成 DiagnosticAvatar。先前 avatar effect 的 cleanup 會清掉
+    // click 計時器（那是 clicking 翻回 false 的唯一途徑），而這個 effect 換 avatar 時也會跑。
+    view.rerender(<MascotPanel {...props({ alertState: PENDING })} width={200} />);
+    await settle();
+    expect(stage.querySelector('[data-layer]')).toBeNull();
+    expect(diagReaction).toHaveBeenLastCalledWith('click');
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(diagReaction).toHaveBeenLastCalledWith('pending');
+  } finally {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
+});
+
+test('420ms 內連點：每一下都重送 click，第二下之後的 420ms 仍看得到點擊格（SP-8.12）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const restoreImage = installFakeImage();
+  const spriteReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    // 走完假 Image 的 decode → ready（微任務，fake timers 不影響）。
+    for (let i = 0; i < 10; i++) {
+      await settle();
+    }
+    const stage = view.getByTestId('mascot-stage');
+    const expr = () => stage.querySelector<HTMLElement>('[data-layer="expr"]')!;
+    const click = () =>
+      act(async () => {
+        stage.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }));
+      });
+    spriteReaction.mockClear();
+
+    await click();
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+    await click();
+    // 先前第二下是 setClicking(true) 的同值更新，反應層不重跑 —— SpriteController 只收到一次
+    // 'click'，它自己的 420ms 從第一下算起，t=420 起點擊格就消失了。
+    expect(spriteReaction.mock.calls.filter((c) => c[0] === 'click')).toHaveLength(2);
+    await act(async () => {
+      jest.advanceTimersByTime(400); // t = 700
+    });
+    expect(expr().style.display).not.toBe('none');
+    expect(expr().style.backgroundPosition).toBe('0% 0%');
+
+    await act(async () => {
+      jest.advanceTimersByTime(100); // t = 800，第二下的 420ms 已過
+    });
+    expect(spriteReaction).toHaveBeenLastCalledWith(null);
+  } finally {
+    jest.restoreAllMocks();
+    restoreImage();
+    jest.useRealTimers();
+  }
+});
+
+test('跨過 128px 換 avatar 時補送視線格（不回中央）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const spriteGaze = jest.spyOn(SpriteController.prototype, 'setGaze');
+  const diagGaze = jest.spyOn(DiagnosticAvatar.prototype, 'setGaze');
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    jest.spyOn(stage, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 252,
+      height: 252,
+      right: 252,
+      bottom: 252,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    // 游標在右下遠處 → 視線格 8。
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 900 }));
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    expect(spriteGaze).toHaveBeenLastCalledWith(8);
+
+    // 縮到 84px：新掛上的 DiagnosticAvatar 預設看中央。游標沒動 → pointermove 不會再來，
+    // 不補送的話視線就停在中央，直到游標換格。
+    diagGaze.mockClear();
+    view.rerender(<MascotPanel {...props({})} width={200} />);
+    await settle();
+    expect(diagGaze).toHaveBeenLastCalledWith(8);
+  } finally {
+    jest.restoreAllMocks();
+  }
 });
