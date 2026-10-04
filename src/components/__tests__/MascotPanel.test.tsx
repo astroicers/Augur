@@ -709,3 +709,33 @@ test('跨過 128px 換 avatar 時補送視線格（不回中央）', async () =>
     jest.restoreAllMocks();
   }
 });
+
+test('游標停在角色額頭上不轉頭：視線原點是臉中心，不是 stage 中心', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const spriteGaze = jest.spyOn(SpriteController.prototype, 'setGaze');
+  try {
+    const view = render(<MascotPanel {...props({})} />);
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    jest.spyOn(stage, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 252,
+      height: 252,
+      right: 252,
+      bottom: 252,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    spriteGaze.mockClear();
+    // 瀏海下的額頭：x 0.4、y 0.255。以 stage 中心為原點時離中心 0.265·side > dead zone 0.25 → 往上看。
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 0.4 * 252, clientY: 0.255 * 252 }));
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    expect(spriteGaze).not.toHaveBeenCalled();
+  } finally {
+    jest.restoreAllMocks();
+  }
+});

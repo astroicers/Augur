@@ -5,7 +5,8 @@
  * 角色由專案主人於 2026-10-02 指定：看起來很疲憊、有黑眼圈、穿著藍鯨布偶裝的男孩；
  * 同日追加畫風要求：動漫風、可愛、萌（Q 版大頭、大眼、慵懶感 —— 參考的是風格與氛圍，
  * 造型是原創的，不照抄任何既有角色）。
- * 這是**暫定素材**：在正式畫師交付之前，讓驗收鏈與 SpriteController 有真圖可跑。
+ * 2026-10-04 專案主人裁定這個角色**取代**原角色（規格 SP-0.9），本檔是它的參考實作；
+ * 圖本身仍是程式畫的版本，正式畫師若重繪，以 SP-0.9 為角色設定。
  *
  * **為什麼用程式畫**：出處乾淨（本檔即出處，隨 repo Apache-2.0），而且幾何可以
  * 直接照規格的錨點寫死 —— 頭不動（九個方向格只有眼窗 E 內的眼睛不同）、
@@ -527,7 +528,7 @@ fs.writeFileSync(path.join(outDir, 'reactions.png'), reaPng);
 // manifest：以樣板為底，填入本角色的色值與 sha256
 const tmpl = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/sprite/sprite-manifest.example.json'), 'utf8'));
 tmpl._note =
-  '暫定角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師交付時整份重做。';
+  '角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風；2026-10-04 定案取代原角色，定義見 sprite-sheet-spec.md SP-0.9），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師重繪時整份取代。';
 tmpl.colours.iris = C.iris;
 tmpl.colours.hair = C.hood;
 tmpl.colours._note_hair =

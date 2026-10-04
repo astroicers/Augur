@@ -16,7 +16,13 @@ import { CLICK_REACTION_MS, SpriteController } from '../avatar/SpriteController'
 import type { AvatarController } from '../avatar/AvatarController';
 import { CENTER_CELL, DEFAULT_GAZE, gazeCell } from '../avatar/gaze';
 import { createFlapDriver, type FlapDriver } from '../avatar/flap';
-import { gazeDeadZonePx, reactionFor, shouldRenderSprite, spriteSide } from '../avatar/spriteSheet';
+import {
+  SPRITE_GAZE_ORIGIN_Y,
+  gazeDeadZonePx,
+  reactionFor,
+  shouldRenderSprite,
+  spriteSide,
+} from '../avatar/spriteSheet';
 
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
@@ -187,6 +193,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
    */
   const wantReactionRef = useRef<'click' | 'pending' | null>(null);
   const clickTimerRef = useRef(0);
+  /** 視線原點的 y（stage 高度的比例）。精靈圖用臉中心，DiagnosticAvatar 用 stage 中心。 */
+  const gazeOriginYRef = useRef(0.5);
   /** 已經送給 avatar 的是第幾次點擊。與 `clickSeq` 不同時，同樣是 'click' 也要重送。 */
   const sentClickSeqRef = useRef(0);
   const lastRawStateRef = useRef<string | null>(null);
@@ -305,6 +313,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       reactionRef.current = want;
     }
     avatarRef.current = a;
+    gazeOriginYRef.current = useSprite ? SPRITE_GAZE_ORIGIN_Y : 0.5;
     flapRef.current = createFlapDriver((open) => a.setMouthOpen?.(open));
     return () => {
       flapRef.current?.stop();
@@ -412,7 +421,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         // dead zone 必須跟著 stage 大小走。寫死 28px 是為 DiagnosticAvatar 的 ~34px
         // 訂的，換成 128–256px 的精靈圖 stage 後，游標停在角色臉上時角色會把視線
         // 甩開自己 —— 「中央格＝游標壓在身上」的語意整個反過來。
-        const next = gazeCell(px - (r.left + r.width / 2), py - (r.top + r.height / 2), gazeRef.current, {
+        // 原點是臉中心不是 stage 中心（SPRITE_GAZE_ORIGIN_Y 的註解）：否則游標停在角色額頭上，他會往上看。
+        const oy = r.top + r.height * gazeOriginYRef.current;
+        const next = gazeCell(px - (r.left + r.width / 2), py - oy, gazeRef.current, {
           ...DEFAULT_GAZE,
           // 量測 rect 而不是用算出來的 stageSide：兩者應該相等，但 rect 是畫面上的事實。
           // 公式只有一份，住在 spriteSheet.ts（SP-1.10）。

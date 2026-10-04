@@ -19,10 +19,10 @@ P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
-P5 的工具側已完成，素材目前是**暫定角色**：專案主人指定的「藍鯨布偶裝的疲憊男孩」，
+P5 的工具側已完成。角色是專案主人指定的「藍鯨布偶裝的疲憊男孩」，2026-10-04 定案取代原角色，
 動漫 Q 版畫風（大眼、ω 嘴、腮紅、黑眼圈），由 `tools/sprite-gen/whale-boy.mjs` 程式生成（手寫 SVG 經 headless Chromium 光柵化，出處見
-`docs/asset-provenance.md`），照規格的錨點畫，通過整條 SP-7 機械驗收。正式畫師交付時整份取代；
-這個男孩只是暫定還是取代原角色，仍待裁定（見 `docs/ROADMAP.md`〈未完成項目〉的「素材」）。
+`docs/asset-provenance.md`），照規格的錨點畫，通過整條 SP-7 機械驗收。圖本身仍是程式畫的版本，
+正式畫師若重繪，以規格 SP-0.9 為角色設定。
 
 > ⚠️ 驗收鏈現在每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
 > 不再走 `NOT-DELIVERED`。但暫定圖是照規格「畫給檢查看」的，跟它一起長大的合成假人

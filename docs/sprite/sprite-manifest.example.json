@@ -48,7 +48,7 @@
     "irisToleranceRgb": 40,
     "skin": "#E2C8B1",
     "skinToleranceRgb": 24,
-    "hair": "TBD-見 SP-0.8 與 §10 表第 1 項的髮色待裁定（實測 #C0D0E0 的 L = 0.617 超出夾制上限 0.61；SP-6.2 無此待裁定項，舊指向錯誤）",
+    "hair": "TBD-頭部量體的主色（SP-7.5 用它量頭頂與頭寬）。現行角色戴藍鯨頭套，填頭套色，見 SP-0.9",
     "hairToleranceRgb": 24,
     "exemptToleranceRgb": 24
   },
