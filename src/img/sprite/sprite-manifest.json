@@ -1,5 +1,5 @@
 {
-  "_note": "暫定角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師交付時整份重做。",
+  "_note": "角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風；2026-10-04 定案取代原角色，定義見 sprite-sheet-spec.md SP-0.9），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師重繪時整份取代。",
   "version": 1,
   "sheet": {
     "width": 1536,
