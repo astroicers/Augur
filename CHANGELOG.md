@@ -19,6 +19,11 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   blue-whale onesie (whale-eyed hood, water spout, a tail curling up behind him). He looks toward the
   cursor (nine gaze cells), changes expression with the alert severity, blinks, moves
   his mouth while speaking, and startles awake when clicked.
+- **Update (2026-10-04):** the whale-onesie boy is now the mascot, replacing the original
+  character design. The art is still the script-drawn version described below.
+- When the cursor rests anywhere on his face he keeps looking at you; gaze is now measured
+  from the centre of the face rather than the centre of the panel area, so a cursor on his
+  forehead no longer makes him look up.
 - This is **placeholder art**, drawn by a script in this repository
   (`tools/sprite-gen/whale-boy.mjs`) to the sprite specification, and it passes every
   mechanical acceptance check. It will be replaced when hand-drawn artwork is delivered.

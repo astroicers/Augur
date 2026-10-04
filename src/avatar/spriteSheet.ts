@@ -252,3 +252,14 @@ export function shouldRenderSprite(side: number): boolean {
 export function gazeDeadZonePx(side: number): number {
   return Math.max(12, Math.round(side * 0.25));
 }
+
+/**
+ * 視線的原點：臉的中心（眼線 0.38 與嘴中心 0.53 的中點，SP-2 錨點），以 stage 高度的比例表示。
+ *
+ * ⚠️ **不是 stage 中心。** 頭在格子上半部，以 stage 中心為圓心時臉頂端（瀏海下的額頭）
+ * 離圓心 0.283·side，超出 0.25·side 的 dead zone —— 游標停在角色自己額頭上，他會往上看。
+ * 移到臉中心後整張臉都在 0.236·side 內，dead zone 的半徑與面積不變（2026-10-04 實測現行素材）。
+ * 方向也從臉算起：游標在眼睛高度的右側讀「右」而不是「右上」。
+ * 只用在精靈圖；DiagnosticAvatar 的儀表置中，原點仍是 stage 中心。
+ */
+export const SPRITE_GAZE_ORIGIN_Y = (0.38 + 0.53) / 2;

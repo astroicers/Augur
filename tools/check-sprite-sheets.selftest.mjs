@@ -71,6 +71,10 @@ function runAll(sheets, manifest) {
   f.push(...C.checkOverlayOwnership(sheets, manifest));
   f.push(...C.checkAnchors(sheets.directions, manifest, g.centroids));
   f.push(...C.checkLuminanceAndStroke(sheets.directions, manifest));
+  // B2-9 的三條 error 級（SP-2.15 的 checkAlphaBleed 只吐 warn，在 [3c] 另外釘）。
+  f.push(...C.checkHem(sheets.directions, manifest));
+  f.push(...C.checkOutlineContinuity(sheets.directions, manifest));
+  f.push(...C.checkEyeCoverage(sheets, manifest));
   // ⚠️ SP-7.6 必須在這裡。它原本只會吐 warn，所以被漏掉了；2026-09-22 起它也會吐
   // `SP-7.6/眉窗為空` 這個 error（眉毛漏畫是真實的交付失誤，不是對比差）。
   f.push(...C.checkDownsampleReadability(sheets, manifest));
@@ -1032,6 +1036,84 @@ const mutants = [
     },
   },
 
+  // ⬇️ ROADMAP B2-9：第一版暫定圖（commit 7f8933a）同時違反這幾條而 SPRITE-CHECK 全綠，
+  //    合成基準自己也違反其中兩條（下襬、眨眼修補塊）—— 基準已改，這裡是紅方向。
+  {
+    name: 'SP-2.8 沿下襬描邊、不透明一路到 0.902·S（第一版暫定圖與舊 fixture 的形狀）',
+    expect: 'SP-2.8/下襬不透明',
+    sheets: () => buildSheets({ hemStroke: true }),
+  },
+  {
+    name: 'SP-6.5 下襬漸隱區畫了一道半透明的描邊色（沒有 α=255，只違反 SP-6.5）',
+    expect: 'SP-6.5/下襬描邊',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let y = 470; y < 475; y++) {
+          for (let x = 180; x < 330; x++) {
+            put(s.directions, c, x, y, [0x6e, 0x76, 0x81, 200]);
+          }
+        }
+      }
+    },
+  },
+  {
+    name: 'SP-2.8 0.955·S 以下還有淡淡的像素',
+    expect: 'SP-2.8/下襬未清空',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let x = 200; x < 300; x++) {
+          put(s.directions, c, x, 492, [0x40, 0x50, 0x80, 40]);
+        }
+      }
+    },
+  },
+  {
+    // 第一版暫定圖：臉外圈凸出被描邊的輪廓，兩頰各約 35 列直接是淺色邊。
+    // measureStrokeWidths 量的是眾數，缺一段寬度幾乎不變（8.322 → 8.315），看不到。
+    name: 'SP-6.4 左側頭部一段沒有描邊（描邊色換成髮色）',
+    expect: 'SP-6.4/描邊缺口',
+    apply: (s) => {
+      for (let c = 0; c < CELL_COUNT; c++) {
+        for (let y = Math.round(0.3 * S); y < Math.round(0.4 * S); y++) {
+          for (let x = 0; x < S / 2; x++) {
+            const o = ((Math.floor(c / 3) * S + y) * SHEET + ((c % 3) * S + x)) * 4;
+            const d = s.directions.data;
+            if (d[o + 3] > 0 && Math.abs(d[o] - 0x6e) <= 12 && Math.abs(d[o + 1] - 0x76) <= 12 && Math.abs(d[o + 2] - 0x81) <= 12) {
+              d.set([0x9f, 0xb4, 0xcc], o);
+            }
+          }
+        }
+      }
+    },
+  },
+  {
+    // SP-7.4 的眨眼檢查只疊 master：master 的虹膜在眼心，修補塊上半被砍掉也蓋得住它；
+    // 往上看（虹膜上移 8px）的那三格才露出來。
+    name: 'SP-7.4 全閉眼修補塊上半缺一截（只有往上看時露出虹膜）',
+    expect: 'SP-7.4/眨眼漏線',
+    apply: (s) => {
+      for (let y = 0; y < Math.round(0.38 * S) - 12; y++) {
+        for (let x = 0; x < S; x++) {
+          const o = ((Math.floor(6 / 3) * S + y) * SHEET + ((6 % 3) * S + x)) * 4;
+          s.reactions.data[o + 3] = 0;
+        }
+      }
+    },
+  },
+  {
+    // 修補塊比眼睛窄：沒蓋到的欄 cut = −1，若不補會整欄掉出檢查範圍。
+    name: 'SP-7.4 半閉眼修補塊太窄（往右看的虹膜上半露在旁邊）',
+    expect: 'SP-7.4/眨眼漏線',
+    apply: (s) => {
+      for (let y = 0; y < S; y++) {
+        for (let x = Math.round(0.41 * S) + 14; x < S / 2; x++) {
+          const o = ((Math.floor(7 / 3) * S + y) * SHEET + ((7 % 3) * S + x)) * 4;
+          s.reactions.data[o + 3] = 0;
+        }
+      }
+    },
+  },
+
   {
     // 2026-09-28 變異測試指出 SP-2.14 的兩個 id 在本檔一次都沒出現 ——
     // 也就是「合成基準改回 1-bit」這種最根本的退化，沒有任何斷言會發現。
@@ -1380,6 +1462,49 @@ for (const m of NON_MUTANTS) {
 }
 
 // ===========================================================================
+console.log('\n[3c] SP-2.15 色彩擴張（warn 級）');
+// ---------------------------------------------------------------------------
+{
+  // fixture 沒做色彩擴張：透明像素全是 (0,0,0,0)。兩個方向：沒做必須記、做了不得記。
+  const before = C.checkAlphaBleed(base, manifest).filter((f) => f.sheet === 'directions');
+  ok('未做色彩擴張的 directions 九格都要記 SP-2.15/未做色彩擴張', before.length === CELL_COUNT, `實得 ${before.length} 筆`);
+  const bled = clone(base);
+  for (const sheet of [bled.directions, bled.reactions]) {
+    for (let c = 0; c < CELL_COUNT; c++) {
+      const ox = (c % 3) * S;
+      const oy = Math.floor(c / 3) * S;
+      const at = (x, y) => ((oy + y) * SHEET + (ox + x)) * 4;
+      const src = sheet === bled.directions ? base.directions.data : base.reactions.data;
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          if (src[at(x, y) + 3] !== 0) {
+            continue;
+          }
+          let best = -1;
+          let bd = 65;
+          for (let dy = -8; dy <= 8; dy++) {
+            for (let dx = -8; dx <= 8; dx++) {
+              const xx = x + dx;
+              const yy = y + dy;
+              const dd = dx * dx + dy * dy;
+              if (dd < bd && xx >= 0 && yy >= 0 && xx < S && yy < S && src[at(xx, yy) + 3] >= 128) {
+                bd = dd;
+                best = at(xx, yy);
+              }
+            }
+          }
+          if (best >= 0) {
+            sheet.data.set(src.subarray(best, best + 3), at(x, y));
+          }
+        }
+      }
+    }
+  }
+  const after = C.checkAlphaBleed(bled, manifest);
+  ok('做了色彩擴張之後不得記 SP-2.15', after.length === 0, after.map((f) => `${f.sheet}#${f.cell} ${f.measured.toFixed(3)}`).join(' '));
+}
+
+// ===========================================================================
 console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外釘）');
 // ---------------------------------------------------------------------------
 {
@@ -1392,10 +1517,42 @@ console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外�
     `實得 ${warn1.length} 筆（應為 18）`);
   ok('h=1 記到的 implied 過渡寬度落在 0.8–1.2px', warn1.every((f) => f.measured > 0.8 && f.measured < 1.2),
     warn1.map((f) => f.measured.toFixed(2)).join(','));
-  const at2 = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 2 }), manifest)
-    .filter((f) => f.id.startsWith('SP-2.14'));
-  ok('h=2（合規下限）不得有任何 SP-2.14 輸出（含 warn）', at2.length === 0,
+  const at2All = C.checkFormatAndHygiene(buildSheets({ alphaRampPx: 2 }), manifest);
+  const at2 = at2All.filter((f) => f.id.startsWith('SP-2.14') && f.id !== 'SP-2.14/斜邊漸層過窄');
+  ok('h=2（合規下限）的軸向量測不得有任何 SP-2.14 輸出（含 warn）', at2.length === 0,
     at2.map((f) => `${f.sheet}#${f.cell} ${f.measured?.toFixed(3)}`).join(' '));
+  // ⚠️ fixture 的斜坡是 L1 距離（4-鄰接 BFS）做的：軸向 2px，45° 只剩 h/√2 且呈階梯狀。
+  // 一階矩除以「邊界像素數」把它讀成合規（PR #8 複審）；斜邊的餘面積量測必須看得到。
+  // 這條同時釘住 fixture 的已知限制 —— 哪天 fixture 改成歐氏斜坡，這條會紅，提醒改記錄。
+  const diag2 = at2All.filter((f) => f.id === 'SP-2.14/斜邊漸層過窄' && f.sheet === 'directions');
+  ok('fixture 的 L1 h=2 斜坡在 45° 必須被記為 SP-2.14/斜邊漸層過窄（九格）', diag2.length === CELL_COUNT,
+    `實得 ${diag2.length} 筆`);
+  ok('L1 h=2 的 45° 讀數 < 1.2px', diag2.every((f) => f.measured < 1.2), diag2.map((f) => f.measured.toFixed(2)).join(','));
+  // 反方向：理想的歐氏斜坡（h = 2.5）在任何方向都不得 warn。
+  {
+    const disc = (buf, cell, r, h) => {
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const d = Math.hypot(x + 0.5 - S / 2, y + 0.5 - S / 2);
+          const a = Math.min(1, Math.max(0, 0.5 + (r - d) / h));
+          if (a > 0) {
+            put(buf, cell, x, y, [0x40, 0x50, 0x80, Math.round(255 * a)]);
+          }
+        }
+      }
+    };
+    const eu = {
+      directions: { width: SHEET, height: SHEET, data: new Uint8Array(SHEET * SHEET * 4) },
+      reactions: { width: SHEET, height: SHEET, data: new Uint8Array(SHEET * SHEET * 4) },
+    };
+    for (let c = 0; c < CELL_COUNT; c++) {
+      disc(eu.directions, c, 150, 2.5);
+      disc(eu.reactions, c, 40, 2.5);
+    }
+    const euDiag = C.checkFormatAndHygiene(eu, manifest).filter((f) => f.id === 'SP-2.14/斜邊漸層過窄');
+    ok('理想歐氏斜坡 h=2.5 不得被記為斜邊漸層過窄', euDiag.length === 0,
+      euDiag.map((f) => `${f.sheet}#${f.cell} ${f.measured.toFixed(2)}`).join(' '));
+  }
 
   // ⚠️ 上面兩條在「門檻寫錯單位」（執法下限實為 1.5px）的舊版下**也都會過**
   // —— 整數羽化畫不出落在 1.5 與 2 之間的過渡寬度。

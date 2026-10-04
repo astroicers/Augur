@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { flapAmplitude } from '../flap';
-import { cellToBackgroundPosition as fromGaze } from '../gaze';
+import { CENTER_CELL, DEFAULT_GAZE, cellToBackgroundPosition as fromGaze, gazeCell } from '../gaze';
 import {
   BLINK_INTERVAL_MAX_MS,
   BLINK_INTERVAL_MIN_MS,
@@ -14,6 +14,7 @@ import {
   exprCell,
   gazeDeadZonePx,
   mouthCell,
+  SPRITE_GAZE_ORIGIN_Y,
   shouldRenderSprite,
   spriteSide,
 } from '../spriteSheet';
@@ -149,4 +150,30 @@ test('SP-1.10 dead zone 跟著 stage 走', () => {
   expect(gazeDeadZonePx(128)).toBe(32);
   // 下限 12：stage 很小時 dead zone 不該消失
   expect(gazeDeadZonePx(30)).toBe(12);
+});
+
+test('SP-1.10 視線原點是臉中心：整張臉都在 dead zone 內（游標停在角色臉上不轉頭）', () => {
+  // 原點來自規格錨點，不是另寫一個數字。
+  const manifest = JSON.parse(
+    readFileSync(join(__dirname, '..', '..', '..', 'docs', 'sprite', 'sprite-manifest.example.json'), 'utf8')
+  );
+  expect(SPRITE_GAZE_ORIGIN_Y).toBeCloseTo((manifest.anchors.eyeLineY + manifest.anchors.mouthCentreY) / 2, 6);
+
+  const side = 224;
+  const dz = { ...DEFAULT_GAZE, deadZonePx: gazeDeadZonePx(side) };
+  // 臉上的點（stage 比例）：瀏海下緣的額頭（SP-2.10 的 0.255）、眼線高度的兩頰（頭寬 0.4）、嘴高度的兩頰、下巴。
+  const face: Array<[number, number]> = [
+    [0.4, 0.255],
+    [0.6, 0.255],
+    [0.3, 0.38],
+    [0.7, 0.38],
+    [0.3, 0.53],
+    [0.7, 0.53],
+    [0.5, 0.6],
+  ];
+  for (const [fx, fy] of face) {
+    expect(gazeCell((fx - 0.5) * side, (fy - SPRITE_GAZE_ORIGIN_Y) * side, CENTER_CELL, dz)).toBe(CENTER_CELL);
+  }
+  // 反方向：原點若還是 stage 中心，額頭那兩點會跑出 dead zone（這正是改原點的理由）。
+  expect(gazeCell((0.4 - 0.5) * side, (0.255 - 0.5) * side, CENTER_CELL, dz)).not.toBe(CENTER_CELL);
 });

@@ -339,9 +339,13 @@ function drawDirectionCell(buf, ox, oy, gazeDx, gazeDy, opts = {}, cellIndex = 0
   // `perCellStrokePx` 讓 selftest 造「單一格描邊寬度不同」的變異體（SP-6.5 跨格一致）。
   const strokePx = opts.perCellStrokePx?.[cellIndex] ?? opts.strokePx ?? STROKE_PX;
   const strokeRgb = opts.strokeColour ? hexToRgbLocal(opts.strokeColour) : PALETTE.stroke;
-  // `strokeGapY`：該 y 區間不畫描邊（SP-2.8 下襬豁免、或肩部真的缺一段）。
+  // `strokeGapY`：該 y 區間不畫描邊（肩部真的缺一段之類）。
+  // **下襬預設不描邊**（SP-6.5：描邊不得沿 SP-2.8 的下襬漸隱區繪製）。先前 fixture 沿著身體底邊
+  // 描了一圈，不透明像素一路到 y=462（0.902·S）—— 違反 SP-2.8 的 0.890·S，第一版暫定圖正是照這個
+  // 形狀畫的，而且驗收工具全綠（PR #8 複審）。`hemStroke: true` 還原舊行為，給 selftest 造壞例。
   const gap = opts.strokeGapY ?? null;
-  const inGap = (y) => gap !== null && y >= gap[0] && y < gap[1];
+  const hemGapFrom = opts.hemStroke ? Infinity : Math.floor(BODY_BOTTOM) - 4;
+  const inGap = (y) => (gap !== null && y >= gap[0] && y < gap[1]) || y >= hemGapFrom;
   // `strokeInside`：描邊畫進剪影**內**而不是外。同一個剪影、同一條真實厚度，
   // 兩種畫法都是合法的 —— 而面積÷周長在兩者之間差 2.31 px，比整個容差窗還寬。
   const distIn = opts.strokeInside ? distanceOutside(invertMask(core)) : null;
@@ -473,7 +477,7 @@ function drawReactionCell(buf, ox, oy, cell) {
       bar(0.352 * S, 0.469 * S, 0.266 * S, 0.281 * S, PALETTE.lineart);
       bar(0.531 * S, 0.648 * S, 0.266 * S, 0.281 * S, PALETTE.lineart);
       ellipse(0.5 * S, 0.531 * S, 16, 16, PALETTE.lineart);
-      ellipse(0.41 * S, eyeY, 26, 16, PALETTE.sclera);
+      ellipse(0.41 * S, eyeY, 33, 22.5, PALETTE.sclera); // 蓋滿九個方向格的左眼（否則虹膜從邊緣露出）
       break;
     case 1: // warning：眉略下 + 汗滴
       bar(0.352 * S, 0.469 * S, 0.285 * S, 0.3 * S, PALETTE.lineart);
@@ -498,13 +502,17 @@ function drawReactionCell(buf, ox, oy, cell) {
     case 5: // 大開嘴（僅嘴窗 M）
       ellipse(0.5 * S, 0.531 * S, 26, 16, PALETTE.lineart);
       break;
+    // ⚠️ 眨眼修補塊必須蓋住**九個方向格**的整隻眼睛（SP-4.7），不只是 master 那一格的虹膜。
+    // 先前 ry 12 連 master 的鞏膜（ry 20）都沒蓋滿，往上下看的虹膜（±8px）直接露出來；
+    // 驗收工具只拿 master 疊、只數虹膜色，所以看不到。ry 22.5 = 鞏膜 20 + 2px 羽化內縮 + 餘裕；
+    // 上緣 172 留給羽化帶，不碰眉窗（< 169）。
     case 6: // 全閉眼（僅眼窗 E）
-      ellipse(0.41 * S, eyeY, 32, 12, PALETTE.skin);
-      ellipse(0.59 * S, eyeY, 32, 12, PALETTE.skin);
+      ellipse(0.41 * S, eyeY, 33, 22.5, PALETTE.skin);
+      ellipse(0.59 * S, eyeY, 33, 22.5, PALETTE.skin);
       break;
-    case 7: // 半閉眼（僅眼窗 E）
-      ellipse(0.41 * S, eyeY - 6, 32, 7, PALETTE.skin);
-      ellipse(0.59 * S, eyeY - 6, 32, 7, PALETTE.skin);
+    case 7: // 半閉眼（僅眼窗 E）：上眼瞼蓋到眼心下方約 6px
+      ellipse(0.41 * S, eyeY - 8, 33, 14, PALETTE.skin);
+      ellipse(0.59 * S, eyeY - 8, 33, 14, PALETTE.skin);
       break;
     case 8: // pending：眉挑 + 直線陰影
       bar(0.352 * S, 0.469 * S, 0.27 * S, 0.279 * S, PALETTE.lineart);
