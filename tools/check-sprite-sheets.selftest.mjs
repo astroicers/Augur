@@ -1462,6 +1462,37 @@ for (const m of NON_MUTANTS) {
 }
 
 // ===========================================================================
+console.log('\n[3d] SP-0.10 最小模式（只動嘴＋眨眼）');
+// ---------------------------------------------------------------------------
+{
+  // 九個方向格同一張臉、反應格只有嘴（4、5）與閉眼（6）。
+  const min = clone(base);
+  const at = (c) => ({ ox: (c % 3) * S, oy: Math.floor(c / 3) * S });
+  const { ox: mx, oy: my } = at(4);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const { ox, oy } = at(c);
+    for (let y = 0; y < S; y++) {
+      const src = ((my + y) * SHEET + mx) * 4;
+      min.directions.data.copyWithin(((oy + y) * SHEET + ox) * 4, src, src + S * 4);
+    }
+  }
+  for (const c of [0, 1, 2, 3, 7, 8]) {
+    const { ox, oy } = at(c);
+    for (let y = 0; y < S; y++) {
+      min.reactions.data.fill(0, ((oy + y) * SHEET + ox) * 4, ((oy + y) * SHEET + ox + S) * 4);
+    }
+  }
+  const empty = [0, 1, 2, 3, 7, 8].map((cell) => ({ sheet: 'reactions', cell }));
+  const minManifest = buildManifest({ features: { gaze: false, expressions: false }, intentionally_empty: empty });
+  const gotMin = ids(runAll(min, minManifest));
+  ok('最小模式（宣告 features 與留空格）不得有任何 error', gotMin.length === 0, `卻紅了 [${gotMin.join(', ')}]`);
+  // 反方向：同一組圖不宣告 features，必須紅 —— 證明放行的是宣告，不是檢查失效。
+  const gotFull = ids(runAll(min, buildManifest({ intentionally_empty: empty })));
+  ok('同一組圖不宣告 features.gaze = false 必須紅 SP-7.1/重複格', gotFull.includes('SP-7.1/重複格'), `實得 [${gotFull.join(', ')}]`);
+  ok('同一組圖不宣告 features.gaze = false 必須紅 SP-7.3（視線綁定）', gotFull.some((x) => x.startsWith('SP-7.3/')), `實得 [${gotFull.join(', ')}]`);
+}
+
+// ===========================================================================
 console.log('\n[3c] SP-2.15 色彩擴張（warn 級）');
 // ---------------------------------------------------------------------------
 {

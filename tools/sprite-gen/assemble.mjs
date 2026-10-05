@@ -46,7 +46,12 @@ const MANIFEST_TMPL = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/sprite/sp
 const cfg = JSON.parse(fs.readFileSync(path.join(SRC, 'align.json'), 'utf8'));
 const BG_TOL = cfg.bgTolerance ?? 40;
 const DIFF_T = cfg.diffThreshold ?? 28;
-const EMPTY = new Set(cfg.empty ?? []);
+// 最小模式（SP-0.10）：features.gaze = false 不收視線格（九格都用母圖）；
+// features.expressions = false 不收點擊／情緒／pending 五格（反應格 0、1、2、3、8 宣告留空）。
+const GAZE = cfg.features?.gaze !== false;
+const EXPRESSIONS = cfg.features?.expressions !== false;
+const EXPRESSION_CELLS = [0, 1, 2, 3, 8];
+const EMPTY = new Set([...(cfg.empty ?? []), ...(EXPRESSIONS ? [] : EXPRESSION_CELLS)]);
 const STROKE_W = 0.016 * S;
 const STROKE_RGB = [0x6e, 0x76, 0x81];
 
@@ -413,23 +418,23 @@ const findFile = (base) =>
   ['.png', '.jpg', '.jpeg', '.webp'].map((e) => path.join(SRC, base + e)).find((f) => fs.existsSync(f));
 if (!PROBE) {
   for (let c = 0; c < 9; c++) {
-    const g = findFile(`gaze-${c}`);
+    const g = GAZE ? findFile(`gaze-${c}`) : null;
     if (g) {
       files[`gaze-${c}`] = g;
-    } else if (c !== 4) {
-      fail(`缺 gaze-${c}（視線格不能留空）`);
+    } else if (GAZE && c !== 4) {
+      fail(`缺 gaze-${c}（視線格不能留空；不做視線就在 align.json 設 features.gaze = false）`);
     }
-    const r = findFile(`react-${c}`);
+    const r = EMPTY.has(c) ? null : findFile(`react-${c}`);
     if (r) {
       files[`react-${c}`] = r;
     } else if (!EMPTY.has(c)) {
-      fail(`缺 react-${c}（要留空就在 align.json 的 empty 宣告；規格只允許 7）`);
+      fail(`缺 react-${c}（半閉眼可在 align.json 的 empty 宣告留空；不做表情就設 features.expressions = false）`);
     }
   }
 }
-for (const c of EMPTY) {
+for (const c of cfg.empty ?? []) {
   if (c !== 7) {
-    fail(`empty 只允許 7（SP-4.8 唯一允許留空的格），收到 ${c}`);
+    fail(`empty 只允許 7（SP-4.8）；要整組不做表情請用 features.expressions = false，收到 ${c}`);
   }
 }
 
@@ -679,7 +684,10 @@ manifest._note =
 delete manifest._example_empty;
 delete manifest.irisCentroids;
 if (EMPTY.size) {
-  manifest.intentionally_empty = [...EMPTY].map((cell) => ({ sheet: 'reactions', cell }));
+  manifest.intentionally_empty = [...EMPTY].sort().map((cell) => ({ sheet: 'reactions', cell }));
+}
+if (!GAZE || !EXPRESSIONS) {
+  manifest.features = { gaze: GAZE, expressions: EXPRESSIONS };
 }
 manifest.sha256.directions = crypto.createHash('sha256').update(dirPng).digest('hex');
 manifest.sha256.reactions = crypto.createHash('sha256').update(reaPng).digest('hex');

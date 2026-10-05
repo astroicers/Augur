@@ -117,6 +117,14 @@ export function windowRect(win, cellPx) {
  * 用的都是**底線**寫法，而程式只讀駝峰。後果是畫師照規格的字填了 `intentionally_empty`，
  * 一個合規的空格仍被判 FAIL，而訊息叫他去宣告一個他已經宣告了的東西。
  */
+/**
+ * 最小模式（SP-0.10）：`features.gaze === false` 時素材不做視線變化（九個方向格同一張臉），
+ * 視線綁定（SP-7.3）與 directions 的重複格檢查不適用。預設開啟。
+ */
+export function gazeEnabled(manifest) {
+  return manifest.features?.gaze !== false;
+}
+
 function declaredEmpty(manifest) {
   // ⚠️ 聯集而非 `??`。`[] ?? x` 得到 `[]`，而出貨樣板帶著 `"intentionallyEmpty": []`，
   // 所以畫師照規格補上底線鍵時，駝峰的空陣列會無條件勝出、宣告被靜默丟棄。
@@ -463,10 +471,11 @@ export function checkFormatAndHygiene(sheets, manifest) {
       }
     }
 
-    // 同一張 sheet 內任兩格不得逐位元組相同
+    // 同一張 sheet 內任兩格不得逐位元組相同。最小模式（features.gaze = false）的 directions
+    // 九格本來就是同一張臉，不比。
     const digests = new Map();
     for (let c = 0; c < CELL_COUNT; c++) {
-      if (emptyCells.has(c)) {
+      if (emptyCells.has(c) || (name === 'directions' && !gazeEnabled(manifest))) {
         continue;
       }
       const v = cellView(sheet, c, geom);
@@ -658,6 +667,23 @@ export function checkGazeBinding(directions, manifest) {
   /** @type {Finding[]} */
   const out = [];
   const centroids = [];
+  if (!gazeEnabled(manifest)) {
+    // 最小模式：只量 master 的虹膜（錨點檢查要用），不驗方向綁定。
+    for (let c = 0; c < CELL_COUNT; c++) {
+      centroids.push(irisCentroid(directions, c, manifest));
+    }
+    if (centroids[4].n === 0) {
+      out.push({
+        id: 'SP-7.3/虹膜遮罩',
+        severity: 'error',
+        sheet: 'directions',
+        cell: 4,
+        message: `眼窗 E 內找不到虹膜色 ${manifest.colours.iris}（容差 ±${manifest.colours.irisToleranceRgb}）的像素`,
+        measured: 0,
+      });
+    }
+    return { findings: out, centroids };
+  }
   for (let c = 0; c < CELL_COUNT; c++) {
     const m = irisCentroid(directions, c, manifest);
     centroids.push(m);
