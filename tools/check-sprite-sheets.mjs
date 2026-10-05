@@ -244,6 +244,11 @@ function validateManifest(m) {
     });
   }
 
+  // --- faceMask（SP-6.6 臉部遮罩的定義）---
+  if (m.faceMask !== undefined && m.faceMask !== 'hull') {
+    errs.push(`faceMask 只認得 "hull"（省略 = 預設的「膚色＋包住的洞」），實際是 ${JSON.stringify(m.faceMask)}`);
+  }
+
   // --- features（SP-0.10 最小模式）---
   if (m.features !== undefined) {
     if (typeof m.features !== 'object' || m.features === null || Array.isArray(m.features)) {

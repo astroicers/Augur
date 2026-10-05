@@ -921,7 +921,73 @@ export function skinMask(directions, manifest, flag) {
   // 膨脹的量取 SP-2.14 的下限，不是猜的值。
   const feather = Math.max(1, Math.round(optional(manifest, 'blink', 'featherS') * cellPx));
   const filled = fillHoles(dilate(mask, cellPx, feather), cellPx);
-  return faceComponent(filled, cellPx, manifest, flag);
+  const face = faceComponent(filled, cellPx, manifest, flag);
+  // 選填 `faceMask: "hull"`（2026-10-05）：用臉部皮膚區的凸包當臉。
+  // 「被膚色包住的洞」這個定義在睫毛直接貼著瀏海的角色上失效 —— 眼睛跟頭髮連成一片，
+  // 不是洞，於是眨眼修補塊大半被判越界（藍鯨男孩實測：閉眼改動 84% 落在遮罩外）。
+  // 凸包把眼睛、黑眼圈收進來，頭套、臉外仍擋；代價是凸包內蓋到臉上的幾撮瀏海也算臉。
+  // 下界照舊是 chinY。預設不開，行為不變。
+  return manifest.faceMask === 'hull' ? convexHullMask(face, cellPx, chinPx) : face;
+}
+
+/** 遮罩的凸包（Andrew monotone chain），點集取每一列的最左與最右像素，再逐列填滿、截在 maxY 以上。 */
+function convexHullMask(mask, P, maxY) {
+  const pts = [];
+  for (let y = 0; y < P; y++) {
+    let lo = -1;
+    let hi = -1;
+    for (let x = 0; x < P; x++) {
+      if (mask[y * P + x]) {
+        if (lo < 0) {
+          lo = x;
+        }
+        hi = x;
+      }
+    }
+    if (lo >= 0) {
+      pts.push([lo, y], [hi + 1, y], [lo, y + 1], [hi + 1, y + 1]);
+    }
+  }
+  if (pts.length < 3) {
+    return mask;
+  }
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+      lower.pop();
+    }
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+      upper.pop();
+    }
+    upper.push(p);
+  }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  const out = new Uint8Array(P * P);
+  for (let y = 0; y < Math.min(P, maxY); y++) {
+    const yc = y + 0.5;
+    let xl = Infinity;
+    let xr = -Infinity;
+    for (let i = 0; i < hull.length; i++) {
+      const [x0, y0] = hull[i];
+      const [x1, y1] = hull[(i + 1) % hull.length];
+      if ((y0 <= yc && y1 > yc) || (y1 <= yc && y0 > yc)) {
+        const xi = x0 + ((yc - y0) / (y1 - y0)) * (x1 - x0);
+        xl = Math.min(xl, xi);
+        xr = Math.max(xr, xi);
+      }
+    }
+    for (let x = Math.max(0, Math.ceil(xl - 0.5)); x <= Math.min(P - 1, Math.floor(xr - 0.5)); x++) {
+      out[y * P + x] = 1;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1391,6 +1457,7 @@ export function checkOverlayOwnership(sheets, manifest) {
       let coreArea = 0;
       let showThrough = 0;
       let firstShow = null;
+      const painted = new Uint8Array(cellPx * cellPx);
       let translucent = 0;
       let coreAlphaSum = 0;
       for (let y = 0; y < cellPx; y++) {
@@ -1411,6 +1478,27 @@ export function checkOverlayOwnership(sheets, manifest) {
           const g = Math.round(o[1] * a + u[1] * (1 - a));
           const b = Math.round(o[2] * a + u[2] * (1 - a));
           if (colourNear(r, g, b, iris, irisTol)) {
+            if (o[3] === 255) {
+              // 眼瞼**自己不透明畫上去**的虹膜色：先記下來，下面只算成塊的部分。
+              painted[y * cellPx + x] = 1;
+            } else {
+              showThrough++;
+              if (!firstShow) {
+                firstShow = [x, y];
+              }
+            }
+          }
+        }
+      }
+      // ⚠️ **不透明的虹膜色只算「成塊」的（腐蝕 1px 後還在）。**
+      // 棕眼角色的虹膜色剛好落在「線稿 × 膚色」的抗鋸齒混色線上（藍鯨男孩：虹膜 #83594D～#996F5E，
+      // 線稿 #150E0E × 膚色 #F8D3B3 在 t≈0.44 得 (131,97,83)），閉眼弧線的邊緣像素就會讀成虹膜 ——
+      // 逐通道容差怎麼調都分不開（2026-10-05 實測 85 px）。真的把眼珠畫在閉眼格上是一整塊盤，
+      // 1–2px 寬的線條邊緣不是。透明處看到的像素（上面 o[3] < 255 那支）照舊一律算。
+      for (let y = 1; y < cellPx - 1; y++) {
+        for (let x = 1; x < cellPx - 1; x++) {
+          const i = y * cellPx + x;
+          if (painted[i] && painted[i - 1] && painted[i + 1] && painted[i - cellPx] && painted[i + cellPx]) {
             showThrough++;
             if (!firstShow) {
               firstShow = [x, y];

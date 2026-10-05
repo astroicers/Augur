@@ -1462,6 +1462,45 @@ for (const m of NON_MUTANTS) {
 }
 
 // ===========================================================================
+console.log('\n[3e] 眨眼核心只算成塊的虹膜色；faceMask: "hull"（2026-10-05）');
+// ---------------------------------------------------------------------------
+{
+  const IRIS = C.hexToRgb(manifest.colours.iris);
+  const at6 = (x, y) => ((Math.floor(6 / 3) * S + y) * SHEET + ((6 % 3) * S + x)) * 4;
+  const cx = Math.round(0.41 * S);
+  const cy = Math.round(0.38 * S);
+  // 細線：閉眼弧線的抗鋸齒邊緣在棕眼角色上會讀成虹膜色 —— 2px 寬，不得紅
+  const thin = clone(base);
+  for (let x = cx - 18; x <= cx + 18; x++) {
+    for (const y of [cy, cy + 1]) {
+      thin.reactions.data.set([...IRIS, 255], at6(x, y));
+    }
+  }
+  const gotThin = ids(runAll(thin, manifest));
+  ok('閉眼格上 2px 寬的虹膜色線不得紅 SP-7.4/眨眼不透明', !gotThin.includes('SP-7.4/眨眼不透明'), `卻紅了 [${gotThin.join(', ')}]`);
+  // 成塊：把眼珠畫在閉眼格上 —— 必須紅
+  const disc = clone(base);
+  for (let y = cy - 6; y <= cy + 6; y++) {
+    for (let x = cx - 6; x <= cx + 6; x++) {
+      if ((x - cx) ** 2 + (y - cy) ** 2 <= 36) {
+        disc.reactions.data.set([...IRIS, 255], at6(x, y));
+      }
+    }
+  }
+  const gotDisc = ids(runAll(disc, manifest));
+  ok('閉眼格上不透明的虹膜色圓盤（半徑 6）必須紅 SP-7.4/眨眼不透明', gotDisc.includes('SP-7.4/眨眼不透明'), `實得 [${gotDisc.join(', ')}]`);
+
+  // faceMask: "hull" —— 基準不得紅；覆蓋層畫到斗篷上仍必須紅 SP-6.6
+  const hullManifest = buildManifest({ faceMask: 'hull' });
+  const gotHullBase = ids(runAll(clone(base), hullManifest));
+  ok('faceMask: "hull" 下合成基準不得有任何 error', gotHullBase.length === 0, `卻紅了 [${gotHullBase.join(', ')}]`);
+  const onCape = clone(base);
+  put(onCape.reactions, 1, 150, 400, [0, 0, 16, 255]);
+  const gotCape = ids(runAll(onCape, hullManifest));
+  ok('faceMask: "hull" 下覆蓋層畫到斗篷上仍必須紅 SP-6.6/皮膚遮罩', gotCape.includes('SP-6.6/皮膚遮罩'), `實得 [${gotCape.join(', ')}]`);
+}
+
+// ===========================================================================
 console.log('\n[3d] SP-0.10 最小模式（只動嘴＋眨眼）');
 // ---------------------------------------------------------------------------
 {

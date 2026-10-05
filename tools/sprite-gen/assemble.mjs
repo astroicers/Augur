@@ -28,7 +28,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { encodePng, decodePng } from '../lib/png.mjs';
-import { skinMask } from '../lib/spriteChecks.mjs';
+import { skinMask, silhouetteAxis, headBox } from '../lib/spriteChecks.mjs';
 import { S, SHEET, HEM_TOP, featherAndBleed, hemFade, compose } from './post.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -53,13 +53,17 @@ const EXPRESSIONS = cfg.features?.expressions !== false;
 const EXPRESSION_CELLS = [0, 1, 2, 3, 8];
 const EMPTY = new Set([...(cfg.empty ?? []), ...(EXPRESSIONS ? [] : EXPRESSION_CELLS)]);
 const STROKE_W = 0.016 * S;
-const STROKE_RGB = [0x6e, 0x76, 0x81];
+// 外描邊色：預設 SP-6.4 參考色。衣服陰影跟它撞色時（藍灰連身衣）可在 align.json 換一個落在亮度帶內的中性灰，
+// 否則 SP-6.5 的下襬描邊檢查會把衣服陰影當成描邊。
+const STROKE_RGB = cfg.strokeColour
+  ? [1, 3, 5].map((i) => parseInt(cfg.strokeColour.slice(i, i + 2), 16))
+  : [0x6e, 0x76, 0x81];
 
 const win = (k) => {
   const w = MANIFEST_TMPL.windows[k];
   return { x0: Math.round(w.x0 * S), x1: Math.round(w.x1 * S), y0: Math.round(w.y0 * S), y1: Math.round(w.y1 * S) };
 };
-const W = { E: win('E'), B: win('B'), M: win('M') };
+let W = { E: win('E'), B: win('B'), M: win('M') };
 const inWin = (w, x, y) => x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1;
 const hex = (rgb) =>
   '#' +
@@ -305,16 +309,76 @@ function dropStrayBlobs(data, w, h) {
 }
 
 // ---------------------------------------------------------------------------
-// 對齊：等比縮放＋平移，讓兩眼瞳孔落在 (0.41, 0.38)·S 與 (0.59, 0.38)·S
+// 對齊（兩種模式）
+//  - 預設：等比縮放＋平移，讓兩眼瞳孔落在 manifest 範本的錨點（0.41 / 0.59, 0.38）。
+//  - `fit: true`：整個角色等比縮放塞進格子（左右與上緣留 fitMargin，預設 0.06·S；腳可以超出下緣，
+//    SP-2.8 下襬漸隱會淡掉），錨點與三個視窗改由 `landmarks`（母圖上的五官座標）換算後寫進 manifest。
+//    給比例跟範本錨點對不上的角色用（例如大頭套 Q 版：兩眼距只有頭套寬的兩成）。
 // ---------------------------------------------------------------------------
 const A = MANIFEST_TMPL.anchors;
 const [L, R] = [cfg.leftPupil, cfg.rightPupil];
 if (!L || !R) {
   fail('align.json 要有 leftPupil 與 rightPupil（母圖上兩眼瞳孔中心的像素座標）');
 }
-const scale = ((A.pupilRightX - A.pupilLeftX) * S) / Math.hypot(R[0] - L[0], R[1] - L[1]);
-const tx = A.faceAxisX * S - ((L[0] + R[0]) / 2) * scale;
-const ty = A.eyeLineY * S - ((L[1] + R[1]) / 2) * scale;
+let scale = ((A.pupilRightX - A.pupilLeftX) * S) / Math.hypot(R[0] - L[0], R[1] - L[1]);
+let tx = A.faceAxisX * S - ((L[0] + R[0]) / 2) * scale;
+let ty = A.eyeLineY * S - ((L[1] + R[1]) / 2) * scale;
+
+/** fit 模式：由母圖 alpha 的外框決定縮放與平移（水平置中、上緣貼 fitMargin）。 */
+function fitTransform(img) {
+  const { w, h, data } = img;
+  let x0 = w;
+  let x1 = -1;
+  let y0 = h;
+  let y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] >= 128) {
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+    }
+  }
+  const m = (cfg.fitMargin ?? 0.06) * S;
+  scale = Math.min((S - 2 * m) / (x1 - x0 + 1), cfg.fitMaxScale ?? Infinity);
+  tx = S / 2 - ((x0 + x1 + 1) / 2) * scale;
+  ty = m - y0 * scale;
+}
+
+/** fit 模式：母圖座標的五官 → manifest 錨點與 E/B/M 視窗（全部是 0–1 比例）。 */
+function anchorsFromFeatures(f) {
+  const P = ([x, y]) => [(x * scale + tx) / S, (y * scale + ty) / S];
+  const [lx, ly] = P(f.leftPupil ?? L);
+  const [rx, ry] = P(f.rightPupil ?? R);
+  const [mx, my] = P(f.mouth);
+  const chinY = P([0, f.chinY])[1];
+  const crownY = P([0, f.crownY])[1];
+  const browY = P([0, f.browY])[1];
+  const eyeY = (ly + ry) / 2;
+  const headW = (f.headWidth * scale) / S;
+  const r = (v) => Math.round(v * 1e4) / 1e4;
+  const eyeHalfW = (rx - lx) * 0.75;
+  const E = { x0: r(lx - eyeHalfW), x1: r(rx + eyeHalfW), y0: r(browY + (eyeY - browY) * 0.3), y1: r(eyeY + (my - eyeY) * 0.45) };
+  const B = { x0: E.x0, x1: E.x1, y0: r(browY - (E.y0 - browY) * 1.2), y1: E.y0 };
+  const M = { x0: r(mx - (rx - lx) * 0.45), x1: r(mx + (rx - lx) * 0.45), y0: r(E.y1 + (my - E.y1) * 0.35), y1: r(my + (chinY - my) * 0.75) };
+  return {
+    anchors: {
+      faceAxisX: r((lx + rx) / 2),
+      crownY: r(crownY),
+      chinY: r(chinY),
+      eyeLineY: r(eyeY),
+      pupilLeftX: r(lx),
+      pupilRightX: r(rx),
+      mouthCentreY: r(my),
+      shoulderY: r(Math.min(0.95, chinY + 0.1)),
+      headWidth: r(headW),
+      hairTopMinY: r(Math.max(0.02, crownY - 0.03)),
+    },
+    windows: { E, B, M },
+  };
+}
 
 /** 超取樣（預乘 alpha、雙線性）把來源畫到 S×S 格。縮小時每個目標像素平均 k×k 個子樣本。 */
 function align(img) {
@@ -515,6 +579,22 @@ const sameSize = (img) => {
   }
   fail(`變體尺寸 ${img.w}×${img.h} 與母圖 ${master0.w}×${master0.h} 不同 —— 生成工具改了畫布大小，請以相同尺寸重出`);
 };
+let fitted = null;
+if (cfg.fit) {
+  if (!cfg.landmarks?.mouth || cfg.landmarks.chinY === undefined || cfg.landmarks.crownY === undefined || cfg.landmarks.browY === undefined || !cfg.landmarks.headWidth) {
+    fail('fit 模式要在 align.json 的 landmarks 給 mouth [x,y]、chinY、crownY、browY、headWidth（母圖像素）');
+  }
+  fitTransform(master0);
+  fitted = anchorsFromFeatures(cfg.landmarks);
+  W = Object.fromEntries(
+    Object.entries(fitted.windows).map(([k, w]) => [
+      k,
+      { x0: Math.round(w.x0 * S), x1: Math.round(w.x1 * S), y0: Math.round(w.y0 * S), y1: Math.round(w.y1 * S) },
+    ])
+  );
+  console.log('fit：錨點', JSON.stringify(fitted.anchors));
+  console.log('fit：視窗', JSON.stringify(fitted.windows));
+}
 const master = align(master0);
 console.log(
   `對齊：縮放 ${scale.toFixed(3)}，平移 (${tx.toFixed(1)}, ${ty.toFixed(1)})；背景色 ${hex(master0.bgColour ?? [0, 0, 0])}`
@@ -561,10 +641,11 @@ if (PROBE) {
       mark(x, w.y0, [255, 0, 255]);
     }
   }
-  mark(A.pupilLeftX * S, A.eyeLineY * S, [255, 0, 0]);
-  mark(A.pupilRightX * S, A.eyeLineY * S, [255, 0, 0]);
-  mark(S / 2, A.chinY * S, [0, 160, 255]);
-  mark(S / 2, A.crownY * S, [0, 160, 255]);
+  const AA = fitted?.anchors ?? A;
+  mark(AA.pupilLeftX * S, AA.eyeLineY * S, [255, 0, 0]);
+  mark(AA.pupilRightX * S, AA.eyeLineY * S, [255, 0, 0]);
+  mark(AA.faceAxisX * S, AA.chinY * S, [0, 160, 255]);
+  mark(AA.faceAxisX * S, AA.crownY * S, [0, 160, 255]);
   fs.writeFileSync(path.join(CHECK_DIR, 'assemble-probe.png'), encodePng(S, S, vis, 4));
   const at = (fx, fy) => {
     const o = (Math.round(fy * S) * S + Math.round(fx * S)) * 4;
@@ -572,7 +653,7 @@ if (PROBE) {
   };
   console.log('取樣色（填 align.json 的 colours 前請目視確認）：');
   console.log(`  臉頰 skin? ${at(0.36, 0.47)} / ${at(0.64, 0.47)}`);
-  console.log(`  虹膜 iris? ${at(A.pupilLeftX, A.eyeLineY + 0.012)} / ${at(A.pupilRightX, A.eyeLineY + 0.012)}`);
+  console.log(`  虹膜 iris? ${at((fitted?.anchors ?? A).pupilLeftX, (fitted?.anchors ?? A).eyeLineY)} / ${at((fitted?.anchors ?? A).pupilRightX, (fitted?.anchors ?? A).eyeLineY)}`);
   console.log(`  頭頂 hair/hood? ${at(0.5, 0.12)}`);
   console.log(`→ .sprite-check/assemble-probe.png`);
   process.exit(0);
@@ -594,8 +675,32 @@ for (const k of ['iris', 'skin', 'hair', 'lineart']) {
 }
 const manifest = JSON.parse(JSON.stringify(MANIFEST_TMPL));
 Object.assign(manifest.colours, colours);
+if (fitted) {
+  Object.assign(manifest.anchors, fitted.anchors);
+  manifest.windows = fitted.windows;
+}
+if (cfg.faceMask) {
+  manifest.faceMask = cfg.faceMask;
+}
+if (cfg.luminanceExemptColours) {
+  manifest.luminanceExemptColours = cfg.luminanceExemptColours;
+}
 manifest.stroke.colour = hex(STROKE_RGB);
 const probeSheet = { width: SHEET, height: SHEET, data: compose(Array.from({ length: 9 }, () => master)) };
+if (fitted) {
+  // 非正面角色：臉中軸、頭頂、頭寬用驗收工具同一支函式在母圖上實量（兩邊量法一致）。
+  // 這三個錨點因此是由母圖定義的；它們在最小模式下守的是「其餘格不得偏離母圖」。
+  const axis = silhouetteAxis(probeSheet, manifest);
+  const box = headBox(probeSheet, manifest);
+  const r4 = (v) => Math.round(v * 1e4) / 1e4;
+  manifest.anchors.faceAxisX = r4(axis / S); // silhouetteAxis 回傳像素
+  if (box) {
+    manifest.anchors.hairTopMinY = r4(box.y0 / S - 0.005);
+    manifest.anchors.crownY = r4(box.y0 / S + 0.01);
+    manifest.anchors.headWidth = r4((box.x1 - box.x0 + 1) / S - 0.002);
+  }
+  console.log(`fit：實量校正 faceAxisX ${manifest.anchors.faceAxisX}、crownY ${manifest.anchors.crownY}、headWidth ${manifest.anchors.headWidth}`);
+}
 const skin = skinMask(probeSheet, manifest, {});
 
 const allowedFor = (owners) => {
@@ -718,7 +823,9 @@ for (let c = 0; c < 9; c++) {
     m = or(m, up);
   }
   // 再外擴 3px：柔邊落在沒改動的皮膚上，半透明像素才會跟最近的實色一致（SP-2.15 / SP-7.1）
-  m = and(dilate(m, 3), allowed);
+  // 眨眼格只外擴 1px：再擴會吃進眼睛下方沒改動的黑眼圈，而黑眼圈跟虹膜同色系，
+  // SP-7.4 的眨眼核心檢查會把它當成「閉著眼還看得到虹膜」（藍鯨男孩實測 112 px）。
+  m = and(dilate(m, c === 6 || c === 7 ? 1 : 3), allowed);
   if (c === 7) {
     // 外擴不得越過眼皮線往下（否則眼瞼核心裡會出現虹膜，SP-7.4/眨眼不透明）
     m = m.map((val, i) =>
