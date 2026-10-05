@@ -360,7 +360,7 @@ function anchorsFromFeatures(f) {
   const headW = (f.headWidth * scale) / S;
   const r = (v) => Math.round(v * 1e4) / 1e4;
   const eyeHalfW = (rx - lx) * 0.75;
-  const E = { x0: r(lx - eyeHalfW), x1: r(rx + eyeHalfW), y0: r(browY + (eyeY - browY) * 0.3), y1: r(eyeY + (my - eyeY) * 0.45) };
+  const E = { x0: r(lx - eyeHalfW), x1: r(rx + eyeHalfW), y0: r(browY + (eyeY - browY) * 0.3), y1: r(eyeY + (my - eyeY) * 0.25) };
   const B = { x0: E.x0, x1: E.x1, y0: r(browY - (E.y0 - browY) * 1.2), y1: E.y0 };
   const M = { x0: r(mx - (rx - lx) * 0.45), x1: r(mx + (rx - lx) * 0.45), y0: r(E.y1 + (my - E.y1) * 0.35), y1: r(my + (chinY - my) * 0.75) };
   return {
@@ -822,10 +822,13 @@ for (let c = 0; c < 9; c++) {
     const up = dilate(gazeUnion, 2).map((val, i) => (val && i / S < cut[i % S] ? 1 : 0));
     m = or(m, up);
   }
-  // 再外擴 3px：柔邊落在沒改動的皮膚上，半透明像素才會跟最近的實色一致（SP-2.15 / SP-7.1）
+  // 再外擴 5px：柔邊落在沒改動的皮膚上，半透明像素才會跟最近的實色一致（SP-2.15 / SP-7.1）。
+  // 3px 對漸層類的修改（腮紅）不夠：σ=1 的羽化會吃進染色區（2026-10-05 實測中位數差 18）。
   // 眨眼格只外擴 1px：再擴會吃進眼睛下方沒改動的黑眼圈，而黑眼圈跟虹膜同色系，
   // SP-7.4 的眨眼核心檢查會把它當成「閉著眼還看得到虹膜」（藍鯨男孩實測 112 px）。
-  m = and(dilate(m, c === 6 || c === 7 ? 1 : 3), allowed);
+  // pending（8）只有一顆小汗滴、疊在瀏海上：遮罩只包汗滴本身，外擴會讓柔化帶橫越頭髮紋理，
+  // SP-7.1/預乘alpha 把紋理差當成 matte（2026-10-05 實測中位數差 16–23）。
+  m = and(dilate(m, c === 6 || c === 7 || c === 8 ? 1 : 5), allowed);
   if (c === 7) {
     // 外擴不得越過眼皮線往下（否則眼瞼核心裡會出現虹膜，SP-7.4/眨眼不透明）
     m = m.map((val, i) =>
@@ -857,6 +860,7 @@ const reaPng = encodePng(SHEET, SHEET, reaSheet, 4);
 manifest._note =
   cfg.note ??
   '由 tools/sprite-gen/assemble.mjs 從生成式繪圖工具的母圖與變體組成；出處見 docs/asset-provenance.md 與 docs/sprite/SOURCE-PROMPTS.md。';
+Object.assign(manifest, cfg.manifestNotes ?? {}); // 例如 _note_exempt：放寬項目的理由跟著 manifest 走
 delete manifest._example_empty;
 delete manifest.irisCentroids;
 if (EMPTY.size) {

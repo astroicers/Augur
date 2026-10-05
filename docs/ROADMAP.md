@@ -36,14 +36,12 @@
 
 **素材**
 
-> **暫定素材已上線（2026-10-02）**：專案主人指定的「藍鯨布偶裝的疲憊男孩」，同日依專案主人要求改成動漫 Q 版萌系畫風；
-> 由 `tools/sprite-gen/whale-boy.mjs` 程式生成、照規格錨點畫，`SPRITE-CHECK: PASS`（整條驗收鏈第一次對交付物執行）。它讓下列項目有圖可跑，
-> 但**不取代**它們 —— B2-1～B2-6 仍是為正式素材而設。
-> **角色已定案（2026-10-04 專案主人裁定）**：這個男孩**取代** `live2d-template-spec-v1.md` §7 的原角色，
-> 定義見規格 SP-0.9（參考實作就是 `whale-boy.mjs`）。正式畫師若重繪，brief 以 SP-0.9 為準。
+> **素材現況（2026-10-05 定稿）**：專案主人以 Gemini 生成的原圖，`tools/sprite-gen/face-edits.py` 從原圖像素改出閉嘴、張嘴、閉眼與 5 格表情，
+> `tools/sprite-gen/assemble.mjs` 組裝，`SPRITE-CHECK: PASS`。視線 9 格是同一張臉（`features.gaze = false`）。角色定義見規格 SP-0.9。
+> 先前的程式畫暫定圖（`whale-boy.mjs`）與產圖規劃文件已刪除，見 git 歷史。
 
 - **B2-1　凍結比例** —— 凍結清單的數值在 docs/sprite/sprite-sheet-spec.md §2 都已到位，已廢除的兩項也已從 docs/sprite/production-sop.md 階段 1 劃掉。剩下的只是把規格檔頭「尚未凍結」改成「已凍結 YYYY-MM-DD」。凍結後改一個比例就是 18 格全部重畫，需要專案主人點頭；髮色（SP-0.8）屬可調的顏色，不擋凍結。
-- ~~**B2-10　生成式繪圖重畫吉祥物**~~ ✅ **2026-10-05 完成（最小模式）**：改用專案主人的 Gemini 原圖（坐姿、雙手捧臉，不轉正面），BiRefNet 去背＋`face-edits.py` 從原圖像素改出閉嘴／張嘴／閉眼（ComfyUI 局部重繪試過，40px 的嘴眼上破圖，未採用），`assemble.mjs` fit 模式組裝，`SPRITE-CHECK: PASS`，開發環境 Grafana 深淺主題實看過。出處照實揭露 prompt 點名小埋（SP-9.7 依實改寫，專案主人裁定）。**之後可做**：補視線 8 格與表情 5 格（拿掉 `features` 即恢復完整驗收）；`whale-boy.mjs` 與 `generation-brief.md`／`image-requests.md` 是前一輪的產物，視需要清理。
+- ~~**B2-10　吉祥物定稿**~~ ✅ **2026-10-05 完成**：專案主人的 Gemini 原圖（坐姿、雙手捧臉，不轉正面），BiRefNet 去背＋`face-edits.py` 從原圖像素改出閉嘴、張嘴、閉眼，以及表情 5 格（click 閃光＋小圓嘴、warning 大汗滴＋擔心嘴、critical 怒筋＋張大嘴、resolved 腮紅加深、pending 小汗滴）。ComfyUI 局部重繪試過，40px 的嘴眼上破圖，未採用。`assemble.mjs` fit 模式組裝，`SPRITE-CHECK: PASS`，開發環境 Grafana 深淺主題實看過；**專案主人在有語音的瀏覽器確認說話動嘴正常**。出處照實揭露 prompt 點名小埋（SP-9.7 依實改寫，專案主人裁定）。**視線不做**：這張圖的眼睛半閉、虹膜只露出約 6px 高，左右最多移 ±5px，換算到顯示尺寸只動 1–2 個螢幕像素，看不出來（`features.gaze = false`）。
 - **B2-2　自繪或委外、發包 brief** —— 要裁定自繪或委外，然後交出 brief：docs/sprite/production-sop.md 階段 2 的七項加 6b 硬數字，盲測固定每個非中央方向 10 題；不要求畫師交參數值。委外的話，書面著作權讓與或授權書的形式與歸檔位置要在發包時就約定好。這題就是 sprite-sheet-spec.md §10〈仍然開著〉的「master frame 由誰畫」。 **前置**：發包前必須先裁定 B7-5 髮色（現行色票照畫會被亮度夾制擋下）。
 - **B2-3　分層原始檔、描邊變體、授權書歸檔** —— 三題一起裁：分層原始檔要不要進版控（SP-9.11；不進的話要在 docs/asset-provenance.md 註明存放位置與負責人，並寫明本 repo 無法單獨重建）；描邊走 SP-6.4 烘進（變體 A）還是 SP-6.7 執行期 drop-shadow（變體 B）；委外授權書放在哪。產製若用到生成式服務，要實讀其條款並逐字內嵌進版控（SP-9.5a/SP-9.6）。
 - **B2-4　交付後跑機械驗收** —— 素材交付四項：src/img/sprite/ 下的兩張 PNG 與 sprite-manifest.json，以及 docs/sprite/SOURCE-PROMPTS.md。驗收：node tools/check-sprite-sheets.mjs exit 0、sentinel 消失；.sprite-check/ 下的逐格診斷表、洋紅診斷圖，以及 SP-7.9 的四張聯絡表都要產出並經人工複核。同一批素材也要重量描邊估計器的偏差（docs/ROADMAP.md〈measureStrokeWidths〉）。

@@ -1,5 +1,5 @@
 {
-  "_note": "角色「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人以 Google Gemini 生成的原圖，經 BiRefNet 去背、tools/sprite-gen/face-edits.py 修改嘴與眼、tools/sprite-gen/assemble.mjs（fit 模式、最小模式）組成。出處見 docs/asset-provenance.md 與 docs/sprite/SOURCE-PROMPTS.md。",
+  "_note": "角色「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人以 Google Gemini 生成的原圖，經 BiRefNet 去背、tools/sprite-gen/face-edits.py 修改嘴與眼並疊上表情記號、tools/sprite-gen/assemble.mjs（fit 模式）組成。出處見 docs/asset-provenance.md 與 docs/sprite/SOURCE-PROMPTS.md。",
   "version": 1,
   "sheet": {
     "width": 1536,
@@ -29,7 +29,7 @@
       "x0": 0.138,
       "x1": 0.4621,
       "y0": 0.4229,
-      "y1": 0.4865
+      "y1": 0.471
     },
     "B": {
       "x0": 0.138,
@@ -40,7 +40,7 @@
     "M": {
       "x0": 0.2427,
       "x1": 0.3593,
-      "y0": 0.5014,
+      "y0": 0.4914,
       "y1": 0.5525
     }
   },
@@ -141,27 +141,7 @@
   "intentionally_empty": [
     {
       "sheet": "reactions",
-      "cell": 0
-    },
-    {
-      "sheet": "reactions",
-      "cell": 1
-    },
-    {
-      "sheet": "reactions",
-      "cell": 2
-    },
-    {
-      "sheet": "reactions",
-      "cell": 3
-    },
-    {
-      "sheet": "reactions",
       "cell": 7
-    },
-    {
-      "sheet": "reactions",
-      "cell": 8
     }
   ],
   "_note_features": "選填。SP-0.10 最小模式：{ \"gaze\": false } 九個方向格同一張臉（不驗視線綁定與重複格）；{ \"expressions\": false } 反應格 0、1、2、3、8 留空（要在 intentionally_empty 宣告）。省略 = 全部開啟。",
@@ -173,12 +153,12 @@
   "sha256": {
     "_note": "兩張 PNG 的 sha256。腳本先比對再做像素檢查 —— 換圖而不更新 manifest 必須是紅的（SP-7.15）。",
     "directions": "97d7816d10d497519bf4f7024cd8cf42f657037a38d88cffe968f830a8d0df62",
-    "reactions": "c0f4f10b2577bfd60a74a3d21701ed6ac6613941b2ed752a16311e86a048abce"
+    "reactions": "00d976c691113c773bb02e065acf03c707afcf38afd61b4b72df95b218c373af"
   },
   "faceMask": "hull",
+  "_note_exempt": "luminanceExemptColours：黑髮 #443938 與膚色 #F8D3B3 超出 SP-6.2 的 [0.047, 0.61]，但臉與頭髮整個包在頭套裡、碰不到 panel 背景（SP-6.2 防的是溶進背景）。stroke.colour 改暖灰 #827C76：藍灰連身衣的陰影與參考色 #6E7681 撞色。faceMask \"hull\"：睫毛貼著瀏海，眼睛不是被膚色包住的洞。features.gaze = false：眼睛半閉，虹膜只露出約 6px，視線變化在顯示尺寸下看不出來。",
   "features": {
     "gaze": false,
-    "expressions": false
-  },
-  "_note_exempt": "luminanceExemptColours：黑髮 #443938 與膚色 #F8D3B3 超出 SP-6.2 的 [0.047, 0.61]，但臉與頭髮整個包在頭套裡、碰不到 panel 背景（SP-6.2 防的是溶進背景）。stroke.colour 改暖灰 #827C76：藍灰連身衣的陰影與參考色 #6E7681 撞色。faceMask \"hull\"：睫毛貼著瀏海，眼睛不是被膚色包住的洞。"
+    "expressions": true
+  }
 }
