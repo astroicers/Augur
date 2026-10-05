@@ -100,6 +100,7 @@ npm run package      # 產出可安裝的 zip
 # sprite 交付相關（素材還沒進來也都能跑）
 npm run check:sprites           # SP-7 素材驗收（manifest 不存在時印 NOT-DELIVERED 並回 0）
 node tools/sprite-gen/whale-boy.mjs  # 重新產生暫定角色的兩張圖與 manifest
+node tools/sprite-gen/assemble.mjs   # 把生成工具的母圖＋17 張變體組成兩張圖（見 docs/sprite/generation-brief.md）
 npm run check:sprites:selftest  # 上面那支自己的回歸測試（合成基準 + 逐條變異體）
 npm run blindtest               # SP-V.1 方向辨識盲測頁 → http://localhost:8787/
 npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身
