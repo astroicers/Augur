@@ -19,10 +19,10 @@ P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
-P5 的工具側已完成。角色是專案主人指定的「藍鯨布偶裝的疲憊男孩」，2026-10-04 定案取代原角色，
-動漫 Q 版畫風（大眼、ω 嘴、腮紅、黑眼圈），由 `tools/sprite-gen/whale-boy.mjs` 程式生成（手寫 SVG 經 headless Chromium 光柵化，出處見
-`docs/asset-provenance.md`），照規格的錨點畫，通過整條 SP-7 機械驗收。圖本身仍是程式畫的版本，
-正式畫師若重繪，以規格 SP-0.9 為角色設定。
+P5 已完成。角色是「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人用 Google Gemini 生成的原圖，
+經 BiRefNet 去背、`tools/sprite-gen/face-edits.py` 改出閉嘴／張嘴／閉眼，再由 `tools/sprite-gen/assemble.mjs` 組成兩張精靈圖，
+通過整條 SP-7 機械驗收。目前是**最小模式**（規格 SP-0.10）：只有說話動嘴與眨眼，視線與表情格未畫。
+出處（含 prompt 原文與對第三方角色的揭露）見 `docs/asset-provenance.md` 與 `docs/sprite/SOURCE-PROMPTS.md`。
 
 > ⚠️ 驗收鏈現在每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
 > 不再走 `NOT-DELIVERED`。但暫定圖是照規格「畫給檢查看」的，跟它一起長大的合成假人
@@ -99,8 +99,8 @@ npm run package      # 產出可安裝的 zip
 
 # sprite 交付相關（素材還沒進來也都能跑）
 npm run check:sprites           # SP-7 素材驗收（manifest 不存在時印 NOT-DELIVERED 並回 0）
-node tools/sprite-gen/whale-boy.mjs  # 重新產生暫定角色的兩張圖與 manifest
-node tools/sprite-gen/assemble.mjs   # 把生成工具的母圖＋17 張變體組成兩張圖（見 docs/sprite/generation-brief.md）
+node tools/sprite-gen/whale-boy.mjs  # 前一版程式畫的暫定圖（⚠️ 會覆蓋 src/img/sprite/ 的現行素材）
+node tools/sprite-gen/assemble.mjs   # 由 assets/sprite-src/ 的母圖與變體組成兩張圖（原始檔不進版控）
 npm run check:sprites:selftest  # 上面那支自己的回歸測試（合成基準 + 逐條變異體）
 npm run blindtest               # SP-V.1 方向辨識盲測頁 → http://localhost:8787/
 npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身

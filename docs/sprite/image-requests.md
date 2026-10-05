@@ -1,5 +1,7 @@
 # 要交的圖（最小模式：動嘴＋眨眼）
 
+> **2026-10-05 定稿採用專案主人的原圖（不轉正面、只動嘴＋眨眼），本檔是之前的產圖規劃，保留供日後補視線或表情時參考。** 現況見 `SOURCE-PROMPTS.md`。
+
 > 2026-10-05。由專案主人用 Gemini 或自建 ComfyUI 產生；組裝與驗收由 `tools/sprite-gen/assemble.mjs`
 > 與 `tools/check-sprite-sheets.mjs` 處理。構圖參考：[`layout-guide.png`](layout-guide.png)。
 > 造型依據：專案主人提供的參考圖（黑髮、棕色疲憊眼、黑眼圈、白前襟藍鯨連身衣、頭頂噴水、尾巴）。

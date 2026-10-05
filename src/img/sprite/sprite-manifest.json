@@ -1,5 +1,5 @@
 {
-  "_note": "角色「藍鯨布偶裝的疲憊男孩」（2026-10-02 專案主人指定，同日改為動漫萌系畫風；2026-10-04 定案取代原角色，定義見 sprite-sheet-spec.md SP-0.9），由 tools/sprite-gen/whale-boy.mjs 產生。正式畫師重繪時整份取代。",
+  "_note": "角色「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人以 Google Gemini 生成的原圖，經 BiRefNet 去背、tools/sprite-gen/face-edits.py 修改嘴與眼、tools/sprite-gen/assemble.mjs（fit 模式、最小模式）組成。出處見 docs/asset-provenance.md 與 docs/sprite/SOURCE-PROMPTS.md。",
   "version": 1,
   "sheet": {
     "width": 1536,
@@ -10,39 +10,38 @@
   },
   "anchors": {
     "_source": "§2（SP-2.2 ~ SP-2.9），開畫前凍結，改動需升 v2 = 18 格全部重畫",
-    "faceAxisX": 0.5,
-    "crownY": 0.08,
-    "chinY": 0.6,
-    "eyeLineY": 0.38,
-    "pupilLeftX": 0.41,
-    "pupilRightX": 0.59,
-    "mouthCentreY": 0.53,
-    "shoulderY": 0.85,
-    "headWidth": 0.4,
+    "faceAxisX": 0.3848,
+    "crownY": 0.0764,
+    "chinY": 0.5602,
+    "eyeLineY": 0.4516,
+    "pupilLeftX": 0.2353,
+    "pupilRightX": 0.3649,
+    "mouthCentreY": 0.5292,
+    "shoulderY": 0.6602,
+    "headWidth": 0.4863,
     "_note_range": "下面兩個讓 SP-7.5 的頭頂/頭寬用區間比對 —— 量測法量到的是含髮的 bbox，而 crownY/headWidth 描述的是顱骨，兩者量的不是同一個東西。數字取自 SP-2.3 與 SP-2.9，不是新發明的。",
-    "hairTopMinY": 0.048,
+    "hairTopMinY": 0.0614,
     "maxSilhouetteWidth": 0.84
   },
   "anchorToleranceS": 0.004,
   "windows": {
-    "_source": "SP-2.11 三個互斥視窗 —— 覆蓋層的產權邊界。視窗是外框上界，不是必須填滿的區域。",
     "E": {
-      "x0": 0.28,
-      "x1": 0.72,
-      "y0": 0.33,
-      "y1": 0.445
+      "x0": 0.138,
+      "x1": 0.4621,
+      "y0": 0.4229,
+      "y1": 0.4865
     },
     "B": {
-      "x0": 0.28,
-      "x1": 0.72,
-      "y0": 0.255,
-      "y1": 0.33
+      "x0": 0.138,
+      "x1": 0.4621,
+      "y0": 0.3957,
+      "y1": 0.4229
     },
     "M": {
-      "x0": 0.395,
-      "x1": 0.605,
-      "y0": 0.475,
-      "y1": 0.585
+      "x0": 0.2427,
+      "x1": 0.3593,
+      "y0": 0.5014,
+      "y1": 0.5525
     }
   },
   "margins": {
@@ -56,17 +55,19 @@
   },
   "colours": {
     "_source": "SP-6.0 / SP-6.1 / SP-6.2。線稿色與虹膜色必須明文記錄 —— SP-7.3 的方向綁定檢查要拿虹膜色做遮罩。",
-    "lineart": "#3B2226",
-    "iris": "#D98A2B",
+    "lineart": "#150E0E",
+    "iris": "#8B6456",
     "irisToleranceRgb": 40,
-    "skin": "#ECC4B3",
+    "skin": "#F8D3B3",
     "skinToleranceRgb": 24,
-    "hair": "#6EA8E8",
+    "hair": "#769CBF",
     "hairToleranceRgb": 24,
-    "exemptToleranceRgb": 24,
-    "_note_hair": "本角色沒有外露的髮頂：藍鯨頭套占了頭髮的位置，所以 colours.hair 宣告為頭套色 —— SP-7.5 的頭部 bbox（膚色＋髮色）因此量到頭套。從頭套下露出的瀏海是另一個顏色。"
+    "exemptToleranceRgb": 24
   },
-  "luminanceExemptColours": [],
+  "luminanceExemptColours": [
+    "#443938",
+    "#F8D3B3"
+  ],
   "luminance": {
     "_source": "SP-6.2 亮度夾制。豁免：線稿、虹膜高光、鞏膜、腮紅（前兩者由 colours 自動豁免，L ≥ 0.85 自動視為鞏膜/高光）。",
     "min": 0.047,
@@ -81,7 +82,7 @@
     "luminanceMax": 0.24,
     "luminanceSlack": 0.03,
     "_note_colour": "SP-6.4 的參考色。亮度帶是第一道篩、顏色是第二道 —— 少了它，任何亮度剛好落在帶內又貼著輪廓的【合法】填色都會讓描邊量爆掉（實測 #7c7c7c 的衣物讓九格由 8.525 變 17.132）。",
-    "colour": "#6E7681",
+    "colour": "#827C76",
     "colourToleranceRgb": 12
   },
   "gaze": {
@@ -137,7 +138,33 @@
     "BMK"
   ],
   "_note_empty": "規格、SP-7.1/SP-7.4/SP-7.15 與工具印的錯誤訊息用的都是【底線】寫法。這裡跟著用底線，不要改成駝峰 intentionallyEmpty —— 兩種拼法同時存在且內容不同時工具會報錯要你收斂成一種。下面是一個填好的範例，沒有空格時留空陣列即可。",
-  "intentionally_empty": [],
+  "intentionally_empty": [
+    {
+      "sheet": "reactions",
+      "cell": 0
+    },
+    {
+      "sheet": "reactions",
+      "cell": 1
+    },
+    {
+      "sheet": "reactions",
+      "cell": 2
+    },
+    {
+      "sheet": "reactions",
+      "cell": 3
+    },
+    {
+      "sheet": "reactions",
+      "cell": 7
+    },
+    {
+      "sheet": "reactions",
+      "cell": 8
+    }
+  ],
+  "_note_features": "選填。SP-0.10 最小模式：{ \"gaze\": false } 九個方向格同一張臉（不驗視線綁定與重複格）；{ \"expressions\": false } 反應格 0、1、2、3、8 留空（要在 intentionally_empty 宣告）。省略 = 全部開啟。",
   "budget": {
     "_source": "SP-7.8。超標時的退路是改用 S = 384（1152×1152）重新匯出 —— 降 S 不影響任何容差推導。",
     "perSheetBytes": 921600,
@@ -145,7 +172,13 @@
   },
   "sha256": {
     "_note": "兩張 PNG 的 sha256。腳本先比對再做像素檢查 —— 換圖而不更新 manifest 必須是紅的（SP-7.15）。",
-    "directions": "7b654f5e34c59bad3fac9775e6c8883b4c64ebc0208485284af50c741e6a258d",
-    "reactions": "0e3c20daf3ab84a9f935edd441a111ada8104607abaa7c5d0ca31f0328e29948"
-  }
+    "directions": "97d7816d10d497519bf4f7024cd8cf42f657037a38d88cffe968f830a8d0df62",
+    "reactions": "c0f4f10b2577bfd60a74a3d21701ed6ac6613941b2ed752a16311e86a048abce"
+  },
+  "faceMask": "hull",
+  "features": {
+    "gaze": false,
+    "expressions": false
+  },
+  "_note_exempt": "luminanceExemptColours：黑髮 #443938 與膚色 #F8D3B3 超出 SP-6.2 的 [0.047, 0.61]，但臉與頭髮整個包在頭套裡、碰不到 panel 背景（SP-6.2 防的是溶進背景）。stroke.colour 改暖灰 #827C76：藍灰連身衣的陰影與參考色 #6E7681 撞色。faceMask \"hull\"：睫毛貼著瀏海，眼睛不是被膚色包住的洞。"
 }
