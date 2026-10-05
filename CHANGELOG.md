@@ -12,6 +12,14 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
+### The mascot, final art (2026-10-05)
+
+- The whale-onesie boy now uses the project owner's own artwork (generated with Google Gemini,
+  background removed and the mouth and eyes edited from the original pixels). He opens his
+  mouth while speaking and blinks; gaze and expression frames are not drawn yet.
+- Provenance, including the original prompt and the fact that it named a third-party
+  character as a style reference, is recorded in `docs/asset-provenance.md`.
+
 ### The mascot has a face (2026-10-02)
 
 - The panel now renders a sprite mascot instead of the diagnostic dot grid: a sleepy
