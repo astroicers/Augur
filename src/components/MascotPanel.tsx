@@ -597,6 +597,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => {
       sp.dispose();
       speakerRef.current = null;
+      // ⚠️ 播報中重建播報器（改任何一個語音選項）時，被 dispose 的那一則不會再送 onEnd／onError ——
+      // 外部語音的世代檢查會把它們吞掉。不在這裡收尾的話 speaking 卡在 true：pending 表情被壓住、
+      // 換 avatar 時補送 setSpeaking(true) 讓嘴巴無聲地動，直到下一則播完才自癒（2026-10-05 複審 F1）。
+      // Web Speech 路徑靠 cancel() 觸發 onerror 碰巧收得掉，這裡不依賴那個巧合。
+      flapRef.current?.stop();
+      avatarRef.current?.setSpeaking(false);
+      speakingRef.current = false;
+      setSpeaking(false);
     };
   }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate, ttsEndpoint, ttsTimeoutSec]);
 
@@ -792,7 +800,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 function unavailableSpeaker(ev: SpeakerEvents): Speaker {
   return {
     unlock() {},
-    enqueue: () => ev.onError?.('no-speech-synthesis'),
+    enqueue: (plan) => ev.onError?.('no-speech-synthesis', plan),
     pending: () => 0,
     isSpeaking: () => false,
     stop() {},

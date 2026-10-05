@@ -94,7 +94,7 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         path: 'ttsEndpoint',
         name: '外部語音服務網址',
         description:
-          '選填。填 OpenAI 相容的語音服務（例如 tools/tts-server 的童聲），留空 = 用瀏覽器內建聲線。某一則失敗或逾時就改用內建聲線念，面板上的聲線標籤會寫明。填了之後「指定聲線」與「音高」只用在降級時。',
+          '選填。填 OpenAI 相容的語音服務（例如 tools/tts-server 的童聲），留空 = 用瀏覽器內建聲線。某一則失敗或逾時就改用內建聲線念，面板上的聲線標籤會寫明。填了之後「指定聲線」與「音高」只用在降級時；「語速」會送給服務，但 tools/tts-server 不支援（語速由它的參考音決定）。',
         defaultValue: DEFAULT_OPTIONS.ttsEndpoint,
         settings: { placeholder: 'http://localhost:8090' },
         showIf: (c) => c.enableTTS,
@@ -102,7 +102,8 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
       .addSliderInput({
         path: 'ttsTimeoutSec',
         name: '外部語音逾時（秒）',
-        description: '等外部服務回音訊的上限，超過就改用內建聲線念這一則。',
+        description:
+          '輪到某一句時，最多等它的音訊幾秒（不含它在服務端排隊的時間）。超過就從這一句起改用內建聲線念完這一則。',
         defaultValue: DEFAULT_OPTIONS.ttsTimeoutSec,
         settings: { min: 3, max: 60, step: 1 },
         showIf: (c) => c.enableTTS && (c.ttsEndpoint ?? '').trim() !== '',

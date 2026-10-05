@@ -34,7 +34,7 @@ export interface MascotPanelOptions {
    * ⚠️ 不收金鑰：panel 選項存在 dashboard JSON，看得到 dashboard 就看得到它（ADR-005 決策 4）。
    */
   ttsEndpoint: string;
-  /** 外部語音逾時秒數，超過就該則改用 Web Speech。 */
+  /** 外部語音逾時秒數：輪到某一句時起算，超過就從那一句起改用 Web Speech 念完該則。 */
   ttsTimeoutSec: number;
   /**
    * directions 精靈圖（視線 9 格）的 URL；空字串 = plugin 內建素材（SP-8.4）。

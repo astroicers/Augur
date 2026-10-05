@@ -12,6 +12,7 @@ import {
   endpointLabel,
   splitClauses,
   ENVELOPE_HOP_SEC,
+  MOUTH_HOLD_MS,
   type AudioBufferLike,
   type AudioContextLike,
   type BufferSourceLike,
@@ -62,6 +63,8 @@ class FakeCtx implements AudioContextLike {
   sources: FakeSource[] = [];
   closed = false;
   resumeUnlocks = true;
+  /** 測試可換掉解碼行為（延遲、失敗、改時長）。 */
+  decodeImpl: () => Promise<AudioBufferLike> = async () => fakeBuffer();
   async resume() {
     if (this.resumeUnlocks) {
       this.state = 'running';
@@ -70,8 +73,10 @@ class FakeCtx implements AudioContextLike {
   async close() {
     this.closed = true;
   }
-  async decodeAudioData() {
-    return fakeBuffer();
+  decodeCount = 0;
+  decodeAudioData() {
+    this.decodeCount++;
+    return this.decodeImpl();
   }
   createBufferSource() {
     const s = new FakeSource();
@@ -92,7 +97,7 @@ class FakeFallback implements Speaker {
   /** 讓測試決定 fallback 何時念完。 */
   finishCurrent(err?: string) {
     if (err) {
-      this.ev.onError?.(err);
+      this.ev.onError?.(err, this.spoken[this.spoken.length - 1]);
     } else {
       this.ev.onEnd?.(this.spoken[this.spoken.length - 1]!);
     }
@@ -138,6 +143,7 @@ function setup(fetchImpl?: (url: string, init: RequestInit) => Promise<Response>
         onStart: (p) => log.push('start:' + p.text),
         onEnd: (p) => log.push('end:' + p.text),
         onError: (e) => log.push('err:' + e),
+        onBoundary: (b) => log.push('boundary:' + b.charLength),
         onVoice: (n) => voices.push(n),
         onMouth: (v) => mouth.push(v),
       },
@@ -316,6 +322,8 @@ describe('fetch 同步丟例外', () => {
       throw new ReferenceError('fetch is not defined');
     });
     expect(() => sp.enqueue(plan('一'))).not.toThrow();
+    // 第二則會走**預取**：那是同步呼叫，沒包的話例外直接從 enqueue 炸出去（變異測試抓到）。
+    expect(() => sp.enqueue(plan('二'))).not.toThrow();
     await flush();
     expect(fb().spoken).toHaveLength(1);
   });
@@ -387,5 +395,223 @@ describe('逐句管線', () => {
     fb().finishCurrent();
     await flush();
     expect(log.at(-1)).toBe('end:' + LONG);
+  });
+});
+
+/** 手動控制的 Promise：測試決定它何時、以什麼結果落地。 */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('splitClauses：數字裡的半形標點不切', () => {
+  it('IP:埠、時間、小數、千分位、網址留在同一段', () => {
+    expect(splitClauses('受影響對象 192.168.1.20:9182，時間 12:30:05，數量 1,234。')).toEqual([
+      '受影響對象 192.168.1.20:9182，',
+      '時間 12:30:05，',
+      '數量 1,234。',
+    ]);
+    expect(splitClauses('see http://grafana.local/d/x please')).toEqual(['see http://grafana.local/d/x please']);
+  });
+  it('英文句子保留標點後的空格', () => {
+    expect(splitClauses('Alert firing: WindowsHighCPU, severity warning.')).toEqual([
+      'Alert firing:',
+      ' WindowsHighCPU,',
+      ' severity warning.',
+    ]);
+  });
+});
+
+describe('世代：stop() 之後晚到的非同步步驟一律放手', () => {
+  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+
+  it('多句播到一半 stop：舊音源晚到的 onended 不會接下一句、不會 onEnd', async () => {
+    const { sp, ctx, calls, log } = setup();
+    sp.enqueue(plan(LONG));
+    await flush();
+    sp.stop();
+    ctx.sources[0]!.end();
+    await flush();
+    expect(ctx.sources).toHaveLength(1);
+    expect(calls).toHaveLength(2); // 只有當時那句與預取那句
+    expect(log).toEqual(['start:' + LONG]);
+  });
+
+  it('等服務回音訊時 stop：音訊晚到也不開播、不 onStart', async () => {
+    const d = deferred<Response>();
+    const { sp, ctx, log } = setup(() => d.promise);
+    sp.enqueue(plan('一'));
+    await flush();
+    sp.stop();
+    d.resolve(okResponse());
+    await flush();
+    // 連解碼都不該做 —— 解碼後還有一道世代檢查擋得住播放，但那是浪費且掩蓋了這一道（變異測試抓到）。
+    expect(ctx.decodeCount).toBe(0);
+    expect(ctx.sources).toHaveLength(0);
+    expect(log).toEqual([]);
+  });
+
+  it('解碼中 stop：解碼晚到也不開播', async () => {
+    const { sp, ctx, log } = setup();
+    const d = deferred<AudioBufferLike>();
+    ctx.decodeImpl = () => d.promise;
+    sp.enqueue(plan('一'));
+    await flush();
+    sp.stop();
+    d.resolve(fakeBuffer());
+    await flush();
+    expect(ctx.sources).toHaveLength(0);
+    expect(log).toEqual([]);
+  });
+
+  it('降級中 stop，下一則也降級：舊那則晚到的 fallback onEnd 不會把新那則提早收掉', async () => {
+    const { sp, fb, log } = setup(() => Promise.resolve({ ok: false, status: 500 } as Response));
+    sp.enqueue(plan('舊'));
+    await flush();
+    const oldPlan = fb().spoken[0]!;
+    sp.stop();
+    sp.enqueue(plan('新'));
+    await flush();
+    expect(fb().spoken.map((p) => p.text)).toEqual(['舊', '新']);
+    // 舊 utterance 被 cancel 後晚到的回呼，帶的是舊 plan。
+    (fb() as unknown as { ev: SpeakerEvents }).ev.onEnd?.(oldPlan);
+    (fb() as unknown as { ev: SpeakerEvents }).ev.onError?.('interrupted', oldPlan);
+    await flush();
+    expect(sp.isSpeaking()).toBe(true);
+    expect(log).toEqual(['start:舊', 'start:新']);
+    fb().finishCurrent();
+    await flush();
+    expect(log).toEqual(['start:舊', 'start:新', 'end:新']);
+  });
+});
+
+describe('錯誤路徑', () => {
+  it('從第 i>0 句降級：onStart 只發一次（不帶後半段文字再發一次）', async () => {
+    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+    let n = 0;
+    const { sp, ctx, fb, log } = setup(async () =>
+      n++ === 1 ? ({ ok: false, status: 503 } as Response) : okResponse()
+    );
+    sp.enqueue(plan(LONG));
+    await flush();
+    ctx.sources[0]!.end();
+    await flush();
+    fb().finishCurrent();
+    await flush();
+    expect(log).toEqual(['start:' + LONG, 'end:' + LONG]);
+  });
+
+  it('解碼失敗：降級，原因寫明', async () => {
+    const { sp, ctx, fb, voices } = setup();
+    ctx.decodeImpl = () => Promise.reject(new Error('EncodingError'));
+    sp.enqueue(plan('一'));
+    await flush();
+    expect(fb().spoken).toHaveLength(1);
+    expect(voices.at(-1)).toContain('EncodingError');
+  });
+
+  it('fallback.enqueue 丟例外：這則以錯誤收尾，佇列繼續', async () => {
+    let n = 0;
+    const { sp, ctx, fb, log } = setup(async () =>
+      n++ === 0 ? ({ ok: false, status: 500 } as Response) : okResponse()
+    );
+    fb().enqueue = () => {
+      throw new Error('boom');
+    };
+    sp.enqueue(plan('一'));
+    sp.enqueue(plan('二'));
+    await flush();
+    expect(log[0]).toMatch(/^err:fallback-throw:/);
+    expect(log[1]).toBe('start:二');
+    expect(ctx.sources).toHaveLength(1);
+  });
+
+  it('onended 永遠不來：watchdog 在 時長 + 3 秒後收掉並降級', async () => {
+    jest.useFakeTimers();
+    try {
+      const { sp, ctx, fb, voices } = setup();
+      ctx.decodeImpl = async () => ({ ...fakeBuffer(), duration: 0.5 });
+      sp.enqueue(plan('一'));
+      await jest.advanceTimersByTimeAsync(10);
+      expect(ctx.sources[0]!.started).toBe(true);
+      await jest.advanceTimersByTimeAsync(3400);
+      expect(fb().spoken).toHaveLength(0);
+      await jest.advanceTimersByTimeAsync(200);
+      expect(ctx.sources[0]!.stopped).toBe(true);
+      expect(voices.at(-1)).toContain('watchdog-timeout');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('逾時從輪到那一句才起算', () => {
+  it('預取的下一句在服務端排隊比逾時還久，但輪到它之後很快就到：不降級', async () => {
+    // 逾時 50ms。第 0 句立刻到；第 1 句在送出後 120ms 才到（排隊），而第 0 句播到 100ms 才結束。
+    // 從送出起算會在 50ms 誤判逾時；從輪到它（100ms）起算只等 20ms。
+    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning。';
+    let n = 0;
+    const { sp, ctx, fb, log } = setup(() =>
+      n++ === 0 ? Promise.resolve(okResponse()) : new Promise((r) => setTimeout(() => r(okResponse()), 120))
+    );
+    sp.enqueue(plan(LONG));
+    await flush();
+    await new Promise((r) => setTimeout(r, 100));
+    ctx.sources[0]!.end();
+    await new Promise((r) => setTimeout(r, 60));
+    await flush();
+    expect(fb().spoken).toHaveLength(0);
+    expect(ctx.sources).toHaveLength(2);
+    ctx.sources[1]!.end();
+    await flush();
+    expect(log).toEqual(['start:' + LONG, 'end:' + LONG]);
+  });
+});
+
+describe('嘴型停留', () => {
+  it(`每一格至少停 ${MOUTH_HOLD_MS}ms，包絡每 23ms 跳一次也不會跟著閃`, async () => {
+    const { sp, ctx, mouth, frames } = setup();
+    // 每兩個 hop 交替有聲／無聲（包絡視窗是兩個 hop，每 hop 交替會被平均成常數）。
+    const hop = Math.round(22050 * ENVELOPE_HOP_SEC);
+    const data = new Float32Array(22050);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = Math.floor(i / hop / 2) % 2 ? 0 : i % 2 ? 0.5 : -0.5;
+    }
+    ctx.decodeImpl = async () => ({ duration: 1, sampleRate: 22050, numberOfChannels: 1, getChannelData: () => data });
+    sp.enqueue(plan('一'));
+    await flush();
+    const changes: number[] = [];
+    for (let t = 0; t < 400; t += 5) {
+      ctx.currentTime = t / 1000;
+      const before = mouth.length;
+      frames.splice(0).forEach((f) => f());
+      if (mouth.length > before) {
+        changes.push(t);
+      }
+    }
+    expect(changes.length).toBeGreaterThan(1);
+    for (let i = 1; i < changes.length; i++) {
+      expect(changes[i]! - changes[i - 1]!).toBeGreaterThanOrEqual(MOUTH_HOLD_MS);
+    }
+  });
+});
+
+describe('降級中 stop', () => {
+  it('stop 之後，被 cancel 的 Web Speech 晚到的 boundary 不再驅動嘴型', async () => {
+    const { sp, fb, log } = setup(() => Promise.resolve({ ok: false, status: 500 } as Response));
+    sp.enqueue(plan('一'));
+    await flush();
+    const ev = (fb() as unknown as { ev: SpeakerEvents }).ev;
+    ev.onBoundary?.({ charIndex: 0, charLength: 2 });
+    sp.stop();
+    ev.onBoundary?.({ charIndex: 2, charLength: 3 });
+    ev.onError?.('interrupted');
+    await flush();
+    expect(log).toEqual(['start:一', 'boundary:2']);
   });
 });

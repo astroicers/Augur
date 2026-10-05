@@ -21,6 +21,7 @@ Augur 外部語音服務的參考實作（ADR-005 決策 6）：BreezyVoice + �
   AUGUR_TTS_CACHE          片段快取筆數（預設 512；0 = 不快取）
 
 `speed` 欄位收下但不套用：BreezyVoice 沒有語速參數，事後變速（相位聲碼器）會有金屬聲。
+所以面板的「語速」滑桿對這個服務沒有作用；語速由參考音決定（make_reference.py 的 --rate）。
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import os
 import re
 import sys
 import threading
-from functools import lru_cache
+from collections import OrderedDict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -64,7 +65,8 @@ SAMPLE_RATE = 22050
 # 「偵測到告警：X，嚴重度 Y，受影響對象 Z，目前數值 N，<summary>。」一句 100 多字變成一條長序列。
 # 2026-10-05 實測（RTX 4070 12GB）：這種句子單則 41–111 秒、還有逾時 120 秒的，顯存被撐到 11.9GB。
 # 改在逗號、冒號、分號也切，每段單獨合成再接起來。
-SENTENCE_SPLIT = re.compile(r"(?<=[，,：:；;？！。.?!])\s*")
+# 半形 `, : ; . ? !` 後面接數字或 `/` 時不切：`91.35`、`192.168.1.20:9182`、`12:30`、`http://`。
+SENTENCE_SPLIT = re.compile(r"(?<=[，：；？！。])\s*|(?<=[,:;.?!])(?![\d/])\s*")
 
 if not REF_WAV.exists():
     sys.exit(f"找不到參考音 {REF_WAV}。先跑 make_reference.py（見 README）。")
@@ -150,7 +152,28 @@ def models() -> dict:
     return {"object": "list", "data": [{"id": "tts-1", "object": "model", "owned_by": "augur"}]}
 
 
-@lru_cache(maxsize=CACHE_SIZE)
+CACHE: "OrderedDict[str, bytes]" = OrderedDict()
+CACHE_LOCK = threading.Lock()
+
+
+def cache_get(text: str) -> bytes | None:
+    with CACHE_LOCK:
+        wav = CACHE.get(text)
+        if wav is not None:
+            CACHE.move_to_end(text)
+        return wav
+
+
+def cache_put(text: str, wav: bytes) -> None:
+    if CACHE_SIZE <= 0:
+        return
+    with CACHE_LOCK:
+        CACHE[text] = wav
+        CACHE.move_to_end(text)
+        while len(CACHE) > CACHE_SIZE:
+            CACHE.popitem(last=False)
+
+
 def synthesize_wav(text: str) -> bytes:
     """
     以片段文字為鍵快取成品。面板逐句來要（見 `src/speech/remoteSpeaker.ts` 的 `splitClauses`），
@@ -158,12 +181,28 @@ def synthesize_wav(text: str) -> bytes:
     同一條告警每次觸發都一字不差，變的只有數值那一段。
     服務產語音約等於即時速度（RTX 4070 實測），沒有快取時開口要等第一句的 3–8 秒；
     命中快取的那幾句是立即回應，只剩數值那句要現產，而它是在前幾句播放的同時產的。
+
+    兩道查詢：
+      - 鎖外先查一次 —— 命中就不必排在別人的推論後面。
+      - 拿到推論鎖之後再查一次 —— 同一句同時來 N 個請求（同一個 dashboard 有 N 個人在看）時，
+        只有第一個真的推論，其餘排到鎖時就命中。不用 functools.lru_cache 正是為了這個：
+        它不合併進行中的重複呼叫，N 個請求會各算一次（2026-10-05 複審 F3）。
     """
+    wav = cache_get(text)
+    if wav is not None:
+        return wav
     with LOCK:
-        wav = synthesize(text)
-    buf = io.BytesIO()
-    sf.write(buf, wav.squeeze(0).cpu().numpy(), SAMPLE_RATE, format="WAV", subtype="PCM_16")
-    return buf.getvalue()
+        wav = cache_get(text)
+        if wav is not None:
+            return wav
+        audio = synthesize(text)
+        buf = io.BytesIO()
+        sf.write(buf, audio.squeeze(0).cpu().numpy(), SAMPLE_RATE, format="WAV", subtype="PCM_16")
+        wav = buf.getvalue()
+        # ⚠️ 寫入快取必須在鎖**裡面**：寫在外面的話，放開鎖到寫入之間，排在後面的同一句會拿到鎖、
+        # 查不到、再算一次（2026-10-05 實測：同時 3 個同句請求產出兩種不同音訊）。
+        cache_put(text, wav)
+    return wav
 
 
 @app.post("/v1/audio/speech")

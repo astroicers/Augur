@@ -128,9 +128,13 @@ export function mouthEnvelope(buf: AudioBufferLike, hopSec = ENVELOPE_HOP_SEC): 
  * 播的同時要下一句，開口等待只剩第一句的 2–4 秒；生成比播放快，後面接得上。
  *
  * 太短的片段併進下一段：「偵測到告警：」單獨一段只是多一次請求與一次停頓。
+ *
+ * 半形的 `, : ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20:9182`、`12:30:05`、`http://`、`1,234`
+ * 切開會變成兩次請求、中間多一個停頓（複審 2026-10-05 指出）。全形標點一律切。
+ * 不吃掉標點後的空白，英文句子送出去時字與字之間的空格還在。
  */
 export function splitClauses(text: string, minChars = 8): string[] {
-  const raw = text.split(/(?<=[，,：:；;。！？!?])\s*/).filter((s) => s.trim() !== '');
+  const raw = text.split(/(?<=[，：；。！？]|[,:;?!](?![\d/]))/).filter((s) => s.trim() !== '');
   const out: string[] = [];
   let buf = '';
   for (const piece of raw) {
@@ -151,15 +155,20 @@ export function splitClauses(text: string, minChars = 8): string[] {
 }
 
 /** 嘴型每一格至少停留這麼久，免得 23ms 一跳變成閃爍。 */
-const MOUTH_HOLD_MS = 80;
+export const MOUTH_HOLD_MS = 80;
 /** 等自動播放解鎖的上限。超過就當作被擋，該則降級。 */
 const RESUME_WAIT_MS = 1000;
+
+interface Fetching {
+  promise: Promise<ArrayBuffer>;
+  abort(reason: string): void;
+}
 
 interface Entry {
   plan: BroadcastPlan;
   clauses: string[];
   /** 逐句的音訊請求；還沒送出的是 undefined。 */
-  audio: Array<Promise<ArrayBuffer> | undefined>;
+  audio: Array<Fetching | undefined>;
 }
 
 export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeakerOptions): Speaker {
@@ -180,12 +189,19 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
   let label: string = remoteLabel;
   let fallbackVoice: string | null = null;
   let ctx: AudioContextLike | null = null;
-  let source: BufferSourceLike | null = null;
-  let watchdog: ReturnType<typeof setTimeout> | undefined;
-  let frame: number | undefined;
+  /**
+   * 正在播的那一段的收尾（停音源、清它自己的 watchdog 與 frame）。
+   * ⚠️ 計時器是**每段自己的**，不是模組共用的：被 stop 掉的音源晚到的 onended
+   * 若去清共用的 watchdog，會清到下一代正在播的那一段（複審 S2）。
+   */
+  let stopPlayback: (() => void) | null = null;
   let mouth = 0;
-  /** 正在由 fallback 念的那一則念完時要呼叫的收尾。 */
-  let fallbackDone: ((err?: string) => void) | null = null;
+  /**
+   * 正在由 fallback 念的那一則。回呼以 **plan 物件身分**比對：被 stop 掉的舊 utterance
+   * 晚到的 onEnd／onError 帶的是舊 plan，不會被當成新那則念完（複審 S1）。
+   * `suppressStart`：從第 i>0 句才降級時，這則的 onStart 早就發過了，不再發第二次（複審 F4）。
+   */
+  let fallbackPending: { plan: BroadcastPlan; done: (err?: string) => void; suppressStart: boolean } | null = null;
 
   const setLabel = (next: string) => {
     if (next !== label) {
@@ -201,20 +217,33 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
   };
 
   const fallback = deps.createFallback({
-    onStart: (p) => ev.onStart?.(p),
-    onBoundary: (b) => ev.onBoundary?.(b),
+    onStart: (p) => {
+      if (fallbackPending?.plan === p && !fallbackPending.suppressStart) {
+        ev.onStart?.(p);
+      }
+    },
+    onBoundary: (b) => {
+      if (fallbackPending) {
+        ev.onBoundary?.(b);
+      }
+    },
     onVoice: (name) => {
       fallbackVoice = name;
     },
-    onEnd: () => {
-      const done = fallbackDone;
-      fallbackDone = null;
-      done?.();
+    onEnd: (p) => {
+      if (fallbackPending?.plan === p) {
+        const { done } = fallbackPending;
+        fallbackPending = null;
+        done();
+      }
     },
-    onError: (e) => {
-      const done = fallbackDone;
-      fallbackDone = null;
-      done?.(e);
+    onError: (e, p) => {
+      // 沒帶 plan 的實作（例如面板的 unavailableSpeaker 以外的第三方）只能信任它是當前這則。
+      if (fallbackPending && (p === undefined || p === fallbackPending.plan)) {
+        const { done } = fallbackPending;
+        fallbackPending = null;
+        done(e);
+      }
     },
   });
 
@@ -225,12 +254,13 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     return ctx;
   }
 
-  function startFetch(text: string): Promise<ArrayBuffer> {
+  /** 送出一句的請求。**不在這裡計逾時** —— 見 awaitClause。 */
+  function startFetch(text: string): Fetching {
     const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = setTimeout(() => ac?.abort(), timeoutMs);
+    let reason: string | null = null;
     // ⚠️ 包在 then 裡呼叫：fetchFn **同步**丟例外（沒有 fetch 的環境、URL 不合法）時，
     // 直接呼叫會從 pump() 的 try 外面炸出去，佇列停住 —— 這裡讓它變成一般的 rejection、走降級。
-    const p = Promise.resolve()
+    const promise = Promise.resolve()
       .then(() =>
         deps.fetchFn(url, {
           method: 'POST',
@@ -252,22 +282,49 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
         return res.arrayBuffer();
       })
       .catch((e: unknown) => {
-        // 逾時的 abort 會以 AbortError 落到這裡；換成看得懂的字。
-        throw new Error(ac?.signal.aborted ? 'timeout' : e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => clearTimeout(timer));
+        // abort 會以 AbortError 落到這裡；換成我們自己記的原因（timeout／stopped）。
+        throw new Error(reason ?? (e instanceof Error ? e.message : String(e)));
+      });
     // 預取的那一句可能在被取用前就失敗；先掛一個空 catch，免得變成未處理的 rejection。
-    p.catch(() => undefined);
-    return p;
+    promise.catch(() => undefined);
+    return {
+      promise,
+      abort(r: string) {
+        reason ??= r;
+        ac?.abort();
+      },
+    };
   }
 
-  function audioFor(entry: Entry, i: number): Promise<ArrayBuffer> {
+  function fetchFor(entry: Entry, i: number): Fetching {
     return (entry.audio[i] ??= startFetch(entry.clauses[i]!));
   }
 
   /**
+   * 等第 i 句的音訊，逾時從**輪到它的時候**才起算。
+   * 原本從送出請求就計時：預取的下一句在伺服器上要先等前一句的推論鎖，那段排隊時間也被算進
+   * 逾時，冷啟動時「伺服器不慢、只是在排隊」的句子會被誤判逾時而降級（複審 F2）。
+   * 用 race 而不只靠 abort：沒有 AbortController 的環境也要能逾時。
+   */
+  async function awaitClause(entry: Entry, i: number): Promise<ArrayBuffer> {
+    const f = fetchFor(entry, i);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        f.abort('timeout');
+        reject(new Error('timeout'));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([f.promise, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * 預取「下一句」：同一則的下一句，或這則已是最後一句時、下一則的第一句。
-   * 只預取一句：服務是單一 GPU 且推論加鎖，一次塞多句只會讓正在等的那一句排更久、更容易逾時。
+   * 只預取一句：服務是單一 GPU 且推論加鎖，一次塞多句只會讓正在等的那一句排更久。
    * ⚠️ enqueue 時也要呼叫：第一則 enqueue 時立刻開播，那時第二則還沒進佇列（單元測試抓到的）。
    */
   function prefetchNext() {
@@ -276,9 +333,9 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     }
     const { entry, index } = current;
     if (index + 1 < entry.clauses.length) {
-      void audioFor(entry, index + 1);
+      fetchFor(entry, index + 1);
     } else if (queue[0]) {
-      void audioFor(queue[0], 0);
+      fetchFor(queue[0], 0);
     }
   }
 
@@ -290,40 +347,44 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     return c.state !== 'suspended';
   }
 
-  function clearTimers() {
-    if (watchdog !== undefined) {
-      clearTimeout(watchdog);
-      watchdog = undefined;
-    }
-    if (frame !== undefined) {
-      caf(frame);
-      frame = undefined;
-    }
-  }
-
-  /** 播一段已解碼的音訊，播完 resolve；watchdog 逾時 reject。 */
+  /** 播一段已解碼的音訊，播完 resolve；watchdog 逾時 reject。stop() 經 stopPlayback 收掉它。 */
   function playBuffer(c: AudioContextLike, buf: AudioBufferLike): Promise<void> {
     return new Promise((resolve, reject) => {
       const env = mouthEnvelope(buf);
       const src = c.createBufferSource();
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      let frame: number | undefined;
+      const cleanup = () => {
+        clearTimeout(watchdog);
+        if (frame !== undefined) {
+          caf(frame);
+          frame = undefined;
+        }
+        if (stopPlayback === halt) {
+          stopPlayback = null;
+        }
+      };
+      const halt = () => {
+        cleanup();
+        try {
+          src.stop();
+        } catch {
+          /* 已停 */
+        }
+      };
       src.buffer = buf;
       src.connect(c.destination);
       src.onended = () => {
-        clearTimers();
+        cleanup();
         resolve();
       };
-      source = src;
+      stopPlayback = halt;
       const t0 = c.currentTime;
       src.start();
       // onended 不觸發而永遠卡住是 Web Speech 踩過的失敗模式，這裡一樣防。
       watchdog = setTimeout(
         () => {
-          try {
-            src.stop();
-          } catch {
-            /* 已停 */
-          }
-          clearTimers();
+          halt();
           reject(new Error('watchdog-timeout'));
         },
         buf.duration * 1000 + 3000
@@ -356,17 +417,18 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     current = { entry, index: 0 };
 
     const finish = (err?: string) => {
+      // 世代檢查在這裡是縱深防禦：每個呼叫 finish 的路徑上游都已檢查過，變異測試拿掉它不會轉紅（等價變異）。
+      // 留著是因為下一個加呼叫點的人不一定記得先檢查。
       if (settled || myGen !== gen) {
         return;
       }
       settled = true;
-      clearTimers();
+      stopPlayback?.();
       setMouth(0);
-      source = null;
       current = null;
       speaking = false;
       if (err) {
-        ev.onError?.(err);
+        ev.onError?.(err, entry.plan);
       } else {
         ev.onEnd?.(entry.plan);
       }
@@ -379,12 +441,12 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
         return;
       }
       setLabel(`${fallbackVoice ?? '引擎預設'}（外部語音失敗：${reason}，已降級）`);
-      fallbackDone = finish;
       const rest = from === 0 ? entry.plan : { ...entry.plan, text: entry.clauses.slice(from).join('') };
+      fallbackPending = { plan: rest, done: finish, suppressStart: from > 0 };
       try {
         fallback.enqueue(rest);
       } catch (e) {
-        fallbackDone = null;
+        fallbackPending = null;
         finish('fallback-throw:' + String(e));
       }
     };
@@ -394,7 +456,7 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
       try {
         for (; i < entry.clauses.length; i++) {
           current = { entry, index: i };
-          const pending = audioFor(entry, i);
+          const pending = awaitClause(entry, i);
           prefetchNext();
           const data = await pending;
           if (myGen !== gen) {
@@ -450,16 +512,15 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     isSpeaking: () => speaking,
     voiceName: () => label,
     stop() {
+      // 送出去的請求一併 abort：結果反正會被世代檢查丟掉，不必讓瀏覽器等完。
+      // （伺服器端已開始的推論停不下來 —— 這是 HTTP 的限制，不是這裡能管的。）
+      for (const e of [...(current ? [current.entry] : []), ...queue]) {
+        e.audio.forEach((f) => f?.abort('stopped'));
+      }
       queue.length = 0;
       gen++;
-      clearTimers();
-      fallbackDone = null;
-      try {
-        source?.stop();
-      } catch {
-        /* 已停 */
-      }
-      source = null;
+      fallbackPending = null;
+      stopPlayback?.();
       current = null;
       speaking = false;
       setMouth(0);

@@ -16,9 +16,11 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
 
 - New panel option *External speech service URL*. Leave it empty and nothing changes: the
   browser's built-in voices read the alerts. Fill it in with an OpenAI-compatible speech
-  service and the mascot speaks in that voice instead. Any sentence the service fails on, or
-  takes longer than *External speech timeout* (15 s by default), is read by the built-in
-  voice, and the voice label on the panel says so and why.
+  service and the mascot speaks in that voice instead. The panel asks for one short phrase at
+  a time. If the service fails on a phrase, or takes longer than *External speech timeout*
+  (15 s by default, counted from when that phrase is due), the built-in voice reads the rest
+  of that alert, and the voice label on the panel says so and why. The next alert tries the
+  service again.
 - With an external voice the mouth follows the loudness of the audio, not a fixed rhythm.
 - `tools/tts-server/` is a reference service: a little boy's voice with a Taiwanese accent,
   built on MediaTek Research's BreezyVoice (Apache-2.0). It needs an NVIDIA GPU. The boy's
@@ -27,6 +29,8 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
 - The first time a given alert is read, the mascot starts speaking after about 6 seconds.
   When the same alert fires again, it starts almost at once, because the service remembers
   the parts of the sentence that repeat.
+- The panel's *Rate* setting is sent to the service, but the reference service ignores it;
+  its speaking rate comes from its voice sample.
 - There is no field for an API key. Panel options are stored in the dashboard and anyone
   who can see the dashboard can read them.
 - Decision record: ADR-005 (FIRM).
