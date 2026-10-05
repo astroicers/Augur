@@ -54,6 +54,8 @@ const OPTIONS: MascotPanelOptions = {
   alertLang: 'zh',
   enableTTS: true,
   ttsVoice: '',
+  ttsPitch: 1,
+  ttsRate: 1,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };
@@ -738,4 +740,29 @@ test('游標停在角色額頭上不轉頭：視線原點是臉中心，不是 s
   } finally {
     jest.restoreAllMocks();
   }
+});
+
+test('試聽：用目前的設定念一句固定的話；聲線名稱顯示在畫面上（onVoice 回報）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ options: { ttsPitch: 1.6 } })} />);
+  await settle();
+  expect(view.getByTestId('voice-chip').textContent).toBe('聲線：引擎預設');
+  act(() => {
+    capturedEvents?.onVoice?.('Microsoft Zhiwei - Chinese (Traditional, Taiwan)');
+  });
+  expect(view.getByTestId('voice-chip').textContent).toBe('聲線：Microsoft Zhiwei - Chinese (Traditional, Taiwan)');
+
+  await act(async () => {
+    view.getByTestId('tts-preview').click();
+  });
+  expect(spoken.at(-1)).toMatchObject({ name: 'preview', emotion: 'calm' });
+});
+
+test('音高與語速傳得進播報器', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const { createSpeaker } = jest.requireMock('../../speech/speaker') as { createSpeaker: jest.Mock };
+  createSpeaker.mockClear();
+  render(<MascotPanel {...props({ options: { ttsPitch: 1.5, ttsRate: 0.8 } })} />);
+  await settle();
+  expect(createSpeaker.mock.calls.at(-1)![1]).toMatchObject({ pitch: 1.5, rate: 0.8 });
 });

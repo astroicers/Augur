@@ -87,7 +87,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 ## 設定
 
 Panel options（`src/panelOptions.ts`）：`minSeverity`、`repeatFiringMin`、
-`fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`、`directionsImgUrl`、`reactionsImgUrl`。
+`fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`（可只填名稱的一段）、`ttsPitch`、`ttsRate`、`directionsImgUrl`、`reactionsImgUrl`。
 後兩個預設空字串（= 內建素材，不得寫死路徑：production 檔名是 `[hash][ext]`）；
 填了外部 URL，panel 會標「自訂圖，對齊未驗證」（SP-7.16）。**沒有尺寸選項**，stage 邊長由 SP-1.8 自動算。
 

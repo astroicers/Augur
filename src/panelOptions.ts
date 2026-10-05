@@ -25,6 +25,10 @@ export interface MascotPanelOptions {
   enableTTS: boolean;
   /** 指名聲線；空字串 = 自動挑（優先 zh-TW 且為本機引擎）。 */
   ttsVoice: string;
+  /** 音高 0–2，1 = 聲線原本的音高。拉高讓大人的聲線聽起來像小孩。 */
+  ttsPitch: number;
+  /** 語速 0.5–2，1 = 原速。 */
+  ttsRate: number;
   /**
    * directions 精靈圖（視線 9 格）的 URL；空字串 = plugin 內建素材（SP-8.4）。
    * 接受任意 URL —— Grafana 的 CSP 預設關閉、開了 `img-src` 也是 `* data:`（規格 §10〈已有答案〉第 12 條）。
@@ -43,6 +47,8 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   alertLang: 'zh',
   enableTTS: true,
   ttsVoice: '',
+  ttsPitch: 1,
+  ttsRate: 1,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };

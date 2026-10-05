@@ -25,12 +25,21 @@ export interface SpeakerEvents {
    */
   onBoundary?: (info: { charIndex: number; charLength: number }) => void;
   onError?: (err: string) => void;
+  /** 挑到（或換到）的聲線名稱；null = 沒有中文聲線、用引擎預設。給畫面顯示用。 */
+  onVoice?: (name: string | null) => void;
 }
 
 export interface SpeakerOptions {
   /** 空字串 = 自動挑（優先 zh-TW 且為本機引擎）。 */
   preferredVoice?: string;
   lang?: string;
+  /**
+   * 音高 0–2，預設 1（MDN：`SpeechSynthesisUtterance.pitch`）。部分引擎或聲線會再限縮或忽略 ——
+   * 有資料指出 Edge 不支援播放音高，所以調了沒變化時先換瀏覽器或換聲線試。
+   */
+  pitch?: number;
+  /** 語速 0.1–10，預設 1。也會用來換算 watchdog 的預估時長。 */
+  rate?: number;
   events?: SpeakerEvents;
 }
 
@@ -48,6 +57,8 @@ export interface Speaker {
   isSpeaking(): boolean;
   /** 清空佇列並停掉目前這則。 */
   stop(): void;
+  /** 目前選到的聲線名稱；還沒載完或沒有中文聲線時是 null（引擎預設）。給畫面顯示用。 */
+  voiceName(): string | null;
   dispose(): void;
 }
 
@@ -96,7 +107,8 @@ export function loadVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice
 }
 
 /**
- * 挑聲線。順序：使用者指名 → zh-TW 且本機 → 任何 zh-TW → 任何 zh → null。
+ * 挑聲線。順序：使用者指名（完整名稱 → 名稱裡含這段字，不分大小寫）→ zh-TW 且本機 → 任何 zh-TW → 任何 zh → null。
+ * 部分比對是為了好填：聲線全名很長（`Microsoft Zhiwei - Chinese (Traditional, Taiwan)`），填 `Zhiwei` 就好。
  *
  * 偏好**本機**（`localService`）有兩個實測理由：不依賴網路；
  * 而「約 15 秒截斷」那個 bug 歷史上與遠端聲線相關，本機 Hanhan 實測連續 90 秒未中斷。
@@ -107,10 +119,17 @@ export function pickVoice(voices: SpeechSynthesisVoice[], preferred?: string): S
     if (named) {
       return named;
     }
+    const needle = preferred.trim().toLowerCase();
+    const partial = needle ? voices.find((v) => v.name.toLowerCase().includes(needle)) : undefined;
+    if (partial) {
+      return partial;
+    }
   }
   const zhTW = voices.filter((v) => /zh[-_]TW|Hant/i.test(v.lang));
   return zhTW.find((v) => v.localService) ?? zhTW[0] ?? voices.find((v) => /^zh/i.test(v.lang)) ?? null;
 }
+
+const clamp = (v: number, lo: number, hi: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 1);
 
 export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {}): Speaker {
   const queue: BroadcastPlan[] = [];
@@ -122,6 +141,7 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
   const ready = loadVoices(synth)
     .then((vs) => {
       voice = pickVoice(vs, opts.preferredVoice);
+      opts.events?.onVoice?.(voice?.name ?? null);
     })
     // ready 若 reject，enqueue 的 `void ready.then(pump)` 就再也不會 pump。
     // 沒有聲線是可以降級的（用引擎預設），靜音不是。
@@ -146,6 +166,7 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       const next = pickVoice(vs, opts.preferredVoice);
       if (next && next !== voice) {
         voice = next;
+        opts.events?.onVoice?.(voice.name);
       }
     } catch {
       /* 取不到就維持現狀 */
@@ -214,6 +235,8 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
         u.voice = voice;
       }
       u.lang = opts.lang ?? 'zh-TW';
+      u.pitch = clamp(opts.pitch ?? 1, 0, 2);
+      u.rate = clamp(opts.rate ?? 1, 0.1, 10);
 
       u.onstart = () => opts.events?.onStart?.(plan);
       u.onend = () => finish();
@@ -230,15 +253,19 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       // watchdog：估時長的兩倍加 5 秒。實測未重現「約 15 秒截斷」，但
       // `onend` 不觸發而永遠卡住是真實存在的失敗模式，沒有它佇列會整條停住。
       // ⚠️ 必須先 cancel 再 finish —— 反過來只是把「卡住且看得出來」變成「卡住且看不出來」。
-      const estMs = (plan.text.length / CHARS_PER_SEC) * 1000;
-      watchdog = setTimeout(() => {
-        try {
-          synth.cancel();
-        } catch {
-          /* cancel 失敗不該再讓佇列停住 */
-        }
-        finish('watchdog-timeout');
-      }, estMs * 2 + 5000);
+      // 語速放慢時念得久，watchdog 要跟著放寬，否則慢速設定下每則都被腰斬。
+      const estMs = (plan.text.length / (CHARS_PER_SEC * clamp(opts.rate ?? 1, 0.1, 10))) * 1000;
+      watchdog = setTimeout(
+        () => {
+          try {
+            synth.cancel();
+          } catch {
+            /* cancel 失敗不該再讓佇列停住 */
+          }
+          finish('watchdog-timeout');
+        },
+        estMs * 2 + 5000
+      );
 
       speaking = true;
       synth.speak(u);
@@ -262,6 +289,7 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       void ready.then(pump);
     },
     pending: () => queue.length,
+    voiceName: () => voice?.name ?? null,
     isSpeaking: () => speaking,
     stop() {
       queue.length = 0;

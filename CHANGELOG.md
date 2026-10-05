@@ -12,6 +12,15 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
+### Voice settings (2026-10-05)
+
+- Two new panel options, *Pitch* and *Rate*, adjust the speaking voice. To make the mascot
+  sound like a little boy, pick a male voice and raise the pitch to about 1.4–1.7; some
+  browsers (reportedly Edge) ignore pitch.
+- *Voice* now accepts part of a voice name, such as `Zhiwei`, instead of the full name.
+- The panel shows which voice it is using, and a *Preview* button reads a short sentence with
+  the current settings.
+
 ### The mascot, final art (2026-10-05)
 
 - The whale-onesie boy now uses the project owner's own artwork (generated with Google Gemini,

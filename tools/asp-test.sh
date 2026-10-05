@@ -223,7 +223,7 @@ JEST_EXIT=$?
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=126
+MIN_TESTS=131
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
