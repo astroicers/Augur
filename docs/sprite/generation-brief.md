@@ -19,6 +19,16 @@
 `align.json` 寫 `"features": { "gaze": false, "expressions": false }`。
 之後要加視線或表情，補下面表格對應的圖、拿掉 `features` 就好，不用重做母圖。
 
+## 母圖為什麼要「睜眼、閉嘴」（2026-10-05 實測）
+
+l2d-factory 的 **THA3**（talking-head-anime-3）能從單張圖直接算出閉眼、半垂眼（疲憊）、
+眼珠上下左右轉 —— 前提是輸入圖**睜眼、閉嘴**。實測：
+- 參考圖本身（半閉眼、張嘴）：THA3 幾乎不動（最多 119 px 改變），沒辦法用。
+- 睜眼閉嘴的圖：閉眼、半垂眼、四個方向的眼珠轉動都有效；但 **ω 這種很小的嘴張不開**，
+  而且 THA3 只以 112px 高的臉來算，貼回精靈圖要放大約 1.5 倍，眼睛會稍微變軟。
+所以母圖睜眼、嘴是一條簡單的線，眨眼（甚至視線）就有機會交給 THA3，嘴型再看 THA3 張不張得開，
+張不開才用 Gemini 改圖。疲憊感靠黑眼圈與眉毛表現，平時的半垂眼可由 THA3 的 `eye_relaxed` 補。
+
 ## 為什麼是「1 張母圖 + 局部變體」
 
 精靈圖必須**頭完全不動**（SP-3.6；反應格只能畫在各自的視窗與臉上）。
@@ -60,7 +70,8 @@ same face and hair). Draw a NEW image of him in this exact composition:
 Anime chibi illustration, cute moe style, clean crisp lineart, soft cel shading.
 Square 1:1 image, bust shot (head and upper chest only), character perfectly centred,
 symmetric FRONT view, head straight (not tilted), looking straight at the viewer,
-tired sleepy expression with half-closed drooping brown eyes and dark circles, MOUTH CLOSED,
+EYES OPEN normally (not half-closed) with brown irises clearly visible, tired look shown by
+dark circles under the eyes and slightly drooping eyebrows, MOUTH CLOSED as a simple short line,
 arms down — hands NOT touching the face.
 
 Keep from the reference: messy short black hair with bangs ending above the eyebrows
