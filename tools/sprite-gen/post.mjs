@@ -1,6 +1,6 @@
 /**
  * 精靈圖素材的共用後處理：守恆柔邊＋補色（SP-2.14 / SP-2.15）、下襬漸隱（SP-2.8）、組 3×3 sheet。
- * `whale-boy.mjs`（程式畫）與 `assemble.mjs`（生成圖組裝）共用同一套，兩條產製路線的邊緣處理才一致。
+ * `assemble.mjs`（素材組裝）使用；先前也供程式畫的 `whale-boy.mjs`（已刪除）共用，兩條產製路線的邊緣處理一致。
  */
 export const S = 512;
 export const SHEET = S * 3;

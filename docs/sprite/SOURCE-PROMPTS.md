@@ -34,10 +34,13 @@
    - 說話大開 = 原圖的嘴垂直拉高 1.7 倍；
    - 平常（閉嘴）= 舊嘴以 Telea 修補抹成膚色，再用原圖嘴線色畫一條短弧線；
    - 眨眼 = 在「平常」上把兩眼塗成臉頰膚色，畫閉眼弧線與外眼角睫毛，黑眼圈保留。
+   - 表情 5 格 = 在「平常」或換了嘴的版本上疊程式繪製的記號，全部落在臉部凸包內：
+     click 閃光＋小圓嘴（原圖的嘴）、warning 大汗滴＋擔心嘴（原圖的嘴）、critical 怒筋＋張大嘴、
+     resolved 兩頰腮紅加深、pending 小汗滴。
 3. **未採用**：ComfyUI 局部重繪（Illustrious-XL v1.0 ＋ Fooocus 補丁／ControlNet Union／IPAdapter，
    經 comfy-mcp 執行）。這張圖的嘴與眼只有約 40px，結果出現黃色發光、色偏與條紋破圖，全部捨棄。
 4. **組裝**：`tools/sprite-gen/assemble.mjs`，`fit` 模式（整個角色塞進格子，錨點由五官實量）、
-   最小模式（`features: { gaze: false, expressions: false }`，半閉眼留空）、`faceMask: "hull"`、
+   `features: { gaze: false, expressions: true }`（視線不做、半閉眼留空）、`faceMask: "hull"`、
    描邊暖灰 `#827C76`、亮度豁免黑髮與膚色（理由見 manifest 的 `_note_exempt`）。
 
 原圖、遮罩、四張來源圖與 `align.json` 不進版控（SP-9.11），存於專案主人本機 `assets/sprite-src/`。

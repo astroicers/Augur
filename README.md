@@ -21,7 +21,7 @@ CI 跑同樣這 10 道，另外還有 build 與 e2e。
 
 P5 已完成。角色是「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人用 Google Gemini 生成的原圖，
 經 BiRefNet 去背、`tools/sprite-gen/face-edits.py` 改出閉嘴／張嘴／閉眼，再由 `tools/sprite-gen/assemble.mjs` 組成兩張精靈圖，
-通過整條 SP-7 機械驗收。目前是**最小模式**（規格 SP-0.10）：只有說話動嘴與眨眼，視線與表情格未畫。
+通過整條 SP-7 機械驗收。會說話動嘴、眨眼，並依告警嚴重度換表情（汗滴、怒筋、腮紅、閃光）；視線格未畫（規格 SP-0.10，`features.gaze = false`）。
 出處（含 prompt 原文與對第三方角色的揭露）見 `docs/asset-provenance.md` 與 `docs/sprite/SOURCE-PROMPTS.md`。
 
 > ⚠️ 驗收鏈現在每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
@@ -99,7 +99,7 @@ npm run package      # 產出可安裝的 zip
 
 # sprite 交付相關（素材還沒進來也都能跑）
 npm run check:sprites           # SP-7 素材驗收（manifest 不存在時印 NOT-DELIVERED 並回 0）
-node tools/sprite-gen/whale-boy.mjs  # 前一版程式畫的暫定圖（⚠️ 會覆蓋 src/img/sprite/ 的現行素材）
+node tools/sprite-gen/face-edits.py <原圖> <輸出目錄>  # 從原圖改出嘴、眼與表情（python3；原圖不進版控）
 node tools/sprite-gen/assemble.mjs   # 由 assets/sprite-src/ 的母圖與變體組成兩張圖（原始檔不進版控）
 npm run check:sprites:selftest  # 上面那支自己的回歸測試（合成基準 + 逐條變異體）
 npm run blindtest               # SP-V.1 方向辨識盲測頁 → http://localhost:8787/

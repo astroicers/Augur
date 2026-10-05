@@ -16,7 +16,10 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
 
 - The whale-onesie boy now uses the project owner's own artwork (generated with Google Gemini,
   background removed and the mouth and eyes edited from the original pixels). He opens his
-  mouth while speaking and blinks; gaze and expression frames are not drawn yet.
+  mouth while speaking and blinks, and his face changes with the alert: a sweat drop for
+  warnings, an anger mark for critical alerts, a deeper blush when an alert resolves, a
+  small sweat drop while an alert is pending, and a sparkle when you click. He does not
+  follow the cursor with his eyes; his half-closed eyes leave too little room to show it.
 - Provenance, including the original prompt and the fact that it named a third-party
   character as a style reference, is recorded in `docs/asset-provenance.md`.
 
