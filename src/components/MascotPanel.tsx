@@ -9,7 +9,8 @@ import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
 import { createPanelAlertSource, type AlertStateLike, type PanelAlertSource } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
-import { createSpeaker, type Speaker } from '../speech/speaker';
+import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
+import { createRemoteSpeaker } from '../speech/remoteSpeaker';
 import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
 import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import { CLICK_REACTION_MS, SpriteController } from '../avatar/SpriteController';
@@ -224,6 +225,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   }, [dpr]);
 
   const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice, ttsPitch, ttsRate } = options;
+  // 舊 dashboard 存的選項沒有這兩欄；Grafana 會補預設值，但不靠它。
+  const ttsEndpoint = (options.ttsEndpoint ?? '').trim();
+  const ttsTimeoutSec = options.ttsTimeoutSec ?? 15;
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';
@@ -519,58 +523,82 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   }, [repeatFiringMin]);
 
   useEffect(() => {
-    if (!enableTTS || typeof window === 'undefined' || !window.speechSynthesis) {
+    const hasSynth = typeof window !== 'undefined' && !!window.speechSynthesis;
+    // 外部語音（ADR-005）不需要 speechSynthesis；沒有它時降級那一則會報錯，但不擋外部路徑。
+    if (!enableTTS || typeof window === 'undefined' || (!hasSynth && !ttsEndpoint)) {
       speakerRef.current = null;
       return;
     }
-    const sp = createSpeaker(window.speechSynthesis, {
-      ...(ttsVoice ? { preferredVoice: ttsVoice } : {}),
-      lang: alertLang === 'en' ? 'en-US' : 'zh-TW',
-      pitch: ttsPitch,
-      rate: ttsRate,
-      events: {
-        onVoice: (name) => setVoiceName(name),
-        // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
-        // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
-        // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
-        onStart: (plan) => {
-          setSpeechErr(null);
-          setEmotion(plan.emotion);
-          avatarRef.current?.setEmotion(plan.emotion);
-          avatarRef.current?.setSpeaking(true);
-          setSpeaking(true);
-          // 引擎不吐 boundary 時的 fallback（ADR-004 決策 4 保留）。
-          // 收到第一個 boundary 就會被 boundary() 接管。
-          flapRef.current?.idle();
-        },
-        onEnd: () => {
-          flapRef.current?.stop();
-          avatarRef.current?.setSpeaking(false);
-          setSpeaking(false);
-          setPending(speakerRef.current?.pending() ?? 0);
-        },
-        // 實測中文為詞級 boundary。charLength 決定**擺動次數**而非振幅
-        // （ADR-004 決策 4 的原意；見 flap.ts 檔頭）。
-        // charLength 0 是句首標記不是詞，不當嘴型觸發。
-        onBoundary: ({ charLength }) => {
-          if (charLength > 0) {
-            flapRef.current?.boundary(charLength);
-          }
-        },
-        onError: (e) => {
-          setSpeechErr(e);
-          flapRef.current?.stop();
-          avatarRef.current?.setSpeaking(false);
-          setSpeaking(false);
-        },
+    const events: SpeakerEvents & { onMouth?: (open: number) => void } = {
+      onVoice: (name) => setVoiceName(name),
+      // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
+      // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
+      // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
+      onStart: (plan) => {
+        setSpeechErr(null);
+        setEmotion(plan.emotion);
+        avatarRef.current?.setEmotion(plan.emotion);
+        avatarRef.current?.setSpeaking(true);
+        setSpeaking(true);
+        // 引擎不吐 boundary 時的 fallback（ADR-004 決策 4 保留）。
+        // 收到第一個 boundary 就會被 boundary() 接管。
+        flapRef.current?.idle();
       },
-    });
+      onEnd: () => {
+        flapRef.current?.stop();
+        avatarRef.current?.setSpeaking(false);
+        setSpeaking(false);
+        setPending(speakerRef.current?.pending() ?? 0);
+      },
+      // 實測中文為詞級 boundary。charLength 決定**擺動次數**而非振幅
+      // （ADR-004 決策 4 的原意；見 flap.ts 檔頭）。
+      // charLength 0 是句首標記不是詞，不當嘴型觸發。
+      onBoundary: ({ charLength }) => {
+        if (charLength > 0) {
+          flapRef.current?.boundary(charLength);
+        }
+      },
+      onError: (e) => {
+        setSpeechErr(e);
+        flapRef.current?.stop();
+        avatarRef.current?.setSpeaking(false);
+        setSpeaking(false);
+      },
+      // 外部語音才有：從音訊包絡來的幀級嘴型（ADR-005 決策 5）。
+      // onStart 啟動的定速 flap 要先停掉，否則兩個來源輪流改嘴型。
+      onMouth: (open) => {
+        flapRef.current?.stop();
+        avatarRef.current?.setMouthOpen?.(open);
+      },
+    };
+    const webSpeech = (ev: SpeakerEvents): Speaker =>
+      hasSynth
+        ? createSpeaker(window.speechSynthesis, {
+            ...(ttsVoice ? { preferredVoice: ttsVoice } : {}),
+            lang: alertLang === 'en' ? 'en-US' : 'zh-TW',
+            pitch: ttsPitch,
+            rate: ttsRate,
+            events: ev,
+          })
+        : unavailableSpeaker(ev);
+    const sp = ttsEndpoint
+      ? createRemoteSpeaker(
+          {
+            fetchFn: (u, init) => fetch(u, init),
+            createAudioContext: () => new AudioContext(),
+            createFallback: webSpeech,
+            requestFrame: (cb) => requestAnimationFrame(cb),
+            cancelFrame: (h) => cancelAnimationFrame(h),
+          },
+          { endpoint: ttsEndpoint, timeoutMs: ttsTimeoutSec * 1000, rate: ttsRate, events }
+        )
+      : webSpeech(events);
     speakerRef.current = sp;
     return () => {
       sp.dispose();
       speakerRef.current = null;
     };
-  }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate]);
+  }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate, ttsEndpoint, ttsTimeoutSec]);
 
   useEffect(() => {
     // D10：載入中或查詢失敗時 data.series 可能是空的。在 threshold 路徑上
@@ -759,3 +787,16 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     </div>
   );
 };
+
+/** 沒有 speechSynthesis 的環境裡，外部語音降級時的接手者：每一則都直接報錯，佇列照走。 */
+function unavailableSpeaker(ev: SpeakerEvents): Speaker {
+  return {
+    unlock() {},
+    enqueue: () => ev.onError?.('no-speech-synthesis'),
+    pending: () => 0,
+    isSpeaking: () => false,
+    stop() {},
+    voiceName: () => null,
+    dispose() {},
+  };
+}

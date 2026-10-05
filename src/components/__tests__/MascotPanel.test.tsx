@@ -40,6 +40,7 @@ jest.mock('../../speech/speaker', () => ({
       enqueue: (plan: BroadcastPlan) => spoken.push(plan),
       pending: () => 0,
       unlock: () => {},
+      stop: () => {},
       dispose: () => {},
     };
   }),
@@ -56,6 +57,8 @@ const OPTIONS: MascotPanelOptions = {
   ttsVoice: '',
   ttsPitch: 1,
   ttsRate: 1,
+  ttsEndpoint: '',
+  ttsTimeoutSec: 15,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };
@@ -765,4 +768,18 @@ test('音高與語速傳得進播報器', async () => {
   render(<MascotPanel {...props({ options: { ttsPitch: 1.5, ttsRate: 0.8 } })} />);
   await settle();
   expect(createSpeaker.mock.calls.at(-1)![1]).toMatchObject({ pitch: 1.5, rate: 0.8 });
+});
+
+test('填了外部語音網址：聲線標籤寫明走外部服務；服務不可用時那一則交給 Web Speech（ADR-005）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ options: { ttsEndpoint: 'http://gpu.local:8090' } })} />);
+  await settle();
+  expect(view.getByTestId('voice-chip').textContent).toBe('聲線：外部語音（gpu.local:8090）');
+  // jsdom 沒有 fetch／AudioContext —— 正好是「服務不可用」：試聽那一則要落到 Web Speech（mock 的 createSpeaker）。
+  await act(async () => {
+    view.getByTestId('tts-preview').click();
+  });
+  await settle();
+  expect(spoken.at(-1)).toMatchObject({ name: 'preview' });
+  expect(view.getByTestId('voice-chip').textContent).toContain('已降級');
 });
