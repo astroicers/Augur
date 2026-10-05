@@ -232,7 +232,76 @@ function removeBackground(img) {
     out[o + 2] = data[qo + 2];
     out[o + 3] = Math.round(a * 255);
   }
+  dropStrayBlobs(out, w, h);
   return { w, h, data: out, bgColour: med };
+}
+
+/**
+ * 去背後只留角色：最大的那塊，加上中心落在它外框（四周外擴 5% 圖寬）內的小塊（例如噴水的水滴）。
+ * 生成圖角落的浮水印、標誌會在去背後變成孤立的小塊，對齊後掉進格子外緣的透明帶（SP-7.1）。
+ */
+function dropStrayBlobs(data, w, h) {
+  const lab = new Int32Array(w * h).fill(-1);
+  const comps = [];
+  for (let i = 0; i < w * h; i++) {
+    if (lab[i] >= 0 || data[i * 4 + 3] < 32) {
+      continue;
+    }
+    const id = comps.length;
+    const c = { id, n: 0, sx: 0, sy: 0, x0: w, x1: 0, y0: h, y1: 0 };
+    const stack = [i];
+    lab[i] = id;
+    while (stack.length) {
+      const j = stack.pop();
+      const x = j % w;
+      const y = (j / w) | 0;
+      c.n++;
+      c.sx += x;
+      c.sy += y;
+      c.x0 = Math.min(c.x0, x);
+      c.x1 = Math.max(c.x1, x);
+      c.y0 = Math.min(c.y0, y);
+      c.y1 = Math.max(c.y1, y);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < w && yy < h) {
+            const k = yy * w + xx;
+            if (lab[k] < 0 && data[k * 4 + 3] >= 32) {
+              lab[k] = id;
+              stack.push(k);
+            }
+          }
+        }
+      }
+    }
+    comps.push(c);
+  }
+  if (comps.length < 2) {
+    return;
+  }
+  const main = comps.reduce((a, b) => (b.n > a.n ? b : a));
+  const pad = 0.05 * w;
+  const keep = new Set(
+    comps
+      .filter((c) => {
+        const cx = c.sx / c.n;
+        const cy = c.sy / c.n;
+        return c === main || (cx >= main.x0 - pad && cx <= main.x1 + pad && cy >= main.y0 - pad && cy <= main.y1 + pad);
+      })
+      .map((c) => c.id)
+  );
+  let dropped = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (lab[i] >= 0 && !keep.has(lab[i])) {
+      data[i * 4 + 3] = 0;
+      dropped++;
+    }
+  }
+  if (dropped) {
+    console.log(`  去背：丟掉 ${comps.length - keep.size} 塊離角色很遠的孤立圖塊（${dropped} px，多半是浮水印或標誌）`);
+  }
 }
 
 // ---------------------------------------------------------------------------

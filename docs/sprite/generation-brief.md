@@ -131,6 +131,18 @@ hood, hair, body, and the plain white background. Change ONLY the following:
 
 ## 出處（SP-9.2 / 9.5 / 9.7，交付前必填）
 
+**生成工具：Google Gemini**（專案主人 2026-10-05 告知）。條款查證（2026-10-05）：
+- 歸屬：Google 服務條款（https://policies.google.com/terms ，生效日 2026-07-30）逐字：
+  「Some of our services allow you to generate original content. Google won't claim ownership over that content.」
+- 限制：Generative AI Prohibited Use Policy（https://policies.google.com/terms/generative-ai/use-policy ，最後修改 2024-12-17）
+  禁止「Violates the rights of others, including privacy and intellectual property rights」與
+  「Misrepresenting the provenance of generated content by claiming it was created solely by a human, in order to deceive.」
+  —— 所以參考圖要先去掉第三方作品（已做：`ref-boy.png`），出處欄要明寫 AI 生成。
+- 舊的 Generative AI Additional Terms（2023-08-09）頁面自述 2024-05-22 起不再適用，不引用。
+- 條款沒有逐字寫「可商用」；本專案的主張照 SP-9.5(b)：「專案自有，以專案實際持有之權利為限，隨 repo Apache-2.0 釋出」。
+- 交付時還要記：Gemini 的版本（App 若不顯示就寫「App 未公開版本」，不得臆造）、生成日期、操作者。
+
+
 生成工具確定後，要記：產品名稱與可讀到的版本、生成日期、操作者、逐字 prompt（`SOURCE-PROMPTS.md`）、
 輸入參考圖（只有母圖本身）、後製（`assemble.mjs`）。以及服務條款對輸出歸屬的結論，附一級來源 URL 與查證日期，
 **逐字**寫進 `docs/asset-provenance.md`（不能只寫「見 .asp-fact-check.md」）。
