@@ -65,3 +65,6 @@ live2d/_archive/layerwork/_cutout.png
 # ---- A3 新增：sprite 檢查的診斷產出（SP-7.10 明文要求不得寫進 src/）----
 .sprite-check/
 *.zip
+
+# 生成式繪圖的原始檔與參考圖（SP-9.11：分層／原始檔不進版控）
+assets/sprite-src/

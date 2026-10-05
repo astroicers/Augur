@@ -1462,6 +1462,76 @@ for (const m of NON_MUTANTS) {
 }
 
 // ===========================================================================
+console.log('\n[3e] 眨眼核心只算成塊的虹膜色；faceMask: "hull"（2026-10-05）');
+// ---------------------------------------------------------------------------
+{
+  const IRIS = C.hexToRgb(manifest.colours.iris);
+  const at6 = (x, y) => ((Math.floor(6 / 3) * S + y) * SHEET + ((6 % 3) * S + x)) * 4;
+  const cx = Math.round(0.41 * S);
+  const cy = Math.round(0.38 * S);
+  // 細線：閉眼弧線的抗鋸齒邊緣在棕眼角色上會讀成虹膜色 —— 2px 寬，不得紅
+  const thin = clone(base);
+  for (let x = cx - 18; x <= cx + 18; x++) {
+    for (const y of [cy, cy + 1]) {
+      thin.reactions.data.set([...IRIS, 255], at6(x, y));
+    }
+  }
+  const gotThin = ids(runAll(thin, manifest));
+  ok('閉眼格上 2px 寬的虹膜色線不得紅 SP-7.4/眨眼不透明', !gotThin.includes('SP-7.4/眨眼不透明'), `卻紅了 [${gotThin.join(', ')}]`);
+  // 成塊：把眼珠畫在閉眼格上 —— 必須紅
+  const disc = clone(base);
+  for (let y = cy - 6; y <= cy + 6; y++) {
+    for (let x = cx - 6; x <= cx + 6; x++) {
+      if ((x - cx) ** 2 + (y - cy) ** 2 <= 36) {
+        disc.reactions.data.set([...IRIS, 255], at6(x, y));
+      }
+    }
+  }
+  const gotDisc = ids(runAll(disc, manifest));
+  ok('閉眼格上不透明的虹膜色圓盤（半徑 6）必須紅 SP-7.4/眨眼不透明', gotDisc.includes('SP-7.4/眨眼不透明'), `實得 [${gotDisc.join(', ')}]`);
+
+  // faceMask: "hull" —— 基準不得紅；覆蓋層畫到斗篷上仍必須紅 SP-6.6
+  const hullManifest = buildManifest({ faceMask: 'hull' });
+  const gotHullBase = ids(runAll(clone(base), hullManifest));
+  ok('faceMask: "hull" 下合成基準不得有任何 error', gotHullBase.length === 0, `卻紅了 [${gotHullBase.join(', ')}]`);
+  const onCape = clone(base);
+  put(onCape.reactions, 1, 150, 400, [0, 0, 16, 255]);
+  const gotCape = ids(runAll(onCape, hullManifest));
+  ok('faceMask: "hull" 下覆蓋層畫到斗篷上仍必須紅 SP-6.6/皮膚遮罩', gotCape.includes('SP-6.6/皮膚遮罩'), `實得 [${gotCape.join(', ')}]`);
+}
+
+// ===========================================================================
+console.log('\n[3d] SP-0.10 最小模式（只動嘴＋眨眼）');
+// ---------------------------------------------------------------------------
+{
+  // 九個方向格同一張臉、反應格只有嘴（4、5）與閉眼（6）。
+  const min = clone(base);
+  const at = (c) => ({ ox: (c % 3) * S, oy: Math.floor(c / 3) * S });
+  const { ox: mx, oy: my } = at(4);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const { ox, oy } = at(c);
+    for (let y = 0; y < S; y++) {
+      const src = ((my + y) * SHEET + mx) * 4;
+      min.directions.data.copyWithin(((oy + y) * SHEET + ox) * 4, src, src + S * 4);
+    }
+  }
+  for (const c of [0, 1, 2, 3, 7, 8]) {
+    const { ox, oy } = at(c);
+    for (let y = 0; y < S; y++) {
+      min.reactions.data.fill(0, ((oy + y) * SHEET + ox) * 4, ((oy + y) * SHEET + ox + S) * 4);
+    }
+  }
+  const empty = [0, 1, 2, 3, 7, 8].map((cell) => ({ sheet: 'reactions', cell }));
+  const minManifest = buildManifest({ features: { gaze: false, expressions: false }, intentionally_empty: empty });
+  const gotMin = ids(runAll(min, minManifest));
+  ok('最小模式（宣告 features 與留空格）不得有任何 error', gotMin.length === 0, `卻紅了 [${gotMin.join(', ')}]`);
+  // 反方向：同一組圖不宣告 features，必須紅 —— 證明放行的是宣告，不是檢查失效。
+  const gotFull = ids(runAll(min, buildManifest({ intentionally_empty: empty })));
+  ok('同一組圖不宣告 features.gaze = false 必須紅 SP-7.1/重複格', gotFull.includes('SP-7.1/重複格'), `實得 [${gotFull.join(', ')}]`);
+  ok('同一組圖不宣告 features.gaze = false 必須紅 SP-7.3（視線綁定）', gotFull.some((x) => x.startsWith('SP-7.3/')), `實得 [${gotFull.join(', ')}]`);
+}
+
+// ===========================================================================
 console.log('\n[3c] SP-2.15 色彩擴張（warn 級）');
 // ---------------------------------------------------------------------------
 {

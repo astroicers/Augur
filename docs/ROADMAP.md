@@ -43,6 +43,7 @@
 > 定義見規格 SP-0.9（參考實作就是 `whale-boy.mjs`）。正式畫師若重繪，brief 以 SP-0.9 為準。
 
 - **B2-1　凍結比例** —— 凍結清單的數值在 docs/sprite/sprite-sheet-spec.md §2 都已到位，已廢除的兩項也已從 docs/sprite/production-sop.md 階段 1 劃掉。剩下的只是把規格檔頭「尚未凍結」改成「已凍結 YYYY-MM-DD」。凍結後改一個比例就是 18 格全部重畫，需要專案主人點頭；髮色（SP-0.8）屬可調的顏色，不擋凍結。
+- **B2-10　生成式繪圖重畫吉祥物（2026-10-05 專案主人裁定）** —— 現行程式畫的版本「畫得不夠好」，改用生成式繪圖工具，造型依專案主人提供的參考圖（黑髮、棕色疲憊眼、白前襟藍鯨連身衣）。brief：`docs/sprite/generation-brief.md`；組裝：`tools/sprite-gen/assemble.mjs`（母圖＋17 張局部變體 → 兩張 sheet，頭不動與產權由工具保證；以去描邊的現行圖當替身實測，`SPRITE-CHECK: PASS`）。**範圍（2026-10-05 裁定，先簡單些）**：只做動嘴＋眨眼（規格 SP-0.10 最小模式），要生的只有母圖＋3 張（嘴小開、嘴大開、閉眼）；視線與表情之後補圖即可加回。**卡在人**：生成工具名稱（要查條款，SP-9.5）、產出母圖與 3 張變體。交付後依實圖改寫規格 SP-0.9 的文字與色票、補出處列（SP-9.1–9.8）與 `SOURCE-PROMPTS.md`。做不出來的格可減：半閉眼可宣告留空。
 - **B2-2　自繪或委外、發包 brief** —— 要裁定自繪或委外，然後交出 brief：docs/sprite/production-sop.md 階段 2 的七項加 6b 硬數字，盲測固定每個非中央方向 10 題；不要求畫師交參數值。委外的話，書面著作權讓與或授權書的形式與歸檔位置要在發包時就約定好。這題就是 sprite-sheet-spec.md §10〈仍然開著〉的「master frame 由誰畫」。 **前置**：發包前必須先裁定 B7-5 髮色（現行色票照畫會被亮度夾制擋下）。
 - **B2-3　分層原始檔、描邊變體、授權書歸檔** —— 三題一起裁：分層原始檔要不要進版控（SP-9.11；不進的話要在 docs/asset-provenance.md 註明存放位置與負責人，並寫明本 repo 無法單獨重建）；描邊走 SP-6.4 烘進（變體 A）還是 SP-6.7 執行期 drop-shadow（變體 B）；委外授權書放在哪。產製若用到生成式服務，要實讀其條款並逐字內嵌進版控（SP-9.5a/SP-9.6）。
 - **B2-4　交付後跑機械驗收** —— 素材交付四項：src/img/sprite/ 下的兩張 PNG 與 sprite-manifest.json，以及 docs/sprite/SOURCE-PROMPTS.md。驗收：node tools/check-sprite-sheets.mjs exit 0、sentinel 消失；.sprite-check/ 下的逐格診斷表、洋紅診斷圖，以及 SP-7.9 的四張聯絡表都要產出並經人工複核。同一批素材也要重量描邊估計器的偏差（docs/ROADMAP.md〈measureStrokeWidths〉）。

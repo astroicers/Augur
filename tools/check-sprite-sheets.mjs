@@ -244,6 +244,26 @@ function validateManifest(m) {
     });
   }
 
+  // --- faceMask（SP-6.6 臉部遮罩的定義）---
+  if (m.faceMask !== undefined && m.faceMask !== 'hull') {
+    errs.push(`faceMask 只認得 "hull"（省略 = 預設的「膚色＋包住的洞」），實際是 ${JSON.stringify(m.faceMask)}`);
+  }
+
+  // --- features（SP-0.10 最小模式）---
+  if (m.features !== undefined) {
+    if (typeof m.features !== 'object' || m.features === null || Array.isArray(m.features)) {
+      errs.push(`features 必須是物件，實際是 ${JSON.stringify(m.features)}`);
+    } else {
+      for (const [k, v] of Object.entries(m.features)) {
+        if (!['gaze', 'expressions'].includes(k)) {
+          errs.push(`features.${k} 不認得（只有 gaze 與 expressions）`);
+        } else if (typeof v !== 'boolean') {
+          errs.push(`features.${k} 必須是 true / false，實際是 ${JSON.stringify(v)}`);
+        }
+      }
+    }
+  }
+
   // --- sha256（SP-7.15）---
   for (const name of Object.keys(SHEET_FILES)) {
     const v = (m.sha256 || {})[name];
