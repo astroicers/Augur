@@ -82,6 +82,11 @@ jobs:
           fi
           echo "grafana $TAG（與 G-ADR004-4 通過時相同）"
 
+      # ADR-005 外部語音參考服務的純邏輯（分段、念出來的單位、失控上限算術）。
+      # 只用標準函式庫，runner 內建的 python3 就跑得動，不需要模型或 GPU。
+      - name: tts-server 邏輯
+        run: python3 -B tools/tts-server/test_textsplit.py
+
       - name: 單元測試
         run: npm run test:unit
 

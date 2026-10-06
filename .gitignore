@@ -68,3 +68,4 @@ live2d/_archive/layerwork/_cutout.png
 
 # 生成式繪圖的原始檔與參考圖（SP-9.11：分層／原始檔不進版控）
 assets/sprite-src/
+tools/tts-server/voices/

@@ -30,6 +30,13 @@ export interface MascotPanelOptions {
   /** 語速 0.5–2，1 = 原速。 */
   ttsRate: number;
   /**
+   * 外部語音服務（OpenAI 相容 `/v1/audio/speech`）的位址；空字串 = 只用 Web Speech（ADR-005）。
+   * ⚠️ 不收金鑰：panel 選項存在 dashboard JSON，看得到 dashboard 就看得到它（ADR-005 決策 4）。
+   */
+  ttsEndpoint: string;
+  /** 外部語音逾時秒數：輪到某一句時起算，超過就從那一句起改用 Web Speech 念完該則。 */
+  ttsTimeoutSec: number;
+  /**
    * directions 精靈圖（視線 9 格）的 URL；空字串 = plugin 內建素材（SP-8.4）。
    * 接受任意 URL —— Grafana 的 CSP 預設關閉、開了 `img-src` 也是 `* data:`（規格 §10〈已有答案〉第 12 條）。
    * ⚠️ 預設值**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的 `[hash][ext]`，
@@ -49,6 +56,8 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   ttsVoice: '',
   ttsPitch: 1,
   ttsRate: 1,
+  ttsEndpoint: '',
+  ttsTimeoutSec: 30,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };

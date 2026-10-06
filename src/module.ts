@@ -90,6 +90,25 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         showIf: (c) => c.enableTTS,
       })
       .addTextInput({
+        // ADR-005。不加金鑰欄位：panel 選項存在 dashboard JSON（決策 4）。
+        path: 'ttsEndpoint',
+        name: '外部語音服務網址',
+        description:
+          '選填。填 OpenAI 相容的語音服務（例如 tools/tts-server 的年輕男聲），留空 = 用瀏覽器內建聲線。某一則失敗或逾時就改用內建聲線念，面板上的聲線標籤會寫明。填了之後「指定聲線」與「音高」只用在降級時；「語速」會送給服務，但 tools/tts-server 不支援（語速由它的參考音決定）。',
+        defaultValue: DEFAULT_OPTIONS.ttsEndpoint,
+        settings: { placeholder: 'http://localhost:8765' },
+        showIf: (c) => c.enableTTS,
+      })
+      .addSliderInput({
+        path: 'ttsTimeoutSec',
+        name: '外部語音逾時（秒）',
+        description:
+          '從輪到某一句時起算，最多等它的音訊幾秒（先前預取時在服務端排的隊不算）。超過就從這一句起改用內建聲線念完這一則。',
+        defaultValue: DEFAULT_OPTIONS.ttsTimeoutSec,
+        settings: { min: 3, max: 60, step: 1 },
+        showIf: (c) => c.enableTTS && (c.ttsEndpoint ?? '').trim() !== '',
+      })
+      .addTextInput({
         // SP-8.4：兩個 sprite URL。預設空字串 = 內建素材（不得寫死路徑，見 panelOptions.ts）。
         // 填了外部 URL，panel 會標「自訂圖，對齊未驗證」—— 機械驗收只涵蓋內建的兩張（SP-7.16）。
         // ⚠️ 不要在這裡加 mascotSize：stage 尺寸由 SP-1.8 依 panel 大小自動計算。

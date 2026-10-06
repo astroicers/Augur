@@ -135,6 +135,8 @@ WebSocket → 自架 React 頁上的 VRM avatar。它能動（20 個後端測試
 （sprite 的自然實作是 `<div>` + `background-position` + `steps()`，不需要 canvas）。
 
 ### 4. 語音：Web Speech API —— **明文推翻 ADR-001/002 的選型**
+> 🔀 **本決策由 ADR-005（2026-10-05，FIRM）修訂**：Web Speech 保留為預設與降級路徑，另加選填的外部語音服務（OpenAI 相容 TTS）。本節其餘文字照舊。
+
 ADR-001 §待驗風險 1 與 ADR-002 §4 曾評估並否決 Web Speech（「零後端但**音質/一致性差、難取振幅**」），
 選 Edge TTS。**本 ADR 推翻該選型**，新理由只有一個：**panel plugin 形態不允許有後端**，
 而 Edge TTS 的 `msedge-tts` 是 Node 套件。這是形態決定選型，不是重新評估後認為 Web Speech 變好了。

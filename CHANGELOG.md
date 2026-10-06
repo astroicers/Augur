@@ -12,6 +12,34 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
+### A real child's voice, optional (2026-10-05)
+
+- New panel option *External speech service URL*. Leave it empty and nothing changes: the
+  browser's built-in voices read the alerts. Fill it in with an OpenAI-compatible speech
+  service and the mascot speaks in that voice instead. The panel asks for one short phrase at
+  a time. If the service fails on a phrase, or takes longer than *External speech timeout*
+  (30 s by default, counted from when that phrase is due), the built-in voice reads the rest
+  of that alert, and the voice label on the panel says so and why. The next alert tries the
+  service again.
+- With an external voice the mouth follows the loudness of the audio, not a fixed rhythm.
+- `tools/tts-server/` is a reference service: a young man's voice speaking standard Mandarin,
+  built on Qwen3-TTS (Apache-2.0). It needs an NVIDIA GPU. The voice was generated from a
+  text description and is not based on any real person's recording, and it is not pitch-shifted.
+  The model and the voice sample are not in this repository.
+- The service produces speech more slowly than it is spoken. The first time a given alert is
+  read, the mascot starts speaking after 5 to 10 seconds, and it may pause between phrases
+  while the rest is still being made. When the same alert fires again, it starts at once,
+  because the service remembers the parts of the sentence that repeat.
+- The panel's *Rate* setting is sent to the service, but the reference service ignores it;
+  its speaking rate comes from its voice sample.
+- If the voice model ever cannot stop talking, the service cuts the phrase off and the
+  built-in voice reads the rest of that alert instead.
+- An earlier version of the reference service (BreezyVoice with a pitch-shifted child voice)
+  was replaced before release: in listening tests it sounded like a woman.
+- There is no field for an API key. Panel options are stored in the dashboard and anyone
+  who can see the dashboard can read them.
+- Decision record: ADR-005 (Accepted).
+
 ### Voice settings (2026-10-05)
 
 - Two new panel options, *Pitch* and *Rate*, adjust the speaking voice. To make the mascot

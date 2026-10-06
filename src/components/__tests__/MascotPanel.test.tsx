@@ -40,6 +40,7 @@ jest.mock('../../speech/speaker', () => ({
       enqueue: (plan: BroadcastPlan) => spoken.push(plan),
       pending: () => 0,
       unlock: () => {},
+      stop: () => {},
       dispose: () => {},
     };
   }),
@@ -56,6 +57,8 @@ const OPTIONS: MascotPanelOptions = {
   ttsVoice: '',
   ttsPitch: 1,
   ttsRate: 1,
+  ttsEndpoint: '',
+  ttsTimeoutSec: 30,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };
@@ -765,4 +768,37 @@ test('音高與語速傳得進播報器', async () => {
   render(<MascotPanel {...props({ options: { ttsPitch: 1.5, ttsRate: 0.8 } })} />);
   await settle();
   expect(createSpeaker.mock.calls.at(-1)![1]).toMatchObject({ pitch: 1.5, rate: 0.8 });
+});
+
+test('填了外部語音網址：聲線標籤寫明走外部服務；服務不可用時那一則交給 Web Speech（ADR-005）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ options: { ttsEndpoint: 'http://gpu.local:8090' } })} />);
+  await settle();
+  expect(view.getByTestId('voice-chip').textContent).toBe('聲線：外部語音（gpu.local:8090）');
+  // jsdom 沒有 fetch／AudioContext —— 正好是「服務不可用」：試聽那一則要落到 Web Speech（mock 的 createSpeaker）。
+  await act(async () => {
+    view.getByTestId('tts-preview').click();
+  });
+  await settle();
+  expect(spoken.at(-1)).toMatchObject({ name: 'preview' });
+  expect(view.getByTestId('voice-chip').textContent).toContain('已降級');
+});
+
+test('播報中改語音選項（播報器重建）：被 dispose 的那一則不會再回報，speaking 要在 cleanup 歸零（複審 F1）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const setReaction = jest.spyOn(SpriteController.prototype, 'setReaction');
+  const view = render(<MascotPanel {...props({ alertState: PENDING })} />);
+  await settle();
+  act(() => {
+    capturedEvents?.onStart?.({ text: '測試', emotion: 'calm' } as BroadcastPlan);
+  });
+  expect(setReaction).toHaveBeenLastCalledWith(null);
+
+  // 不送 onEnd／onError —— 外部語音的世代檢查會把被 dispose 那一則的回呼吞掉。
+  setReaction.mockClear();
+  view.rerender(<MascotPanel {...props({ alertState: PENDING, options: { ttsRate: 1.3 } })} />);
+  await settle();
+  // speaking 沒歸零的話 pending 表情會一直被壓住。
+  expect(setReaction).toHaveBeenLastCalledWith('pending');
+  setReaction.mockRestore();
 });

@@ -24,7 +24,8 @@ export interface SpeakerEvents {
    * `charLength` 給出這一組的字數 —— 長組多擺幾下、短組只擺一下。
    */
   onBoundary?: (info: { charIndex: number; charLength: number }) => void;
-  onError?: (err: string) => void;
+  /** `plan` 是出錯的那一則；外部語音的降級層靠它分辨晚到的舊回呼（ADR-005）。 */
+  onError?: (err: string, plan?: BroadcastPlan) => void;
   /** 挑到（或換到）的聲線名稱；null = 沒有中文聲線、用引擎預設。給畫面顯示用。 */
   onVoice?: (name: string | null) => void;
 }
@@ -217,7 +218,7 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
         repickVoice();
       }
       if (err) {
-        opts.events?.onError?.(err);
+        opts.events?.onError?.(err, plan);
       } else {
         opts.events?.onEnd?.(plan);
       }
