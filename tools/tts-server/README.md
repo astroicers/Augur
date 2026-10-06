@@ -85,6 +85,7 @@ python tools/tts-server/server.py
 | `AUGUR_TTS_CACHE` | 512 | 片段快取筆數，0 = 不快取 |
 | `AUGUR_TTS_MAX_SEC_PER_UNIT` | 0.8 | 失控上限：每個字最多念幾秒（另加 1 秒），見下方〈念錯與失控〉 |
 | `AUGUR_TTS_REFERENCE` | `voices/boy.wav` | 參考音；逐字稿預設是同名的 `.txt` |
+| `AUGUR_TTS_SSL_CERTFILE`／`AUGUR_TTS_SSL_KEYFILE` | （空） | 兩個都給就走 https。Grafana 走 https 時語音服務也要 https，見下方〈Grafana 走 https〉 |
 | `BREEZYVOICE_DIR` | `~/engines/BreezyVoice` | 上游程式的位置 |
 
 ## 會遇到的延遲
@@ -128,6 +129,18 @@ python tools/tts-server/server.py
 | `quality.py` | 念 4 句典型告警各 3 次，用 Whisper 轉回文字抽查（Whisper 對童聲本來就不準，結果只是線索） | 同上 |
 | `latency.py` | 模擬面板逐句要音訊，量冷／熱的開口等待與停頓 | 服務跑起來後 `python3 tools/tts-server/eval/latency.py http://127.0.0.1:8765` |
 | `browser-poc.mjs` | 在真的 Grafana 上用無頭瀏覽器按「試聽」：跨來源、播放、嘴型、各種失敗時的降級 | `GRAFANA_URL=… TTS_URL=… node tools/tts-server/eval/browser-poc.mjs`（會建一個暫時 dashboard、跑完刪掉） |
+
+## Grafana 走 https
+
+瀏覽器不讓 https 頁面呼叫 http 服務（混合內容），所以 Grafana 走 https 時，語音服務也要走 https：
+
+```bash
+AUGUR_TTS_SSL_CERTFILE=/path/cert.pem AUGUR_TTS_SSL_KEYFILE=/path/key.pem python tools/tts-server/server.py
+```
+
+憑證要是瀏覽器信任的，並且 `AUGUR_TTS_ALLOW_ORIGINS` 要寫 `https://` 開頭的 Grafana 網址。
+（2026-10-06 實測 Chromium：http 服務用主機名稱會被擋；用 `192.168.x.x` 這種區網 IP 只會警告、照樣能播，
+但那是瀏覽器對區網位址的放寬，不保證每個瀏覽器、每個版本都這樣。）
 
 ## 連不上的時候
 

@@ -193,6 +193,8 @@ Web Speech 路徑維持 boundary 事件驅動的嘴型。
 | G-ADR005-4 延遲分布（初版，作廢） | 歷史 | 30 則（10 種真實格式告警 × 3 輪，數值每輪不同），模擬面板的逐句＋預取：冷 p50 5.7／p95 8.0／最慢 8.9 秒；熱 0.0 秒，句間卡頓最長 1.7 秒；單一片段 > 15 秒 1 次（冷）。⚠️ 這組數字量於複審修正**之前**：當時逾時從送出請求起算、最短片段 8 字、伺服器快取不合併同時的重複請求；那一次 > 15 秒在新算法下可能不會逾時 |
 | G-ADR005-5 嘴型 | ✅ 機械 PASS，**目測待使用者** | 試聽期間取樣 286 次，嘴型層在 隱藏／半開／全開 三態間切換 21 次，首次 44ms、最後一次 2.09 秒（≈ 該句長度）。「與聲音同步」需人眼確認。複審修正後重跑 G1／G2／G3／G5 全數維持：切換 23 次、最後一次 2.77 秒（伺服器重啟、快取清空，該句重新合成，長度不同）。2026-10-06 以 `tools/tts-server/eval/browser-poc.mjs` 在最終版與 8765 埠再跑：全數維持（切換 20 次、最後 3.41 秒），G3 另加「服務回 502（失控截斷）」→ 正確降級（**502 由 Playwright 攔截模擬**；真伺服器的 502 經 CORS 中介層後在瀏覽器裡的表現未實測，另由 `runaway_check.py` 驗伺服器端確實回 502） |
 | 失控上限 | ✅ 機制 PASS | `eval/runaway_check.py`：上限壓到每單位 0.05 秒，正常句碰上限 → HTTP 502、1.8 秒內截斷、未寫進快取。`eval/quality.py` 12 次中截斷 1 次，正是已知會失控的那組（自我介紹、種子 3，於 20.2 秒處） |
+| V-2 Frontend Sandbox | ✅ PASS | 2026-10-06，暫時容器 `grafana/grafana:13.2.2` 開 `GF_SECURITY_ENABLE_FRONTEND_SANDBOX_FOR_PLUGINS=augur-mascot-panel`：試聽 → 語音服務收到請求（200）、`decodeAudioData` 1 次、`AudioBufferSourceNode.start` 1 次、播放 3.7 秒（以 init script 計數，sandbox 的 iframe 也被注入），標籤維持外部語音。⚠️ sandbox 下主頁面看不到 plugin 設的 `data-*` 屬性，`browser-poc.mjs` 的嘴型取樣在 sandbox 裡量不到；圖本身正常顯示（截圖確認） |
+| V-2 https | ✅ https 服務 PASS；http 服務視網址而定 | 2026-10-06，暫時容器 Grafana 走 https（自簽憑證，Chromium 以 `--ignore-certificate-errors-spki-list` 只信任這一張）：語音服務 https → 完整 POC 通過（G1/G2/G3/G5，嘴型切換 25 次）；http＋主機名稱（`192.168.0.18.nip.io`）→ `mixed-content` 擋下、正確降級；http＋區網 IP → 只有警告、照常播放。⚠️ `ignoreHTTPSErrors` 會連帶放寬混合內容檢查，不能拿來測 https |
 | CORS 預檢 | ✅ | Python urllib：`Origin: http://127.0.0.1:3002` → 200 並回同一 origin；`http://evil.example` → 400 |
 
 ## Follow-up / POC gate（升 Accepted 前必過；結果見上方「POC gate 機械證據」）
@@ -211,7 +213,11 @@ Web Speech 路徑維持 boundary 事件驅動的嘴型。
    `'self' grafana.com *.cartocdn.com` 與 ws，**外部語音服務會被擋**；模板另有 `media-src 'none'`
    （決策 5 改走 Web Audio 的原因）。啟用 CSP 的站台需在模板的 `connect-src` 加上語音服務網址，
    或把語音服務放在同源反向代理後面。只能寫進 README，plugin 管不到。
-2. **混合內容**：Grafana 走 https 時，http 的語音服務會被瀏覽器擋。語音服務需同樣走 https 或放同源反向代理。
+2. **混合內容**（2026-10-06 實測，ROADMAP V-2；Chromium 153）：Grafana 走 https 時 ——
+   - 語音服務走 **https**：正常（完整瀏覽器 POC 通過）。參考服務以 `AUGUR_TTS_SSL_CERTFILE`／`AUGUR_TTS_SSL_KEYFILE` 啟用 TLS。
+   - 語音服務走 http、網址用**主機名稱**：瀏覽器擋下（`Mixed Content` 錯誤），面板降級、標籤「Failed to fetch」。
+   - 語音服務走 http、網址用**區網 IP**（`192.168.x.x`）：Chromium 只發警告、照樣送出 —— 這是 Chrome 對區網位址的放寬，
+     不是規格保證，其他瀏覽器與日後版本可能不同。**建議一律用 https**。
 3. **BreezyVoice 上游維護**：最後推送 2025-06-21，依賴版本舊（torch 2.3.1、ruamel.yaml 需 pin 0.17）。
    實測安裝時踩到三個相依問題，參考伺服器的說明要寫清楚。
 4. **聲音由使用者裁定**：「像不像小男孩」沒有機械判準，選哪一檔強度由使用者試聽決定。

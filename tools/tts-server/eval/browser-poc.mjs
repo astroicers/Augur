@@ -12,7 +12,9 @@ const { chromium } = require('@playwright/test');
 
 const G = process.env.GRAFANA_URL ?? 'http://127.0.0.1:3002';
 const TTS = process.env.TTS_URL ?? 'http://127.0.0.1:8765';
-const env = (k) => execSync(`docker exec augur-grafana printenv ${k}`).toString().trim();
+// 驗 https／Frontend Sandbox 時會另起暫時容器（ROADMAP V-2），容器名由 GRAFANA_CONTAINER 指定。
+const CONTAINER = process.env.GRAFANA_CONTAINER ?? 'augur-grafana';
+const env = (k) => execSync(`docker exec ${CONTAINER} printenv ${k}`).toString().trim();
 const user = env('GF_SECURITY_ADMIN_USER');
 const pass = env('GF_SECURITY_ADMIN_PASSWORD');
 const auth = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
@@ -57,8 +59,16 @@ console.log('建立暫時 dashboard', created.status);
 // ⚠️ launch 放在 try 裡：啟動失敗時 finally 仍要刪掉暫時 dashboard（第三輪複審）。
 let browser;
 try {
-  browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // TRUST_SPKI：只信任指定的那一張自簽憑證（其餘照真實瀏覽器規則）。比 IGNORE_HTTPS 更接近真實環境 ——
+  // ignoreHTTPSErrors 會連帶放寬其他檢查，2026-10-06 實測它讓 https 頁面呼叫 http 服務沒被當成混合內容擋下。
+  browser = await chromium.launch(
+    process.env.TRUST_SPKI ? { args: [`--ignore-certificate-errors-spki-list=${process.env.TRUST_SPKI}`] } : {}
+  );
+  // IGNORE_HTTPS=1：自簽憑證的 https 測試用（Node 端另需 NODE_TLS_REJECT_UNAUTHORIZED=0）。
+  const ctx = await browser.newContext({
+    viewport: { width: 1400, height: 900 },
+    ignoreHTTPSErrors: process.env.IGNORE_HTTPS === '1',
+  });
   console.log('登入', (await ctx.request.post(`${G}/login`, { data: { user, password: pass } })).status());
   const page = await ctx.newPage();
   const tts = [];

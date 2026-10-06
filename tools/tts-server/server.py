@@ -273,4 +273,13 @@ def speech(req: SpeechRequest) -> Response:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=os.environ.get("AUGUR_TTS_HOST", "0.0.0.0"), port=int(os.environ.get("AUGUR_TTS_PORT", "8765")))
+    # 選填 TLS：Grafana 走 https 時，http 的語音服務會被瀏覽器當成混合內容擋下（ADR-005 待驗風險 2），
+    # 語音服務也要走 https。兩個都給才啟用。
+    cert = os.environ.get("AUGUR_TTS_SSL_CERTFILE")
+    key = os.environ.get("AUGUR_TTS_SSL_KEYFILE")
+    uvicorn.run(
+        app,
+        host=os.environ.get("AUGUR_TTS_HOST", "0.0.0.0"),
+        port=int(os.environ.get("AUGUR_TTS_PORT", "8765")),
+        **({"ssl_certfile": cert, "ssl_keyfile": key} if cert and key else {}),
+    )
