@@ -22,6 +22,15 @@ const api = (path, init = {}) =>
     headers: { Authorization: auth, 'Content-Type': 'application/json', ...(init.headers || {}) },
   });
 
+// 先替試聽那句暖快取：dashboard 的逾時設 3 秒（為了測逾時降級），冷合成會超過它，G1 就變成逾時降級。
+// 文字必須與 MascotPanel 的 preview 一字不差（面板切段後就是整句一段）。
+const warm = await fetch(`${TTS}/v1/audio/speech`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ input: '嗨，我會幫你把告警念出來。' }),
+});
+console.log('暖快取', warm.status);
+
 const UID = 'adr005-poc';
 const created = await api('/api/dashboards/db', {
   method: 'POST',
