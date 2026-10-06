@@ -15,8 +15,12 @@
 import type { BroadcastPlan } from '../core/types';
 import type { Speaker, SpeakerEvents } from './speaker';
 
-/** ADR-005 決策 3：實測一般 3–8 秒、離群值 32 秒；15 秒是「寧可降級也不要讓告警晚半分鐘」。 */
-export const DEFAULT_TIMEOUT_MS = 15000;
+/**
+ * ADR-005 決策 3。原為 15 秒（依 BreezyVoice：一般 3–8 秒）；2026-10-06 換成 Qwen3-TTS 後改 30 秒 ——
+ * 它產語音比念出來慢，第一次出現的長片段（例如逐位念 IP 的那段）實測要 15–19 秒，15 秒會把正常的服務誤判成逾時。
+ * 代價：服務真的掛掉時，要多等 15 秒才改用內建聲線。
+ */
+export const DEFAULT_TIMEOUT_MS = 30000;
 
 export interface RemoteSpeakerEvents extends SpeakerEvents {
   /** 幀級張口幅度 0／0.5／1，只在數值改變時呼叫。接 `AvatarController.setMouthOpen`。 */

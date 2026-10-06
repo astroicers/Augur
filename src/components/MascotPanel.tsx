@@ -227,7 +227,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice, ttsPitch, ttsRate } = options;
   // 舊 dashboard 存的選項沒有這兩欄；Grafana 會補預設值，但不靠它。
   const ttsEndpoint = (options.ttsEndpoint ?? '').trim();
-  const ttsTimeoutSec = options.ttsTimeoutSec ?? 15;
+  const ttsTimeoutSec = options.ttsTimeoutSec ?? 30;
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';

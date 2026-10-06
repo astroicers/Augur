@@ -58,7 +58,7 @@ const OPTIONS: MascotPanelOptions = {
   ttsPitch: 1,
   ttsRate: 1,
   ttsEndpoint: '',
-  ttsTimeoutSec: 15,
+  ttsTimeoutSec: 30,
   directionsImgUrl: '',
   reactionsImgUrl: '',
 };

@@ -17,12 +17,12 @@ Augur 外部語音服務的參考實作（ADR-005 決策 6）：Qwen3-TTS 年輕
   6. 失控上限（見 textsplit.clause_limit_sec／qwen_max_new_tokens）。
 
 環境變數：
-  AUGUR_TTS_MODEL          模型（預設 Qwen/Qwen3-TTS-12Hz-1.7B-Base）
+  AUGUR_TTS_MODEL          模型（預設 Qwen/Qwen3-TTS-12Hz-1.7B-Base；只能換 12Hz 的 Base，失控上限的 frame 長度寫死在 12Hz）
   AUGUR_TTS_REFERENCE      參考音 wav（預設 ./voices/young_male.wav，見 make_voice.py）
   AUGUR_TTS_REFERENCE_TEXT 參考音的逐字稿檔（預設與 wav 同名的 .txt）
   AUGUR_TTS_ALLOW_ORIGINS  允許的 Grafana origin，逗號分隔（預設 localhost／127.0.0.1 的 3000 與 3002）
   AUGUR_TTS_CACHE          片段快取筆數（預設 512；0 = 不快取）
-  AUGUR_TTS_MAX_SEC_PER_UNIT 失控上限，每單位幾秒（預設 0.8）
+  AUGUR_TTS_MAX_SEC_PER_UNIT 失控上限，每單位幾秒（預設 0.45，見 textsplit.DEFAULT_SEC_PER_UNIT）
 
 `speed` 欄位收下但不套用：模型沒有語速參數，事後變速會有金屬聲。面板的「語速」滑桿對這個服務沒有作用。
 """
@@ -46,7 +46,6 @@ CACHE_SIZE = int(os.environ.get("AUGUR_TTS_CACHE", "512"))
 # 瀏覽器送的 Origin 是網址列上的寫法，localhost 與 127.0.0.1 是兩個不同的 origin，兩種都列。
 DEFAULT_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3002,http://127.0.0.1:3002"
 ORIGINS = [o.strip() for o in os.environ.get("AUGUR_TTS_ALLOW_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
-MAX_SEC_PER_UNIT = float(os.environ.get("AUGUR_TTS_MAX_SEC_PER_UNIT", "0.8"))
 
 import numpy as np  # noqa: E402
 import soundfile as sf  # noqa: E402
@@ -59,7 +58,16 @@ from pydantic import BaseModel  # noqa: E402
 from qwen_tts import Qwen3TTSModel  # noqa: E402
 
 sys.path.insert(0, str(HERE))
-from textsplit import clause_limit_sec, clauses, is_runaway, qwen_max_new_tokens, spoken_units  # noqa: E402
+from textsplit import (  # noqa: E402
+    DEFAULT_SEC_PER_UNIT,
+    clause_limit_sec,
+    clauses,
+    is_runaway,
+    qwen_max_new_tokens,
+    spoken_units,
+)
+
+MAX_SEC_PER_UNIT = float(os.environ.get("AUGUR_TTS_MAX_SEC_PER_UNIT", str(DEFAULT_SEC_PER_UNIT)))
 
 if not REF_WAV.exists():
     sys.exit(f"找不到參考音 {REF_WAV}。先跑 make_voice.py（見 README）。")

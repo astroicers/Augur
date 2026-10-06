@@ -62,28 +62,35 @@ def spoken_units(text: str) -> float:
 
 
 # ---- 失控上限 ----
-# 以「念出來的單位」算這一段最多可以念幾秒：每單位 sec_per_unit 秒（預設 0.8）＋1 秒。
-# 由來（2026-10-05／06，前一個模型 BreezyVoice 實測）：正常輸出每單位最高 0.59 秒、極端失控 0.9 秒、
-# 輕微失控（多念一段）0.65 秒 —— 0.8 擋得住極端失控、擋不住輕微失控。不用「文字 token 的倍數」：
-# 英文單字、數字 token 少卻念得久，以 12 倍試跑 12 次截斷 8 次、7 次誤判。
-# 換成 Qwen3-TTS 後沿用同一個秒數上限，交給模型的是 max_new_tokens（見 qwen_max_new_tokens）。
+# 以「念出來的單位」算這一段最多可以念幾秒：每單位 sec_per_unit 秒＋1 秒。超過就當作失控。
+# 不用「文字 token 的倍數」：英文單字、數字 token 少卻念得久（前一個模型實測以 12 倍試跑，12 次誤判 7 次）。
+#
+# 每單位秒數依 Qwen3-TTS 實測校準（2026-10-06，第四輪複審 F1）：正常語速每單位約 0.21–0.25 秒
+# （`eval/quality.py`：24 單位的自我介紹 5.0–5.4 秒、約 28 單位的帳號鎖定 5.9–6.2 秒）。預設 0.45 ——
+# 約正常的 1.8 倍，加上 1 秒給短句的頭尾；整段念兩遍（約 0.5）就會被擋。原本沿用前一個模型 BreezyVoice
+# 的 0.8（它念得慢、正常最高 0.59），在 Qwen 上寬了約 3.5 倍：念兩三遍都擋不住。
+DEFAULT_SEC_PER_UNIT = 0.45
 
-# Qwen3-TTS-12Hz 每個生成步產生的語音長度（2026-10-06 實測：max_new_tokens=36 → 2.80 秒）。
-QWEN_TOKEN_SEC = 2.80 / 36
+# Qwen3-TTS-12Hz 的語音以 frame 為單位：tokenizer 每個 frame 上採樣 1920 點、輸出 24 kHz → 每 frame 0.08 秒
+# （qwen_tts 的 configuration_qwen3_tts_tokenizer_v2：decode_upsample_rate=1920、output_sample_rate=24000）。
+# generate 的第一步（prefill）不產 frame，所以 max_new_tokens=n 最多產 n−1 個 frame
+# （實測 36 → 2.80 秒 = 35 × 0.08）。第四輪複審 F4：先前寫成「每步 0.078 秒」，是 35 個 frame 攤到 36 步的結果。
+FRAME_SEC = 1920 / 24000
 
 
-def clause_limit_sec(units: float, sec_per_unit: float) -> float:
+def clause_limit_sec(units: float, sec_per_unit: float = DEFAULT_SEC_PER_UNIT) -> float:
     return sec_per_unit * units + 1.0
 
 
 def qwen_max_new_tokens(limit_sec: float) -> int:
-    """交給 generate 的 max_new_tokens：剛好能念到 limit_sec，多一步餘裕。"""
-    return math.ceil(limit_sec / QWEN_TOKEN_SEC) + 1
+    """交給 generate 的 max_new_tokens：最多 n−1 個 frame，剛好能念到 limit_sec。"""
+    return math.ceil(limit_sec / FRAME_SEC) + 1
 
 
 def is_runaway(audio_sec: float, limit_sec: float) -> bool:
     """
     產出的語音長度碰到上限就算失控：模型是被 max_new_tokens 截斷的，不是自己停下來。
-    以 max_new_tokens 對應的長度扣一步當門檻（解碼頭尾可能差一點點）。
+    被截斷時恰好是 n−1 個 frame；差半個 frame 的容忍給解碼頭尾的取樣差。
     """
-    return audio_sec >= (qwen_max_new_tokens(limit_sec) - 1) * QWEN_TOKEN_SEC - 1e-6
+    frames = qwen_max_new_tokens(limit_sec) - 1
+    return audio_sec >= (frames - 0.5) * FRAME_SEC

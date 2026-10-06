@@ -18,7 +18,7 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   browser's built-in voices read the alerts. Fill it in with an OpenAI-compatible speech
   service and the mascot speaks in that voice instead. The panel asks for one short phrase at
   a time. If the service fails on a phrase, or takes longer than *External speech timeout*
-  (15 s by default, counted from when that phrase is due), the built-in voice reads the rest
+  (30 s by default, counted from when that phrase is due), the built-in voice reads the rest
   of that alert, and the voice label on the panel says so and why. The next alert tries the
   service again.
 - With an external voice the mouth follows the loudness of the audio, not a fixed rhythm.
@@ -27,7 +27,7 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   text description and is not based on any real person's recording, and it is not pitch-shifted.
   The model and the voice sample are not in this repository.
 - The service produces speech more slowly than it is spoken. The first time a given alert is
-  read, the mascot starts speaking after about 5 seconds, but it may pause between phrases
+  read, the mascot starts speaking after 5 to 10 seconds, and it may pause between phrases
   while the rest is still being made. When the same alert fires again, it starts at once,
   because the service remembers the parts of the sentence that repeat.
 - The panel's *Rate* setting is sent to the service, but the reference service ignores it;

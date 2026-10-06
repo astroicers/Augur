@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from textsplit import (  # noqa: E402
-    QWEN_TOKEN_SEC,
+    FRAME_SEC,
     clause_limit_sec,
     clauses,
     is_runaway,
@@ -83,31 +83,49 @@ def 念出來的單位():
 
 @test
 def 秒數上限():
-    # 每單位 0.8 秒＋1 秒：24 單位 → 20.2 秒（自我介紹那句）。
+    # 每單位 0.45 秒＋1 秒（Qwen 實測正常約 0.21–0.25）：24 單位 → 11.8 秒。
+    assert abs(clause_limit_sec(24) - 11.8) < 1e-9
     assert abs(clause_limit_sec(24, 0.8) - 20.2) < 1e-9
 
 
 @test
+def 正常語速不會碰到上限_念兩遍會():
+    # quality.py 實測：24 單位的自我介紹念 5.0–5.4 秒、約 28 單位的帳號鎖定 5.9–6.2 秒。
+    for units, normal_sec in ((24, 5.4), (28, 6.2)):
+        assert not is_runaway(normal_sec, clause_limit_sec(units))
+    # 整段念兩遍＋停頓：24 單位約 11 秒以上、上限 11.8 秒 → 被截在上限，判為失控。
+    limit = clause_limit_sec(24)
+    truncated = (qwen_max_new_tokens(limit) - 1) * FRAME_SEC
+    assert is_runaway(truncated, limit)
+
+
+@test
 def max_new_tokens_剛好念得到上限():
-    for limit in (1.0, 3.7, 20.2, 45.0):
+    for limit in (1.0, 3.7, 11.8, 45.0):
         n = qwen_max_new_tokens(limit)
-        assert n * QWEN_TOKEN_SEC >= limit, (limit, n)
-        assert (n - 2) * QWEN_TOKEN_SEC < limit, (limit, n)
+        assert (n - 1) * FRAME_SEC >= limit, (limit, n)  # n−1 個 frame 念得到上限
+        assert (n - 2) * FRAME_SEC < limit, (limit, n)  # 不多給
+
+
+@test
+def frame_長度對得上實測():
+    # 2026-10-06 實測：max_new_tokens=36 產出 2.80 秒＝35 個 frame（第一步 prefill 不產 frame）。
+    assert abs((36 - 1) * FRAME_SEC - 2.80) < 1e-9
 
 
 @test
 def 碰到上限才算失控():
-    limit = 20.2
-    full = qwen_max_new_tokens(limit) * QWEN_TOKEN_SEC  # 被 max_new_tokens 截斷時的長度
-    assert is_runaway(full, limit)
-    assert is_runaway(full - QWEN_TOKEN_SEC, limit)  # 解碼頭尾少一步也算
-    assert not is_runaway(limit - 2 * QWEN_TOKEN_SEC, limit)  # 自己在上限前停下來的正常句
-    assert not is_runaway(7.0, limit)
+    limit = 11.8
+    frames = qwen_max_new_tokens(limit) - 1  # 被截斷時恰好這麼多 frame
+    assert is_runaway(frames * FRAME_SEC, limit)
+    assert not is_runaway((frames - 1) * FRAME_SEC, limit)  # 少一個 frame＝自己停下來的正常句
+    assert not is_runaway(5.4, limit)
 
 
 @test
 def 簡體也算單位():
-    assert spoken_units("侦测到告警") == 5
+    # 模型入口轉成簡體後才算單位；簡體字（含常用的「侦、测、库」）都在基本區。
+    assert spoken_units("侦测到告警，数据库") == 8
 
 
 if __name__ == "__main__":

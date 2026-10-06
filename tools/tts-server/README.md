@@ -18,7 +18,7 @@ Augur 面板的「外部語音服務網址」要填一個語音服務。這個�
 
 ## 需要什麼
 
-- 一台有 NVIDIA GPU 的 Linux 機器（或 WSL2）。實測 RTX 4070（12 GB），服務用掉約 4.7 GB 顯存。
+- 一台有 NVIDIA GPU 的 Linux 機器（或 WSL2）。實測 RTX 4070（12 GB），服務用掉約 4.6 GB 顯存。
 - conda（或任何能建 Python 3.12 環境的工具）。
 - 約 11 GB 磁碟：Python 環境約 6.5 GB，模型約 4.3 GB（第一次啟動時從 Hugging Face 下載）。
   要重新生成聲音的話，另需 VoiceDesign 模型約 4 GB。
@@ -31,7 +31,7 @@ repo 裡只有我們寫的程式。模型權重和參考音都不進 repo。
 conda create -y -n qwen3tts python=3.12
 conda activate qwen3tts
 export PYTHONNOUSERSITE=1   # 避免 ~/.local 裡的套件蓋過環境裡的版本
-pip install -U qwen-tts opencc-python-reimplemented fastapi "uvicorn[standard]" soundfile
+pip install qwen-tts==0.1.1 opencc-python-reimplemented fastapi "uvicorn[standard]" soundfile   # qwen-tts 釘版本：失控判定依賴它的內部行為，升版要重跑 eval/runaway_check.py
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # 最後要是 True
 ```
 
@@ -65,20 +65,20 @@ python tools/tts-server/server.py
 | `AUGUR_TTS_PORT` | 8765 | 8080–8099 常被 `kubectl port-forward` 等工具占用，所以避開 |
 | `AUGUR_TTS_HOST` | 0.0.0.0 | |
 | `AUGUR_TTS_CACHE` | 512 | 片段快取筆數，0 = 不快取 |
-| `AUGUR_TTS_MAX_SEC_PER_UNIT` | 0.8 | 失控上限：每個字最多念幾秒（另加 1 秒），見下方〈念錯與失控〉 |
-| `AUGUR_TTS_MODEL` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | 模型。換 0.6B 實測沒有比較快 |
+| `AUGUR_TTS_MAX_SEC_PER_UNIT` | 0.45 | 失控上限：每個字最多念幾秒（另加 1 秒；正常約 0.21–0.25），見下方〈念錯與失控〉 |
+| `AUGUR_TTS_MODEL` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | 模型。只能換 12Hz 的 Base（失控上限的 frame 長度寫死在 12Hz）；換 0.6B 實測沒有比較快 |
 | `AUGUR_TTS_REFERENCE` | `voices/young_male.wav` | 參考音；逐字稿預設是同名的 `.txt` |
 | `AUGUR_TTS_SSL_CERTFILE`／`AUGUR_TTS_SSL_KEYFILE` | （空） | 兩個都給就走 https。Grafana 走 https 時語音服務也要 https，見下方〈Grafana 走 https〉 |
 
 ## 會遇到的延遲
 
-這個模型**產語音比念出來慢**：念 1 秒要算 1.7–2 秒（瓶頸在逐步生成的程式開銷，不在 GPU）。
+這個模型**產語音比念出來慢**：念 1 秒要算約 1.5–2 秒（瓶頸在逐步生成的程式開銷，不在 GPU）。
 面板把一則告警切成短句、逐句來要，第一句回來就開始播；伺服器會記住念過的片段。所以：
 
-- **某種告警第一次出現**：開口前等大約 5 秒（實測 p50 4.9 秒、最慢 8.9 秒），但**句子之間常會停頓**（p50 約 5 秒、最長約 10 秒），
-  因為後面的句子還在產。
-- **同一種告警再出現**（只有數值不同）：立刻開口。只有數值那一段要現產，停頓最長約 8 秒。
-- 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 15 秒，從輪到這一段時起算），
+- **某種告警第一次出現**：開口前要等 5–10 秒（兩輪實測 p50 4.9、9.6 秒；最慢 17 秒，多半是逐位念 IP 的那段），
+  而且**句子之間常會停頓**（一則加總最長約 11 秒），因為後面的句子還在產。
+- **同一種告警再出現**（只有數值不同）：立刻開口。只有數值那一段要現產，一則的停頓加總最長約 12 秒。
+- 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 30 秒，從輪到這一段時起算），
   從這一段起改用瀏覽器聲線念完這則。下一則會再試外部服務。
 
 快取存在記憶體，重啟服務後歸零。同一段同時有好幾個請求（例如好幾個人開著同一個 dashboard）時只算一次。
@@ -92,10 +92,10 @@ python tools/tts-server/server.py
 
 試聽前先知道：
 
-- 抽查 12 次（4 句各 3 次）：數字都念對（「91.35」3/3）、英文摘要都完整念出、「warning」3 次對 2 次。
-- **失控**：這類模型偶爾會停不下來。服務以字數算每段最多能念多久（每字 0.8 秒＋1 秒），
+- 抽查（4 句各 3 次，跑了兩次）：數字都念對（「91.35」3/3）、英文摘要都完整念出、「warning」3 次對 2 次。
+- **失控**：這類模型偶爾會停不下來。服務以字數算每段最多能念多久（每字 0.45 秒＋1 秒，正常約 0.21–0.25），
   超過就截斷、回 502，面板把那則剩下的部分改用瀏覽器聲線念。失控的音訊不會被放出來。
-  抽查 12 次沒有發生；只多念一小段的輕微失控擋不住，會照樣播出，而且會被快取住，直到服務重啟。
+  整段念兩遍會被擋；只多念一個詞、重複一小段這類輕微失控擋不住，會照樣播出，而且會被快取住，直到服務重啟。抽查 24 次沒有發生。
 - 面板語言設成 English（整句英文）時沒有測過。
 
 ## 自己驗證
