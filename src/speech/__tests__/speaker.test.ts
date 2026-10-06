@@ -13,7 +13,7 @@
  *
  * 邊界只有一個：`SpeechSynthesis`。這裡用假的，其餘全跑真的。
  */
-import { createSpeaker, pickVoice, loadVoices, CHARS_PER_SEC } from '../speaker';
+import { createSpeaker, pickVoice, loadVoices, CHARS_PER_SEC, splitForRemoteVoice, REMOTE_CHUNK_SEC } from '../speaker';
 import type { BroadcastPlan } from '../../core/types';
 
 class FakeUtterance {
@@ -406,4 +406,118 @@ test('指名聲線可以只填名稱的一段（不分大小寫）；onVoice 回
   await settle();
   expect(seen).toEqual(['Microsoft Zhiwei - Chinese (Traditional, Taiwan)']);
   expect(sp.voiceName()).toBe('Microsoft Zhiwei - Chinese (Traditional, Taiwan)');
+});
+
+// ---------------------------------------------------------------------------
+// B7-2：遠端聲線切段（ADR-004 決策 4）
+// ---------------------------------------------------------------------------
+
+describe('splitForRemoteVoice', () => {
+  it('接起來等於原文、每段不超過上限、盡量在標點後切', () => {
+    const text = '偵測到告警：主機 CPU 使用率過高，嚴重度 critical，目前數值 91.35，已經持續兩分鐘了。請盡快檢查。';
+    const out = splitForRemoteVoice(text, 20);
+    expect(out.join('')).toBe(text);
+    expect(out.every((c) => c.length <= 20)).toBe(true);
+    expect(out.slice(0, -1).every((c) => /[，。！？；、,.!?;\s]$/.test(c))).toBe(true);
+  });
+  it('沒有標點的長串硬切', () => {
+    const text = 'x'.repeat(25);
+    expect(splitForRemoteVoice(text, 10)).toEqual(['x'.repeat(10), 'x'.repeat(10), 'x'.repeat(5)]);
+  });
+  it('不超過上限就不切', () => {
+    expect(splitForRemoteVoice('短句。', 56)).toEqual(['短句。']);
+  });
+});
+
+describe('遠端聲線切段', () => {
+  const LONG =
+    '偵測到告警：WindowsHighCPU，嚴重度 critical，受影響對象 192.168.1.20，目前數值 91.35，Windows host CPU usage is high，已經持續兩分鐘，請值班人員盡快處理。';
+  const remote = () => mk({ voices: [{ name: 'Online', lang: 'zh-TW', localService: false }] } as Partial<FakeSynth>);
+
+  it('本機聲線不切：整則一個 utterance', async () => {
+    const synth = mk();
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis);
+    sp.enqueue(plan(LONG));
+    await settle();
+    expect(synth.spoken.map((u) => u.text)).toEqual([LONG]);
+  });
+
+  it('遠端聲線：切成每段 ≤10 秒（每秒 5.6 字 → 56 字），逐段念；onStart／onEnd 各一次', async () => {
+    const synth = remote();
+    const log: string[] = [];
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+      events: { onStart: () => log.push('start'), onEnd: () => log.push('end') },
+    });
+    sp.enqueue(plan(LONG));
+    await settle();
+    expect(synth.spoken).toHaveLength(1); // 一次只送一段
+    const max = Math.floor(REMOTE_CHUNK_SEC * CHARS_PER_SEC);
+    for (let guard = 0; guard < 10 && synth.current; guard++) {
+      const u = synth.current;
+      u.onstart?.(); // 真引擎每一段都會觸發 onstart
+      synth.current = null;
+      u.onend?.();
+    }
+    const texts = synth.spoken.map((u) => u.text);
+    expect(texts.length).toBeGreaterThan(1);
+    expect(texts.join('')).toBe(LONG);
+    expect(texts.every((t) => t.length <= max)).toBe(true);
+    expect(log).toEqual(['start', 'end']);
+  });
+
+  it('語速加快時每段可以更長（上限跟著語速放大）', async () => {
+    const synth = remote();
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, { rate: 2 });
+    sp.enqueue(plan(LONG));
+    await settle();
+    // 1 倍速上限 56 字、2 倍速 112 字：第一段要比 56 長、但不超過 112。
+    const first = synth.spoken[0]!.text;
+    expect(first.length).toBeGreaterThan(Math.floor(REMOTE_CHUNK_SEC * CHARS_PER_SEC));
+    expect(first.length).toBeLessThanOrEqual(Math.floor(REMOTE_CHUNK_SEC * CHARS_PER_SEC * 2));
+  });
+
+  it('boundary 的 charIndex 換算回整則的位置', async () => {
+    const synth = remote();
+    const idx: number[] = [];
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+      events: { onBoundary: (b) => idx.push(b.charIndex) },
+    });
+    sp.enqueue(plan(LONG));
+    await settle();
+    const first = synth.current!;
+    synth.current = null;
+    first.onend?.();
+    synth.current!.onboundary?.({ charIndex: 3, charLength: 2 });
+    expect(idx).toEqual([first.text.length + 3]);
+  });
+
+  it('stop() 之後，被 cancel 那段晚到的 onend 不會接著念下一段', async () => {
+    const synth = remote();
+    const log: string[] = [];
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+      events: { onEnd: () => log.push('end'), onError: (e) => log.push('err:' + e) },
+    });
+    sp.enqueue(plan(LONG));
+    await settle();
+    const u = synth.current!;
+    sp.stop();
+    u.onend?.(); // 有些引擎 cancel 後發 onend 而不是 onerror
+    await settle();
+    expect(synth.spoken).toHaveLength(1);
+    expect(log).toEqual([]);
+  });
+
+  it('某一段出錯：整則以錯誤收尾，不再念後面的段', async () => {
+    const synth = remote();
+    const log: string[] = [];
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+      events: { onEnd: () => log.push('end'), onError: (e) => log.push('err:' + e) },
+    });
+    sp.enqueue(plan(LONG));
+    await settle();
+    synth.current!.onerror?.({ error: 'network' });
+    await settle();
+    expect(synth.spoken).toHaveLength(1);
+    expect(log).toEqual(['err:network']);
+  });
 });

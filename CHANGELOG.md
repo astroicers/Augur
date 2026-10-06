@@ -12,7 +12,14 @@ That page was not the page anyone was looking at. ADR-004 reversed the direction
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
 
-### A real child's voice, optional (2026-10-05)
+### Long alerts on online voices (2026-10-06)
+
+- When the browser's voice is an online one rather than one installed on the computer, long
+  alerts are now read in pieces of up to about 10 seconds each. Some browsers have been known
+  to cut online voices off after about 15 seconds. Voices installed on the computer still read
+  the whole alert in one go.
+
+### A better voice, optional (2026-10-05)
 
 - New panel option *External speech service URL*. Leave it empty and nothing changes: the
   browser's built-in voices read the alerts. Fill it in with an OpenAI-compatible speech

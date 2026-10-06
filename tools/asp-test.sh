@@ -225,13 +225,13 @@ JEST_EXIT=$?
 
 # MIN_TESTS = 所有測試檔之和（2026-10-05 由 jest --json 實數，不是手算）：
 #   core/dedup 13 + core/emotion 3 + core/severity 4 + core/format-plan 4
-# + sources/panelAlerts 18 + speech/speaker 15 + speech/remoteSpeaker 41 + components/MascotPanel 25
+# + sources/panelAlerts 18 + speech/speaker 24 + speech/remoteSpeaker 41 + components/MascotPanel 25
 # + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 = 174（13 個 suite）
+# + __tests__/implementation-contract 6 = 183（13 個 suite）
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=174
+MIN_TESTS=183
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \

@@ -13,6 +13,50 @@ import type { BroadcastPlan } from '../core/types';
 /** 實測語速：77 字 / 13.766 秒。用來估 watchdog 逾時與佇列積壓。 */
 export const CHARS_PER_SEC = 5.6;
 
+/**
+ * 遠端聲線每段最多念幾秒（ADR-004 決策 4）。「約 15 秒截斷」這個 bug 歷史上與遠端聲線相關；
+ * 本機聲線實測連續 90 秒未中斷，所以只對 `localService === false` 的聲線切段。
+ */
+export const REMOTE_CHUNK_SEC = 10;
+
+/**
+ * 把一則播報切成每段不超過 maxChars 字，盡量在標點後切；單一片段本身就超長時硬切。
+ * 切出來的段落接起來必須等於原文（boundary 的位置換算靠這個）。
+ */
+export function splitForRemoteVoice(text: string, maxChars: number): string[] {
+  const limit = Math.max(1, maxChars);
+  if (text.length <= limit) {
+    return [text];
+  }
+  const pieces = text.split(/(?<=[，。！？；、,.!?;\s])/).filter((p) => p !== '');
+  const out: string[] = [];
+  let buf = '';
+  const flush = () => {
+    if (buf) {
+      out.push(buf);
+      buf = '';
+    }
+  };
+  for (const piece of pieces) {
+    if (buf.length + piece.length <= limit) {
+      buf += piece;
+      continue;
+    }
+    flush();
+    // 單一片段就超過上限（長串沒有標點）：硬切。
+    for (let i = 0; i < piece.length; i += limit) {
+      const part = piece.slice(i, i + limit);
+      if (part.length === limit) {
+        out.push(part);
+      } else {
+        buf = part;
+      }
+    }
+  }
+  flush();
+  return out;
+}
+
 /** 播報生命週期事件。`boundary` 是嘴型的同步點。 */
 export interface SpeakerEvents {
   onStart?: (plan: BroadcastPlan) => void;
@@ -197,6 +241,9 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     }
   }
 
+  /** stop() 會遞增它：被 cancel 的那一段晚到的 onend／onerror 不能再接下一段或收尾。 */
+  let gen = 0;
+
   function pump() {
     if (disposed || speaking) {
       return;
@@ -205,9 +252,16 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     if (!plan) {
       return;
     }
+    const myGen = gen;
+    const rate = clamp(opts.rate ?? 1, 0.1, 10);
+    // ADR-004 決策 4：遠端聲線才切段，本機聲線整則一次念。
+    const chunks =
+      voice?.localService === false
+        ? splitForRemoteVoice(plan.text, Math.floor(REMOTE_CHUNK_SEC * CHARS_PER_SEC * rate))
+        : [plan.text];
     let settled = false;
     const finish = (err?: string) => {
-      if (settled) {
+      if (settled || myGen !== gen) {
         return;
       }
       settled = true;
@@ -225,54 +279,79 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
       pump();
     };
 
-    // ⚠️ **`speaking = true` 與 utterance 的建構必須在同一個 try 裡。**
-    // 原本先設旗標再建構，而只有 `synth.speak(u)` 被 try 包住 ——
-    // 建構或指派 handler 的任何一步丟例外，都會留下 `speaking === true`
-    // 而引擎裡沒有任何 utterance：之後每一次 `pump()` 都在第一行就 return，
-    // 佇列**永遠停住**，沒有 watchdog（它還沒排上）、沒有錯誤、沒有跡象。
-    try {
-      const u = new SpeechSynthesisUtterance(plan.text);
-      if (voice) {
-        u.voice = voice;
-      }
-      u.lang = opts.lang ?? 'zh-TW';
-      u.pitch = clamp(opts.pitch ?? 1, 0, 2);
-      u.rate = clamp(opts.rate ?? 1, 0.1, 10);
+    /** 念第 i 段。onStart 只在第一段發；onEnd 只在最後一段念完時發（由 finish 送出）。 */
+    const speakChunk = (i: number, offset: number) => {
+      // ⚠️ **`speaking = true` 與 utterance 的建構必須在同一個 try 裡。**
+      // 原本先設旗標再建構，而只有 `synth.speak(u)` 被 try 包住 ——
+      // 建構或指派 handler 的任何一步丟例外，都會留下 `speaking === true`
+      // 而引擎裡沒有任何 utterance：之後每一次 `pump()` 都在第一行就 return，
+      // 佇列**永遠停住**，沒有 watchdog（它還沒排上）、沒有錯誤、沒有跡象。
+      try {
+        const text = chunks[i]!;
+        const u = new SpeechSynthesisUtterance(text);
+        if (voice) {
+          u.voice = voice;
+        }
+        u.lang = opts.lang ?? 'zh-TW';
+        u.pitch = clamp(opts.pitch ?? 1, 0, 2);
+        u.rate = rate;
 
-      u.onstart = () => opts.events?.onStart?.(plan);
-      u.onend = () => finish();
-      u.onerror = (ev) => finish(String((ev as SpeechSynthesisErrorEvent).error ?? 'unknown'));
-      u.onboundary = (ev) => {
-        opts.events?.onBoundary?.({
-          charIndex: ev.charIndex,
-          // 首次 boundary 恆為 name:'sentence' 且 charLength 為 0 —— 那是句首標記不是詞，
-          // 呼叫端可以用 charLength 0 判斷要不要當嘴型觸發。
-          charLength: typeof ev.charLength === 'number' ? ev.charLength : 0,
-        });
-      };
-
-      // watchdog：估時長的兩倍加 5 秒。實測未重現「約 15 秒截斷」，但
-      // `onend` 不觸發而永遠卡住是真實存在的失敗模式，沒有它佇列會整條停住。
-      // ⚠️ 必須先 cancel 再 finish —— 反過來只是把「卡住且看得出來」變成「卡住且看不出來」。
-      // 語速放慢時念得久，watchdog 要跟著放寬，否則慢速設定下每則都被腰斬。
-      const estMs = (plan.text.length / (CHARS_PER_SEC * clamp(opts.rate ?? 1, 0.1, 10))) * 1000;
-      watchdog = setTimeout(
-        () => {
-          try {
-            synth.cancel();
-          } catch {
-            /* cancel 失敗不該再讓佇列停住 */
+        if (i === 0) {
+          u.onstart = () => {
+            if (myGen === gen) {
+              opts.events?.onStart?.(plan);
+            }
+          };
+        }
+        u.onend = () => {
+          if (myGen !== gen || settled) {
+            return;
           }
-          finish('watchdog-timeout');
-        },
-        estMs * 2 + 5000
-      );
+          if (i + 1 < chunks.length) {
+            clearWatchdog();
+            speakChunk(i + 1, offset + text.length);
+          } else {
+            finish();
+          }
+        };
+        u.onerror = (ev) => finish(String((ev as SpeechSynthesisErrorEvent).error ?? 'unknown'));
+        u.onboundary = (ev) => {
+          if (myGen !== gen) {
+            return;
+          }
+          opts.events?.onBoundary?.({
+            // 切段後 charIndex 是段內位置；加回前面各段的長度，呼叫端看到的仍是整則的位置。
+            charIndex: offset + ev.charIndex,
+            // 首次 boundary 恆為 name:'sentence' 且 charLength 為 0 —— 那是句首標記不是詞，
+            // 呼叫端可以用 charLength 0 判斷要不要當嘴型觸發。
+            charLength: typeof ev.charLength === 'number' ? ev.charLength : 0,
+          });
+        };
 
-      speaking = true;
-      synth.speak(u);
-    } catch (e) {
-      finish('throw:' + String(e));
-    }
+        // watchdog（每段各自計）：估時長的兩倍加 5 秒。實測未重現「約 15 秒截斷」，但
+        // `onend` 不觸發而永遠卡住是真實存在的失敗模式，沒有它佇列會整條停住。
+        // ⚠️ 必須先 cancel 再 finish —— 反過來只是把「卡住且看得出來」變成「卡住且看不出來」。
+        // 語速放慢時念得久，watchdog 要跟著放寬，否則慢速設定下每則都被腰斬。
+        const estMs = (text.length / (CHARS_PER_SEC * rate)) * 1000;
+        watchdog = setTimeout(
+          () => {
+            try {
+              synth.cancel();
+            } catch {
+              /* cancel 失敗不該再讓佇列停住 */
+            }
+            finish('watchdog-timeout');
+          },
+          estMs * 2 + 5000
+        );
+
+        speaking = true;
+        synth.speak(u);
+      } catch (e) {
+        finish('throw:' + String(e));
+      }
+    };
+    speakChunk(0, 0);
   }
 
   return {
@@ -294,6 +373,7 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     isSpeaking: () => speaking,
     stop() {
       queue.length = 0;
+      gen++;
       clearWatchdog();
       speaking = false;
       try {
