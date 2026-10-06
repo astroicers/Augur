@@ -703,3 +703,28 @@ describe('第二輪複審：取消與世代', () => {
     expect(ctx.sources[1]!.stopped).toBe(true);
   });
 });
+
+describe('第三輪複審：請求的絕對上限', () => {
+  it('沒人 await 的預取請求，最久 max(60 秒, 逾時 ×4) 後被取消，不會永遠占著連線', async () => {
+    jest.useFakeTimers();
+    try {
+      const af = abortableFetch();
+      const { sp, fb } = setup(af.impl);
+      sp.enqueue(plan('一'));
+      await jest.advanceTimersByTimeAsync(1);
+      // 第一則的請求一直不回 → 逾時（50ms）降級；fallback 不收尾，第一則一直「在念」。
+      sp.enqueue(plan('二'));
+      await jest.advanceTimersByTimeAsync(100);
+      expect(fb().spoken).toHaveLength(1);
+      const prefetched = af.reqs.find((r) => r.input === '二');
+      expect(prefetched).toBeDefined();
+      // 預取的「二」沒有人 await（第一則還沒念完），也就沒有逐句逾時；只有絕對上限管得到它。
+      await jest.advanceTimersByTimeAsync(59_000);
+      expect(prefetched!.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(prefetched!.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

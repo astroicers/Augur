@@ -209,6 +209,14 @@ case "$BATTERY_OUT" in
                             BATTERY_SUM='描邊電池: 未知輸出（CLI 的 sentinel 與本 case 不同步）' ;;
 esac
 
+echo '--- tts-server 邏輯 ---'
+# ADR-005：分段、念出來的單位、失控上限的算術（tools/tts-server/textsplit.py）。純標準函式庫，不載模型、不需 GPU。
+# 加進閘的理由：伺服器端原本零自動化測試，第三輪複審找到的兩個缺陷（float32 上限差 1、在注音標註裡切段）
+# 都是這層的純邏輯。
+TTS_OUT=$(python3 -B tools/tts-server/test_textsplit.py 2>&1) || { GATE_OK=false; FAILED="$FAILED tts-server"; echo "$TTS_OUT"; }
+TTS_SUM="tts-server: $(printf '%s\n' "$TTS_OUT" | tail -1)"
+echo "$TTS_SUM"
+
 echo '--- jest ---'
 # 先刪：jest 沒起來時不會寫這個檔，殘留的舊檔會被誤當成本輪結果。
 rm -f .jest-result.json
@@ -217,13 +225,13 @@ JEST_EXIT=$?
 
 # MIN_TESTS = 所有測試檔之和（2026-10-05 由 jest --json 實數，不是手算）：
 #   core/dedup 13 + core/emotion 3 + core/severity 4 + core/format-plan 4
-# + sources/panelAlerts 18 + speech/speaker 15 + speech/remoteSpeaker 40 + components/MascotPanel 25
+# + sources/panelAlerts 18 + speech/speaker 15 + speech/remoteSpeaker 41 + components/MascotPanel 25
 # + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 = 173（13 個 suite）
+# + __tests__/implementation-contract 6 = 174（13 個 suite）
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=173
+MIN_TESTS=174
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
@@ -260,10 +268,10 @@ else
   PASSED=false
   [ "$GATE_OK" = true ] || SUM="未過：${FAILED# }；$SUM"
 fi
-SUM="$SUM；$BUNDLE_SUM；$SPRITE_SUM；$BATTERY_SUM；$GRAFANA_SUM"
+SUM="$SUM；$BUNDLE_SUM；$SPRITE_SUM；$BATTERY_SUM；$GRAFANA_SUM；$TTS_SUM"
 
 jq -n --argjson p "$PASSED" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-bundle-deps + check-sprite-sheets + sprite-selftest + stroke-battery + grafana-version + jest）' --arg s "$SUM" \
+  --arg cmd 'tools/asp-test.sh（typecheck + lint + check-js-suffix + check-monitoring + check-bundle-deps + check-sprite-sheets + sprite-selftest + stroke-battery + grafana-version + tts-server + jest）' --arg s "$SUM" \
   '{passed:$p,timestamp:$ts,test_command:$cmd,summary:$s}' > .asp-test-result.json
 cat .asp-test-result.json
 [ "$PASSED" = true ] || exit 1

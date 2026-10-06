@@ -45,8 +45,10 @@ const created = await api('/api/dashboards/db', {
 });
 console.log('建立暫時 dashboard', created.status);
 
-const browser = await chromium.launch();
+// ⚠️ launch 放在 try 裡：啟動失敗時 finally 仍要刪掉暫時 dashboard（第三輪複審）。
+let browser;
 try {
+  browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   console.log('登入', (await ctx.request.post(`${G}/login`, { data: { user, password: pass } })).status());
   const page = await ctx.newPage();
@@ -136,6 +138,6 @@ try {
   await waitChip('外部語音（', 20000);
   console.log('[恢復] 服務回來後：', await chip());
 } finally {
-  await browser.close();
+  await browser?.close();
   console.log('\n刪除暫時 dashboard', (await api(`/api/dashboards/uid/${UID}`, { method: 'DELETE' })).status);
 }

@@ -9,6 +9,7 @@ G-ADR005-4 延遲（ADR-005）：模擬面板的行為 —— 一則切成片段
 
 import io
 import json
+import math
 import re
 import statistics
 import sys
@@ -107,9 +108,10 @@ def summary(name, rows):
     stalls = [r[2] for r in rows]
     if not opens:
         return f"{name}：全部失敗"
-    p95 = opens[max(0, int(len(opens) * 0.95) - 1)]
+    # nearest-rank 百分位。N=10 時 p95 就是最大值，所以報 p90 與最大值（第三輪複審：原本標成 p95 的其實是 p90）。
+    p90 = opens[max(0, math.ceil(len(opens) * 0.9) - 1)]
     return (
-        f"{name} N={len(rows)} 開口 p50 {statistics.median(opens):.1f} p95 {p95:.1f} max {opens[-1]:.1f} | "
+        f"{name} N={len(rows)} 開口 p50 {statistics.median(opens):.1f} p90 {p90:.1f} max {opens[-1]:.1f} | "
         f"卡頓 p50 {statistics.median(stalls):.1f} max {max(stalls):.1f} | 單段 >15s {sum(r[3] > 15 for r in rows)} | 失敗 {sum(r[4] for r in rows)}"
     )
 

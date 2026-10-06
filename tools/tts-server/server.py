@@ -8,7 +8,7 @@ Augur 外部語音服務的參考實作（ADR-005 決策 6）：BreezyVoice + �
      實測佔每句約 20 秒裡的 13–14 秒（RTX 4070，2026-10-05）。
   2. 加 CORS —— 面板是從 Grafana 頁面直接 fetch 過來的。
   3. 推論加鎖：單一 GPU，同時兩則只會兩則都慢。
-  4. 在逗號也分段、每段修頭尾靜音（見 SENTENCE_SPLIT、trim_silence）。
+  4. 在逗號也分段、每段修頭尾靜音（見 textsplit.clauses、trim_silence）。
   5. 片段快取（見 synthesize_wav）。
 
 不改上游任何檔案：BreezyVoice 原封不動放在 BREEZYVOICE_DIR，這裡 import 它。
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import io
 import os
-import re
 import sys
 import threading
 from collections import OrderedDict
@@ -60,37 +59,21 @@ from pydantic import BaseModel  # noqa: E402
 from cosyvoice.utils.file_utils import load_wav  # noqa: E402
 from single_inference import CustomCosyVoice, get_bopomofo_rare  # noqa: E402
 
+sys.path.insert(0, str(HERE))
+from textsplit import (  # noqa: E402
+    TOKENS_PER_SEC,
+    cap_ratio,
+    clause_max_tokens,
+    clauses,
+    spoken_units,
+    upstream_max_len,
+)
+
 SAMPLE_RATE = 22050
-# 分段：上游只在句號切（`inference_zero_shot_no_normalize`），但告警句整句只有逗號 ——
-# 「偵測到告警：X，嚴重度 Y，受影響對象 Z，目前數值 N，<summary>。」一句 100 多字變成一條長序列。
-# 2026-10-05 實測（RTX 4070 12GB）：這種句子單則 41–111 秒、還有逾時 120 秒的，顯存被撐到 11.9GB。
-# 改在逗號、冒號、分號也切，每段單獨合成再接起來。
-# 半形 `, : ; . ? !` 後面接數字或 `/` 時不切：`91.35`、`192.168.1.20:9182`、`12:30`、`http://`。
-SENTENCE_SPLIT = re.compile(r"(?<=[，：；？！。])\s*|(?<=[,:;.?!])(?![\d/])\s*")
-# 切完再把太短的段併進下一段，與面板 `splitClauses` 的 minChars 一致（16）。不併的話面板合好的段落
-# 到這裡又被逗號切開；而太短的段落上下文不夠，數字最容易念錯（2026-10-05：「目前數值 91.35。」
-# 單獨成段 4 次錯 3 次，整句 3 次全對）。
-MIN_CLAUSE_CHARS = 16
-BOPOMOFO_TAG = re.compile(r"\[:[^\]]*\]")
-
-
-def clauses(text: str) -> list[str]:
-    out: list[str] = []
-    buf = ""
-    for piece in SENTENCE_SPLIT.split(text):
-        if not piece.strip():
-            continue
-        buf += piece
-        # 字數不算注音標註（`点[:ㄉㄧㄢ3]` 是一個字）與空白。
-        if len(re.sub(r"\s", "", BOPOMOFO_TAG.sub("", buf))) >= MIN_CLAUSE_CHARS:
-            out.append(buf)
-            buf = ""
-    if buf.strip():
-        if out:
-            out[-1] += buf
-        else:
-            out.append(buf)
-    return out
+# 分段、單位、上限算術在 textsplit.py（純標準函式庫，test_textsplit.py 不載模型就能測）。
+# 分段的來由：上游只在句號切，但告警句整句只有逗號 ——「偵測到告警：X，嚴重度 Y，受影響對象 Z，目前數值 N，<summary>。」
+# 一句 100 多字變成一條長序列。2026-10-05 實測（RTX 4070 12GB）：這種句子單則 41–111 秒、還有逾時 120 秒的，
+# 顯存被撐到 11.9GB。
 
 if not REF_WAV.exists():
     sys.exit(f"找不到參考音 {REF_WAV}。先跑 make_reference.py（見 README）。")
@@ -122,22 +105,13 @@ class Runaway(Exception):
 # 2026-10-05 實測失控一次：模型把參考音的逐字稿接著念下去，24 單位的句子產出 21.7 秒、花了 809 秒，
 # 期間推論鎖住整張 GPU。
 # ⚠️ 不用「文字 token 的倍數」當上限：英文單字、數字是 1 個 token 卻念很久，短段落的比例天生偏高。
-#    2026-10-06 以 12 倍試跑，12 次有 8 次誤判（例如 6.7 秒的正常句被截斷）；先前量到的「正常最高 7.7 倍」
+#    2026-10-06 以 12 倍試跑，12 次截斷 8 次，其中 7 次是誤判（例如 6.7 秒的正常句）、1 次是真失控；先前量到的「正常最高 7.7 倍」
 #    也是錯的 —— 上游會就地把 text_len 加上逐字稿長度，量測腳本讀到的是加過的值。
-# 每單位秒數（40 筆正常輸出）：最高 0.59；極端失控 0.9；輕微失控（多念一段）0.65。
+# 每單位秒數（40 筆正常輸出，以原文算單位）：最高 0.59；極端失控 0.9；輕微失控（多念一段）0.65。
+# 伺服器實際以正規化後的文字算（數字轉成國字會多出單位），同一段的每單位秒數只會更低，上限只會更寬鬆。
 # 取 0.8 秒/單位 + 1 秒：擋得住極端失控。**擋不住 0.65 那種輕微失控**，ADR-005 待驗風險有記。
 MAX_SEC_PER_UNIT = float(os.environ.get("AUGUR_TTS_MAX_SEC_PER_UNIT", "0.8"))
-TOKENS_PER_SEC = 50  # 語音 token 速率（CosyVoice-300M：50 token = 1 秒）
 _clause_max_tokens: int | None = None  # synthesize 在呼叫模型前設定；推論有 LOCK，同一時間只有一段
-
-
-def spoken_units(clause: str) -> float:
-    """念出來的長度：中文字、數字各 1，英文每 3 個字母算 1（一個字至少 1）。注音標註不算。"""
-    t = BOPOMOFO_TAG.sub("", clause)
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
-    digits = len(re.findall(r"\d", t))
-    latin = sum(max(1.0, len(w) / 3) for w in re.findall(r"[A-Za-z]+", t))
-    return cjk + digits + latin
 
 
 _upstream_llm_inference = cosy.model.llm.inference
@@ -148,10 +122,12 @@ def _capped_llm_inference(*args, **kwargs):
         return _upstream_llm_inference(*args, **kwargs)
     # ⚠️ 先讀 text_len 再呼叫：上游會就地改寫它（`text_len += prompt_text_len`）。
     text_tokens = max(1, int(kwargs["text_len"].reshape(-1)[0].item()))
-    # 上游的上限是「文字 token × 倍數」，所以把秒數上限換算回倍數交給它。
-    kwargs["max_token_text_ratio"] = _clause_max_tokens / text_tokens
+    # 上游的上限是「文字 token × 倍數」，所以把秒數上限換算回倍數交給它；
+    # limit 以上游同樣的 float32 算法重算，兩邊才會一致（見 textsplit.cap_ratio）。
+    ratio = cap_ratio(_clause_max_tokens, text_tokens)
+    kwargs["max_token_text_ratio"] = ratio
     tokens = _upstream_llm_inference(*args, **kwargs)
-    limit = int(text_tokens * kwargs["max_token_text_ratio"])
+    limit = upstream_max_len(text_tokens, ratio)
     if tokens.size(1) >= limit:
         raise Runaway(f"語音 {tokens.size(1) / TOKENS_PER_SEC:.1f} 秒碰到這段的上限 {limit / TOKENS_PER_SEC:.1f} 秒")
     return tokens
@@ -166,7 +142,7 @@ def synthesize(text: str) -> torch.Tensor:
     global _clause_max_tokens
     pieces = []
     for sentence in clauses(bopomofo(text)):
-        _clause_max_tokens = int((MAX_SEC_PER_UNIT * spoken_units(sentence) + 1.0) * TOKENS_PER_SEC)
+        _clause_max_tokens = clause_max_tokens(spoken_units(sentence), MAX_SEC_PER_UNIT)
         tok, tok_len = cosy.frontend._extract_text_token(sentence)
         model_input = dict(BASE_INPUT, text=tok, text_len=tok_len)
         # 每段都修頭尾：段數一多，每段句尾的空白會累加成整句裡的長停頓。
