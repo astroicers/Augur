@@ -22,21 +22,20 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   of that alert, and the voice label on the panel says so and why. The next alert tries the
   service again.
 - With an external voice the mouth follows the loudness of the audio, not a fixed rhythm.
-- `tools/tts-server/` is a reference service: a little boy's voice with a Taiwanese accent,
-  built on MediaTek Research's BreezyVoice (Apache-2.0). It needs an NVIDIA GPU. The boy's
-  voice is synthesized from the model's built-in adult voice; no real child's recording is
-  used. The model, the upstream code and the voice sample are not in this repository.
-- The first time a given alert is read, the mascot starts speaking after about 8 seconds.
-  When the same alert fires again, it starts almost at once, because the service remembers
-  the parts of the sentence that repeat.
+- `tools/tts-server/` is a reference service: a young man's voice speaking standard Mandarin,
+  built on Qwen3-TTS (Apache-2.0). It needs an NVIDIA GPU. The voice was generated from a
+  text description and is not based on any real person's recording, and it is not pitch-shifted.
+  The model and the voice sample are not in this repository.
+- The service produces speech more slowly than it is spoken. The first time a given alert is
+  read, the mascot starts speaking after about 5 seconds, but it may pause between phrases
+  while the rest is still being made. When the same alert fires again, it starts at once,
+  because the service remembers the parts of the sentence that repeat.
 - The panel's *Rate* setting is sent to the service, but the reference service ignores it;
   its speaking rate comes from its voice sample.
-- The reference voice is not perfect: it sometimes misreads a number, reads English words
-  such as "warning" with a Chinese accent, and now and then cannot stop talking. When a
-  phrase runs far longer than its length allows, the service cuts it off and the built-in
-  voice reads the rest of that alert instead.
-- The reference voice is meant for Chinese. With the panel language set to English, it often
-  cannot finish a phrase, and those alerts fall back to the built-in voice.
+- If the voice model ever cannot stop talking, the service cuts the phrase off and the
+  built-in voice reads the rest of that alert instead.
+- An earlier version of the reference service (BreezyVoice with a pitch-shifted child voice)
+  was replaced before release: in listening tests it sounded like a woman.
 - There is no field for an API key. Panel options are stored in the dashboard and anyone
   who can see the dashboard can read them.
 - Decision record: ADR-005 (FIRM).

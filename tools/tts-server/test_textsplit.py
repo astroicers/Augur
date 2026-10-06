@@ -13,12 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from textsplit import (  # noqa: E402
-    UPSTREAM_MAX_RATIO,
-    cap_ratio,
-    clause_max_tokens,
+    QWEN_TOKEN_SEC,
+    clause_limit_sec,
     clauses,
+    is_runaway,
+    qwen_max_new_tokens,
     spoken_units,
-    upstream_max_len,
 )
 
 TESTS = []
@@ -82,34 +82,32 @@ def 念出來的單位():
 
 
 @test
-def 上限與上游的_float32_算法一致():
-    # 第三輪複審 P1：上游以 int32 tensor × float 算 max_len（float32），用 float64 回推會差 1，
-    # 失控跑滿上限也不會被判定。cap_ratio 加 0.5 之後，上游算出來必須剛好是 max_tokens。
-    bad = []
-    for t in range(1, 200):
-        for m in range(50, 2000, 7):
-            r = cap_ratio(m, t)
-            if r < UPSTREAM_MAX_RATIO and upstream_max_len(t, r) != m:
-                bad.append((t, m))
-    assert not bad, bad[:5]
-
-
-@test
-def 已知會出錯的那組():
-    # 不加 0.5 時 T=47、M=1010 上游得 1009（torch 實測）；加了之後必須是 1010。
-    assert upstream_max_len(47, 1010 / 47) == 1009
-    assert upstream_max_len(47, cap_ratio(1010, 47)) == 1010
-
-
-@test
-def 倍數不超過上游原本的_30_倍():
-    assert cap_ratio(10_000, 10) == UPSTREAM_MAX_RATIO
-
-
-@test
 def 秒數上限():
-    # 每單位 0.8 秒＋1 秒，50 token/秒：24 單位 → 20.2 秒 → 1010 token（自我介紹那句）。
-    assert clause_max_tokens(24, 0.8) == 1010
+    # 每單位 0.8 秒＋1 秒：24 單位 → 20.2 秒（自我介紹那句）。
+    assert abs(clause_limit_sec(24, 0.8) - 20.2) < 1e-9
+
+
+@test
+def max_new_tokens_剛好念得到上限():
+    for limit in (1.0, 3.7, 20.2, 45.0):
+        n = qwen_max_new_tokens(limit)
+        assert n * QWEN_TOKEN_SEC >= limit, (limit, n)
+        assert (n - 2) * QWEN_TOKEN_SEC < limit, (limit, n)
+
+
+@test
+def 碰到上限才算失控():
+    limit = 20.2
+    full = qwen_max_new_tokens(limit) * QWEN_TOKEN_SEC  # 被 max_new_tokens 截斷時的長度
+    assert is_runaway(full, limit)
+    assert is_runaway(full - QWEN_TOKEN_SEC, limit)  # 解碼頭尾少一步也算
+    assert not is_runaway(limit - 2 * QWEN_TOKEN_SEC, limit)  # 自己在上限前停下來的正常句
+    assert not is_runaway(7.0, limit)
+
+
+@test
+def 簡體也算單位():
+    assert spoken_units("侦测到告警") == 5
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         path: 'ttsEndpoint',
         name: '外部語音服務網址',
         description:
-          '選填。填 OpenAI 相容的語音服務（例如 tools/tts-server 的童聲），留空 = 用瀏覽器內建聲線。某一則失敗或逾時就改用內建聲線念，面板上的聲線標籤會寫明。填了之後「指定聲線」與「音高」只用在降級時；「語速」會送給服務，但 tools/tts-server 不支援（語速由它的參考音決定）。',
+          '選填。填 OpenAI 相容的語音服務（例如 tools/tts-server 的年輕男聲），留空 = 用瀏覽器內建聲線。某一則失敗或逾時就改用內建聲線念，面板上的聲線標籤會寫明。填了之後「指定聲線」與「音高」只用在降級時；「語速」會送給服務，但 tools/tts-server 不支援（語速由它的參考音決定）。',
         defaultValue: DEFAULT_OPTIONS.ttsEndpoint,
         settings: { placeholder: 'http://localhost:8765' },
         showIf: (c) => c.enableTTS,

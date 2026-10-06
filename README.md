@@ -43,7 +43,7 @@ avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，�
 | ADR | 主題 | 狀態 |
 |---|---|---|
 | **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
-| ADR-005 | 選填的外部語音服務（童聲、台灣口音）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | FIRM（2026-10-05） |
+| ADR-005 | 選填的外部語音服務（Qwen3-TTS 年輕男聲）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | FIRM（2026-10-05） |
 | ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded |
 | ADR-003 | 前端 visual-web-stack | Superseded |
@@ -85,8 +85,8 @@ ADR-002 有兩個抽象被 ADR-004 明文繼承，不隨 supersede 作廢：
 5. 在 dashboard 加一個 **Mascot** panel，並讓它的告警規則把
    `__dashboardUid__` 與 `__panelId__` 寫進 annotations，alertState
    才到得了 panel（範例見 `monitoring/grafana/provisioning/alerting/`）。
-6. （選填）**小男孩的聲音**：瀏覽器內建聲線沒有童聲，只能調高音高。要真的童聲（台灣口音），
-   在一台有 NVIDIA GPU 的機器上跑 `tools/tts-server/`（步驟見該目錄的 README），
+6. （選填）**換成更自然的男聲**：瀏覽器內建聲線由作業系統決定，只能調音高。要固定一個年輕男生的聲音，
+   在一台有 NVIDIA GPU 的機器上跑 `tools/tts-server/`（Qwen3-TTS，步驟見該目錄的 README），
    再把 panel 選項「外部語音服務網址」填成它的位址。沒填就照舊用瀏覽器聲線；
    服務失敗或逾時的那一則也會自動改用瀏覽器聲線（ADR-005）。
 
@@ -166,7 +166,7 @@ npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身
 | ~~`assets/`~~ | 已於 2026-09-21 退出版控：出處查不到，依 `docs/asset-provenance.md` 自訂的規則移除。角色定義改由 `live2d-template-spec-v1.md` §7 的文字描述 + `sprite-sheet-spec.md` SP-6.0 的色票表承擔，兩者都是本專案自己的產物。 |
 | `live2d/_archive/` | 已廢棄的 Live2D 路線。但 `live2d-template-spec-v1.md` §6 仍在用：它定義了 calm/warning/critical/resolved 四個表情的視覺語意，是 sprite 反應圖的內容大綱。 |
 | `avatar/` | VRM / THA 選型研究備忘錄（歷史，已不在關鍵路徑上） |
-| `tools/` | `asp-test.sh`（11 道 commit 閘）；閘門用的 `check-js-suffix.sh`、`check-monitoring.mjs`、`check-bundle-deps.mjs`、`stroke-battery.mjs`；`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）與它的 selftest；`lib/`（手寫 PNG / GIF 編解碼、檢查邏輯、合成假人）；`blind-test/`（SP-V.1 盲測頁）；`check-server.sh`（`npm run server` 的註冊確認）；`tts-server/`（ADR-005 的外部語音服務參考實作：BreezyVoice 童聲，Python，不進 plugin）；`package.sh`（打包 zip）；`jest/fileMock.js`（jest 的圖片 stub，`jest.config.js` 引用） |
+| `tools/` | `asp-test.sh`（11 道 commit 閘）；閘門用的 `check-js-suffix.sh`、`check-monitoring.mjs`、`check-bundle-deps.mjs`、`stroke-battery.mjs`；`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）與它的 selftest；`lib/`（手寫 PNG / GIF 編解碼、檢查邏輯、合成假人）；`blind-test/`（SP-V.1 盲測頁）；`check-server.sh`（`npm run server` 的註冊確認）；`tts-server/`（ADR-005 的外部語音服務參考實作：Qwen3-TTS 年輕男聲，Python，不進 plugin）；`package.sh`（打包 zip）；`jest/fileMock.js`（jest 的圖片 stub，`jest.config.js` 引用） |
 | `docs/sprite/` | 精靈圖規格（`sprite-sheet-spec.md`）、製作 SOP、manifest 樣板。發包給畫師時給這三份。 |
 | `docs/handoff/` | 歷史交接文件。`remaining-plan.md` 已於 2026-10-02 退役，仍有效的項目在 `docs/ROADMAP.md`〈未完成項目〉 |
 

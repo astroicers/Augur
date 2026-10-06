@@ -1,81 +1,63 @@
-# tts-server：吉祥物的童聲
+# tts-server：吉祥物的聲音
 
 Augur 面板的「外部語音服務網址」要填一個語音服務。這個目錄是它的參考實作：
-台灣口音的小男孩聲音，模型是聯發科研究院的 [BreezyVoice](https://github.com/mtkresearch/BreezyVoice)（Apache-2.0）。
+一個年輕男生的聲音，模型是阿里巴巴 Qwen 團隊的 [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)（Apache-2.0）。
 設計理由見 [ADR-005](../../docs/adr/ADR-005-optional-external-tts.md)。
 
 服務對外是 OpenAI 相容的 `POST /v1/audio/speech`。面板不綁這個實作，任何相容的服務都能填。
 
+> 2026-10-06 之前這裡用的是 BreezyVoice 加變聲做出來的童聲；試聽時都被聽成女生，已撤換（ADR-005〈撤換紀錄〉）。
+
+## 聲音怎麼來的
+
+- 聲音由 Qwen3-TTS **VoiceDesign** 依一段文字描述直接生成（「二十出頭的年輕男生，聲音溫和明亮，說標準普通話」），
+  **不變聲、不使用任何真人錄音**。
+- 服務啟動時用 Qwen3-TTS **Base** 記住這段聲音，之後每一句都照它念，聲線才不會每句不一樣。
+- 送進模型前，服務會把文字轉成簡體（OpenCC）：繁體輸入時模型常念成廣東話。**只在模型入口轉**，面板上看到的、告警內容都還是繁體。
+- 口音是標準普通話，不是台灣腔。
+
 ## 需要什麼
 
-- 一台有 NVIDIA GPU 的 Linux 機器（或 WSL2）。實測 RTX 4070（12 GB），用掉約 3.6 GB 顯存。
-  沒有 GPU 也能跑 CPU，但速度沒測過。
-- conda（或任何能建 Python 3.10 環境的工具）。
-- 約 11 GB 磁碟：Python 環境約 8 GB，模型約 3 GB（第一次執行時從 Hugging Face 下載）。
+- 一台有 NVIDIA GPU 的 Linux 機器（或 WSL2）。實測 RTX 4070（12 GB），服務用掉約 4.7 GB 顯存。
+- conda（或任何能建 Python 3.12 環境的工具）。
+- 約 11 GB 磁碟：Python 環境約 6.5 GB，模型約 4.3 GB（第一次啟動時從 Hugging Face 下載）。
+  要重新生成聲音的話，另需 VoiceDesign 模型約 4 GB。
 
-repo 裡只有我們寫的兩支程式。模型權重、上游程式和參考音都不進 repo。
+repo 裡只有我們寫的程式。模型權重和參考音都不進 repo。
 
 ## 安裝
 
-上游的依賴版本很舊，照它的 `requirements.txt` 直接裝會踩到三個坑。
-下面的順序是 2026-10-05 實際裝過的版本。
-
 ```bash
-# 1. 上游程式放在 ~/engines/BreezyVoice（別的位置請設 BREEZYVOICE_DIR）
-git clone https://github.com/mtkresearch/BreezyVoice.git ~/engines/BreezyVoice
-cd ~/engines/BreezyVoice
-git checkout d592c9d   # 2025-06-21，實測過的版本
-
-# 2. Python 3.10 環境
-conda create -y -n breezyvoice python=3.10
-conda activate breezyvoice
-export PYTHONNOUSERSITE=1   # 坑 1：~/.local 裡的套件會蓋過環境裡的版本
-
-# 3. 依賴
-pip install "setuptools<70" wheel
-pip install --no-build-isolation openai-whisper==20231117   # 坑 2：它的建置腳本要 pkg_resources
-pip install -r requirements.txt
-pip install "ruamel.yaml==0.17.40"   # 坑 3：新版 ruamel.yaml 與 hyperpyyaml 1.2.2 不相容
-pip install --force-reinstall --no-deps torch==2.3.1 torchaudio==2.3.1 \
-    --index-url https://download.pytorch.org/whl/cu118   # 確保 torch 與 CUDA 函式庫同一套
-pip install praat-parselmouth   # 只有 make_reference.py 用到
-
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-# 應該印出 2.3.1+cu118 True
+conda create -y -n qwen3tts python=3.12
+conda activate qwen3tts
+export PYTHONNOUSERSITE=1   # 避免 ~/.local 裡的套件蓋過環境裡的版本
+pip install -U qwen-tts opencc-python-reimplemented fastapi "uvicorn[standard]" soundfile
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # 最後要是 True
 ```
 
-## 產生參考音
+`qwen-tts` 會裝上新版的 torch，請用獨立的環境，不要和其他專案共用。啟動時出現「SoX could not be found」的警告可以忽略。
 
-聲線由一段「參考錄音」決定。這裡**不使用任何真人兒童的錄音**，而是：
-模型內建的成人男聲（台灣口音）念一段固定的話 → 用 Praat 把共振峰和音高一起推高成小男孩。
+## 準備聲音
 
 ```bash
-conda activate breezyvoice && export PYTHONNOUSERSITE=1
-python tools/tts-server/make_reference.py
-# 寫入 tools/tts-server/voices/boy.wav 與 boy.txt（voices/ 已列入 .gitignore）
+conda activate qwen3tts && export PYTHONNOUSERSITE=1
+python tools/tts-server/make_voice.py --from <選定的那一段.wav>   # 沿用已經試聽選定的聲音
+python tools/tts-server/make_voice.py                            # 或重新生成（每次生成的聲音會略有不同，請試聽）
+# 寫入 tools/tts-server/voices/young_male.wav 與 young_male.txt（voices/ 已列入 .gitignore）
 ```
-
-預設參數是 2026-10-05 試聽後選的「輕」檔（共振峰 ×1.25、音高 220 Hz）。
-同一張顯卡、同一個種子，產出的參考音會相同。可調的參數：
-
-| 參數 | 預設 | 作用 |
-|---|---|---|
-| `--formant` | 1.25 | 共振峰倍率。越高越像小孩，太高會含糊（1.35 時 Whisper 回寫開始聽錯字） |
-| `--pitch` | 220 | 音高中位數 Hz。另兩檔試聽版是 250、280 |
-| `--rate` | 4.6 | 參考音的語速（字/秒）。輸出會學走它；念得慢就產得慢，生成時間與語音長度成正比 |
-| `--seed` | 1 | 成人男聲那一步的取樣種子 |
 
 ## 啟動
 
 ```bash
-conda activate breezyvoice && export PYTHONNOUSERSITE=1
+conda activate qwen3tts && export PYTHONNOUSERSITE=1
 python tools/tts-server/server.py
+# [augur-tts] 暖機…
 # [augur-tts] 就緒。允許的 origin：[...]
 # Uvicorn running on http://0.0.0.0:8765
 ```
 
-啟動約需 25 秒（實測：載模型 12 秒、算參考音特徵 7 秒）。之後在 panel 選項「外部語音服務網址」填
-`http://<這台機器>:8765`，按「試聽」。面板上的聲線標籤會顯示「外部語音（主機:埠）」。
+啟動約需 1–1.5 分鐘（載入模型約 1 分鐘，再暖機一次 —— 不暖機的話，第一則告警要等 30 秒以上）。
+之後在 panel 選項「外部語音服務網址」填 `http://<這台機器>:8765`，按「試聽」。面板上的聲線標籤會顯示「外部語音（主機:埠）」。
 
 | 環境變數 | 預設 | 說明 |
 |---|---|---|
@@ -84,37 +66,37 @@ python tools/tts-server/server.py
 | `AUGUR_TTS_HOST` | 0.0.0.0 | |
 | `AUGUR_TTS_CACHE` | 512 | 片段快取筆數，0 = 不快取 |
 | `AUGUR_TTS_MAX_SEC_PER_UNIT` | 0.8 | 失控上限：每個字最多念幾秒（另加 1 秒），見下方〈念錯與失控〉 |
-| `AUGUR_TTS_REFERENCE` | `voices/boy.wav` | 參考音；逐字稿預設是同名的 `.txt` |
+| `AUGUR_TTS_MODEL` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | 模型。換 0.6B 實測沒有比較快 |
+| `AUGUR_TTS_REFERENCE` | `voices/young_male.wav` | 參考音；逐字稿預設是同名的 `.txt` |
 | `AUGUR_TTS_SSL_CERTFILE`／`AUGUR_TTS_SSL_KEYFILE` | （空） | 兩個都給就走 https。Grafana 走 https 時語音服務也要 https，見下方〈Grafana 走 https〉 |
-| `BREEZYVOICE_DIR` | `~/engines/BreezyVoice` | 上游程式的位置 |
 
 ## 會遇到的延遲
 
-模型產語音大約是即時速度：念 5 秒的話要算 3–5 秒。面板因此把一則告警切成短句、逐句來要，
-第一句回來就開始播。伺服器會記住念過的片段，所以：
+這個模型**產語音比念出來慢**：念 1 秒要算 1.7–2 秒（瓶頸在逐步生成的程式開銷，不在 GPU）。
+面板把一則告警切成短句、逐句來要，第一句回來就開始播；伺服器會記住念過的片段。所以：
 
-- **某種告警第一次出現**：開口前等大約 8 秒（實測 p50 8.3 秒、p90 9.6 秒、最慢 10 秒），句子之間偶爾停頓（最長約 4 秒）。服務剛啟動的第一個請求會更久（暖機）。
-- **同一種告警再出現**（只有數值不同）：幾乎立刻開口。只有數值那一段要現產，而它在前面幾句播放時就產好了。
+- **某種告警第一次出現**：開口前等大約 5 秒（實測 p50 4.9 秒、最慢 8.9 秒），但**句子之間常會停頓**（p50 約 5 秒、最長約 10 秒），
+  因為後面的句子還在產。
+- **同一種告警再出現**（只有數值不同）：立刻開口。只有數值那一段要現產，停頓最長約 8 秒。
 - 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 15 秒，從輪到這一段時起算），
   從這一段起改用瀏覽器聲線念完這則。下一則會再試外部服務。
 
 快取存在記憶體，重啟服務後歸零。同一段同時有好幾個請求（例如好幾個人開著同一個 dashboard）時只算一次。
 
-**面板的「語速」對這個服務沒有作用**：BreezyVoice 沒有語速參數，事後變速會有金屬聲。
-語速由參考音決定，要調就重跑 `make_reference.py --rate <字/秒>` 再重啟服務。
+**面板的「語速」對這個服務沒有作用**：模型沒有語速參數，事後變速會有金屬聲。
 
 **這個服務沒有驗證機制**，預設綁 `0.0.0.0`。CORS 只擋得住瀏覽器，擋不住其他程式直接呼叫。
 請放在可信的網段，或用 `AUGUR_TTS_HOST=127.0.0.1` 只開給本機、前面再放反向代理。
 
 ## 念錯與失控
 
-這個模型不完美，試聽前先知道：
+試聽前先知道：
 
-- **偶爾念錯**：數字大多念得對，但不是每次（抽查「91.35」3 次對 2 次）。英文（`warning`、規則摘要）會用中文腔念。
-- **英文模式不建議**：面板語言設成 English 時整句都是英文，這個模型念英文容易被判定失控，那則會改用瀏覽器聲線。
-- **失控**：模型偶爾會停不下來，把參考音的話接著念下去。服務以字數算每段最多能念多久（每字 0.8 秒＋1 秒），
+- 抽查 12 次（4 句各 3 次）：數字都念對（「91.35」3/3）、英文摘要都完整念出、「warning」3 次對 2 次。
+- **失控**：這類模型偶爾會停不下來。服務以字數算每段最多能念多久（每字 0.8 秒＋1 秒），
   超過就截斷、回 502，面板把那則剩下的部分改用瀏覽器聲線念。失控的音訊不會被放出來。
-  只多念一小段的輕微失控擋不住，會照樣播出。
+  抽查 12 次沒有發生；只多念一小段的輕微失控擋不住，會照樣播出，而且會被快取住，直到服務重啟。
+- 面板語言設成 English（整句英文）時沒有測過。
 
 ## 自己驗證
 
@@ -125,8 +107,8 @@ python tools/tts-server/server.py
 
 | 腳本 | 驗什麼 | 怎麼跑 |
 |---|---|---|
-| `runaway_check.py` | 失控上限：碰到上限會回 502、不寫進快取 | conda 環境裡 `python tools/tts-server/eval/runaway_check.py` |
-| `quality.py` | 念 4 句典型告警各 3 次，用 Whisper 轉回文字抽查（Whisper 對童聲本來就不準，結果只是線索） | 同上 |
+| `runaway_check.py` | 失控上限：碰到上限會回 502、不寫進快取 | `qwen3tts` 環境裡 `python tools/tts-server/eval/runaway_check.py`（另需 `pip install openai-whisper librosa` 才能跑 `quality.py`） |
+| `quality.py` | 念 4 句典型告警各 3 次，用 Whisper 轉回文字抽查（Whisper 本身也會聽錯，結果只是線索） | 同上 |
 | `latency.py` | 模擬面板逐句要音訊，量冷／熱的開口等待與停頓 | 服務跑起來後 `python3 tools/tts-server/eval/latency.py http://127.0.0.1:8765` |
 | `browser-poc.mjs` | 在真的 Grafana 上用無頭瀏覽器按「試聽」：跨來源、播放、嘴型、各種失敗時的降級 | `GRAFANA_URL=… TTS_URL=… node tools/tts-server/eval/browser-poc.mjs`（會建一個暫時 dashboard、跑完刪掉） |
 

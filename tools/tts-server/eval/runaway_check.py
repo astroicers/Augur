@@ -2,7 +2,7 @@
 驗證失控上限的機制（ADR-005）：把上限壓到每單位 0.05 秒，正常句子一定會碰到 → 應拋 Runaway、HTTP 502、不寫進快取。
 真正的失控無法穩定重現（取樣是隨機的），所以驗的是「碰到上限時的處理」，不是「哪些句子會失控」。
 
-    conda activate breezyvoice && export PYTHONNOUSERSITE=1
+    conda activate qwen3tts && export PYTHONNOUSERSITE=1
     python tools/tts-server/eval/runaway_check.py
 """
 

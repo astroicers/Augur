@@ -69,9 +69,9 @@
 - **B4-7　〈待驗風險 1〉@internal 風險已實際發生一次** —— ADR-004〈待驗風險 1〉（alertState 是 @internal）已經實際發生一次：12.3.x 的欄位叫 dashboardId，12.4.0 才改名 dashboardUID；修法是以公開的 data.request.dashboardUID 作後備（commit「fix(panel): Grafana 12.3.x 上靜默降級…」）。授權後把這次事件，以及 12.3.0 到 13.2.2 的相容實測，記進該條與 Verification Evidence。
 
 **外部語音（ADR-005，FIRM）**
-- **V-1　童聲再試聽一次** —— 專案主人選了「輕」檔之後，參考音的**語速**為了延遲改過（4.0 → 4.6 字/秒，ADR-005 決策 7 的 POC 後補）；音色參數沒變，但聽感可能不同。另外 G-ADR005-5 只有機械證據（嘴型三態切換 21 次、時間與句長吻合），「嘴型跟聲音對不對得上」要人眼看。兩件事都在有喇叭的瀏覽器上按一次「試聽」就能確認。
+- ~~**V-1　試聽確認聲音**~~ ✅ **2026-10-06**：BreezyVoice 合成童聲四輪試聽都被判定「聽起來是女生」，變聲版「很奇怪」；專案主人裁定不變聲、年輕男生也可以，選定 Qwen3-TTS「年輕男生、簡體輸入」（ADR-005 決策 6–8 修訂）。G-ADR005-5「嘴型跟聲音對不對得上」仍只有機械證據，下次在有喇叭的瀏覽器按「試聽」時順便看。
 - ~~**V-2　https 與 Frontend Sandbox 下的外部語音**~~ ✅ **2026-10-06 完成**：sandbox 下照常播放；https 的 Grafana 搭 https 語音服務正常，搭 http 服務時用主機名稱會被當混合內容擋下（面板降級），用區網 IP 只有警告。結果記在 ADR-005〈待驗風險〉2 與 Verification Evidence。原文 —— G-ADR005-1 只在 http 的 Grafana 驗過。Grafana 走 https 時 http 的語音服務會被當成混合內容擋下（ADR-005 待驗風險 2）；Frontend Sandbox 開啟時 `fetch` 與 `AudioContext` 能不能用也沒驗（同 B5-1 的問題）。
-- **V-3　ADR-005 升 Accepted** —— V-1 確認後，經 `/asp:approve-adr 5` 授權。
+- **V-3　ADR-005 升 Accepted** —— 經 `/asp:approve-adr 5` 授權。Qwen 版的速度（生成比播放慢、冷告警句間會卡）是否可接受，升級前要專案主人在面板上實際聽過。
 
 **實機驗證**
 - **B5-1　sandbox 下語音能否發聲（Windows 實機）** —— Frontend Sandbox 開啟時語音能不能用仍未驗，因為 headless 環境沒有聲線。需要在專案主人實際看 dashboard 的 Windows 11 / Chrome 上，用 SANDBOX_PLUGINS=augur-mascot-panel 開、關各跑一次 PocAlwaysFiring，記三件事：speechSynthesis 是否存在、getVoices() 筆數、有沒有聽到聲音。若 sandbox 下發不了聲要另做產品決定，因為官方建議開 sandbox。結果回填 ADR 需走 B4 的授權。

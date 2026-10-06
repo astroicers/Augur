@@ -1,27 +1,30 @@
 """
-Augur 外部語音服務的參考實作（ADR-005 決策 6）：BreezyVoice + 參考音特徵快取 + CORS。
+Augur 外部語音服務的參考實作（ADR-005 決策 6）：Qwen3-TTS 年輕男聲 + 片段快取 + CORS。
 
 對外是 OpenAI 相容的 `POST /v1/audio/speech`，面板的「外部語音服務網址」填這台的位址即可。
 
-和上游 BreezyVoice `api.py` 的差別：
-  1. 參考音的特徵（speech token、mel、聲紋）啟動時算一次。上游每則請求都重算，
-     實測佔每句約 20 秒裡的 13–14 秒（RTX 4070，2026-10-05）。
-  2. 加 CORS —— 面板是從 Grafana 頁面直接 fetch 過來的。
-  3. 推論加鎖：單一 GPU，同時兩則只會兩則都慢。
-  4. 在逗號也分段、每段修頭尾靜音（見 textsplit.clauses、trim_silence）。
-  5. 片段快取（見 synthesize_wav）。
+聲音怎麼來的（ADR-005 決策 7）：先用 Qwen3-TTS **VoiceDesign** 依文字描述生成一段年輕男聲（make_voice.py），
+使用者試聽選定；服務用 Qwen3-TTS **Base** 照這段聲音念（官方建議的「先設計、再複製」流程），
+聲線才會每一句都一樣。**不變聲、不使用任何真人錄音。**
 
-不改上游任何檔案：BreezyVoice 原封不動放在 BREEZYVOICE_DIR，這裡 import 它。
+要點：
+  1. 聲音特徵（voice clone prompt）啟動時建一次，之後每句重用。
+  2. 送進模型前把文字轉成簡體（OpenCC t2s）。繁體輸入時模型常念成廣東話（2026-10-06 使用者試聽）；
+     轉換只發生在模型入口，面板顯示、告警內容一律維持繁體。
+  3. 加 CORS —— 面板是從 Grafana 頁面直接 fetch 過來的。
+  4. 推論加鎖：單一 GPU，同時兩則只會兩則都慢。
+  5. 在逗號也分段、每段修頭尾靜音、片段快取（見 textsplit.clauses、trim_silence、synthesize_wav）。
+  6. 失控上限（見 textsplit.clause_limit_sec／qwen_max_new_tokens）。
 
 環境變數：
-  BREEZYVOICE_DIR          上游 repo 的位置（預設 ~/engines/BreezyVoice）
-  AUGUR_TTS_REFERENCE      參考音 wav（預設 ./voices/boy.wav，由 make_reference.py 產生）
+  AUGUR_TTS_MODEL          模型（預設 Qwen/Qwen3-TTS-12Hz-1.7B-Base）
+  AUGUR_TTS_REFERENCE      參考音 wav（預設 ./voices/young_male.wav，見 make_voice.py）
   AUGUR_TTS_REFERENCE_TEXT 參考音的逐字稿檔（預設與 wav 同名的 .txt）
   AUGUR_TTS_ALLOW_ORIGINS  允許的 Grafana origin，逗號分隔（預設 localhost／127.0.0.1 的 3000 與 3002）
   AUGUR_TTS_CACHE          片段快取筆數（預設 512；0 = 不快取）
+  AUGUR_TTS_MAX_SEC_PER_UNIT 失控上限，每單位幾秒（預設 0.8）
 
-`speed` 欄位收下但不套用：BreezyVoice 沒有語速參數，事後變速（相位聲碼器）會有金屬聲。
-所以面板的「語速」滑桿對這個服務沒有作用；語速由參考音決定（make_reference.py 的 --rate）。
+`speed` 欄位收下但不套用：模型沒有語速參數，事後變速會有金屬聲。面板的「語速」滑桿對這個服務沒有作用。
 """
 
 from __future__ import annotations
@@ -34,143 +37,97 @@ from collections import OrderedDict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-BREEZY = Path(os.environ.get("BREEZYVOICE_DIR", Path.home() / "engines" / "BreezyVoice")).resolve()
-REF_WAV = Path(os.environ.get("AUGUR_TTS_REFERENCE", HERE / "voices" / "boy.wav")).resolve()
+MODEL = os.environ.get("AUGUR_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+REF_WAV = Path(os.environ.get("AUGUR_TTS_REFERENCE", HERE / "voices" / "young_male.wav")).resolve()
 REF_TXT = Path(os.environ.get("AUGUR_TTS_REFERENCE_TEXT", REF_WAV.with_suffix(".txt"))).resolve()
-# 每筆約 50–300 KB（16-bit、22.05 kHz、1–7 秒），512 筆上限約 150 MB。
+# 每筆約 50–400 KB（16-bit、24 kHz、1–8 秒），512 筆上限約 200 MB。
 CACHE_SIZE = int(os.environ.get("AUGUR_TTS_CACHE", "512"))
 # 預設涵蓋 Grafana 的預設埠 3000 與本 repo 開發環境的 3002（monitoring/，見 playwright.config.ts）。
 # 瀏覽器送的 Origin 是網址列上的寫法，localhost 與 127.0.0.1 是兩個不同的 origin，兩種都列。
 DEFAULT_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3002,http://127.0.0.1:3002"
 ORIGINS = [o.strip() for o in os.environ.get("AUGUR_TTS_ALLOW_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
+MAX_SEC_PER_UNIT = float(os.environ.get("AUGUR_TTS_MAX_SEC_PER_UNIT", "0.8"))
 
-# 上游以 repo 根為工作目錄寫相對 import 與相對路徑。
-sys.path.insert(0, str(BREEZY))
-os.chdir(BREEZY)
-
+import numpy as np  # noqa: E402
 import soundfile as sf  # noqa: E402
 import torch  # noqa: E402
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import Response  # noqa: E402
-from g2pw import G2PWConverter  # noqa: E402
+from opencc import OpenCC  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
-
-from cosyvoice.utils.file_utils import load_wav  # noqa: E402
-from single_inference import CustomCosyVoice, get_bopomofo_rare  # noqa: E402
+from qwen_tts import Qwen3TTSModel  # noqa: E402
 
 sys.path.insert(0, str(HERE))
-from textsplit import (  # noqa: E402
-    TOKENS_PER_SEC,
-    cap_ratio,
-    clause_max_tokens,
-    clauses,
-    spoken_units,
-    upstream_max_len,
-)
-
-SAMPLE_RATE = 22050
-# 分段、單位、上限算術在 textsplit.py（純標準函式庫，test_textsplit.py 不載模型就能測）。
-# 分段的來由：上游只在句號切，但告警句整句只有逗號 ——「偵測到告警：X，嚴重度 Y，受影響對象 Z，目前數值 N，<summary>。」
-# 一句 100 多字變成一條長序列。2026-10-05 實測（RTX 4070 12GB）：這種句子單則 41–111 秒、還有逾時 120 秒的，
-# 顯存被撐到 11.9GB。
+from textsplit import clause_limit_sec, clauses, is_runaway, qwen_max_new_tokens, spoken_units  # noqa: E402
 
 if not REF_WAV.exists():
-    sys.exit(f"找不到參考音 {REF_WAV}。先跑 make_reference.py（見 README）。")
+    sys.exit(f"找不到參考音 {REF_WAV}。先跑 make_voice.py（見 README）。")
 if not REF_TXT.exists():
     sys.exit(f"找不到參考音逐字稿 {REF_TXT}。")
 
-print(f"[augur-tts] 載入模型（BreezyVoice @ {BREEZY}）…", flush=True)
-cosy = CustomCosyVoice("MediaTek-Research/BreezyVoice")
-g2p = G2PWConverter()
+T2S = OpenCC("t2s")
 
 
-def bopomofo(text: str) -> str:
-    return get_bopomofo_rare(cosy.frontend.text_normalize_new(text, split=False), g2p)
+def to_model_text(text: str) -> str:
+    """模型入口的文字：轉簡體。繁體輸入時模型常念成廣東話（見檔頭第 2 點）。"""
+    return T2S.convert(text)
 
 
-print(f"[augur-tts] 計算參考音特徵（{REF_WAV.name}）…", flush=True)
-_prompt_text = bopomofo(REF_TXT.read_text(encoding="utf-8").strip())
-# 參考音這一側的欄位每則都一樣，只有 text／text_len 會換。
-BASE_INPUT = cosy.frontend.frontend_zero_shot(_prompt_text, _prompt_text, load_wav(str(REF_WAV), 16000))
+print(f"[augur-tts] 載入模型 {MODEL}…", flush=True)
+model = Qwen3TTSModel.from_pretrained(MODEL, device_map="cuda:0", dtype=torch.bfloat16)
+print(f"[augur-tts] 建立聲音特徵（{REF_WAV.name}）…", flush=True)
+VOICE = model.create_voice_clone_prompt(
+    ref_audio=str(REF_WAV), ref_text=to_model_text(REF_TXT.read_text(encoding="utf-8").strip())
+)
 LOCK = threading.Lock()
-
-
-class Runaway(Exception):
-    """語言模型一路念到 token 上限 —— 幾乎一定是失控（見 _capped_llm_inference）。"""
-
-
-# 失控上限：以「念出來的單位」算這一段最多可以念幾秒，超過就當作失控。
-# 上游 `CosyVoiceModel.inference` 把語音 token 上限寫死成文字 token 的 30 倍（原版 CosyVoice 預設 20）。
-# 2026-10-05 實測失控一次：模型把參考音的逐字稿接著念下去，24 單位的句子產出 21.7 秒、花了 809 秒，
-# 期間推論鎖住整張 GPU。
-# ⚠️ 不用「文字 token 的倍數」當上限：英文單字、數字是 1 個 token 卻念很久，短段落的比例天生偏高。
-#    2026-10-06 以 12 倍試跑，12 次截斷 8 次，其中 7 次是誤判（例如 6.7 秒的正常句）、1 次是真失控；先前量到的「正常最高 7.7 倍」
-#    也是錯的 —— 上游會就地把 text_len 加上逐字稿長度，量測腳本讀到的是加過的值。
-# 每單位秒數（40 筆正常輸出，以原文算單位）：最高 0.59；極端失控 0.9；輕微失控（多念一段）0.65。
-# 伺服器實際以正規化後的文字算（數字轉成國字會多出單位），同一段的每單位秒數只會更低，上限只會更寬鬆。
-# 取 0.8 秒/單位 + 1 秒：擋得住極端失控。**擋不住 0.65 那種輕微失控**，ADR-005 待驗風險有記。
-MAX_SEC_PER_UNIT = float(os.environ.get("AUGUR_TTS_MAX_SEC_PER_UNIT", "0.8"))
-_clause_max_tokens: int | None = None  # synthesize 在呼叫模型前設定；推論有 LOCK，同一時間只有一段
-
-
-_upstream_llm_inference = cosy.model.llm.inference
-
-
-def _capped_llm_inference(*args, **kwargs):
-    if _clause_max_tokens is None:
-        return _upstream_llm_inference(*args, **kwargs)
-    # ⚠️ 先讀 text_len 再呼叫：上游會就地改寫它（`text_len += prompt_text_len`）。
-    text_tokens = max(1, int(kwargs["text_len"].reshape(-1)[0].item()))
-    # 上游的上限是「文字 token × 倍數」，所以把秒數上限換算回倍數交給它；
-    # limit 以上游同樣的 float32 算法重算，兩邊才會一致（見 textsplit.cap_ratio）。
-    ratio = cap_ratio(_clause_max_tokens, text_tokens)
-    kwargs["max_token_text_ratio"] = ratio
-    tokens = _upstream_llm_inference(*args, **kwargs)
-    limit = upstream_max_len(text_tokens, ratio)
-    if tokens.size(1) >= limit:
-        raise Runaway(f"語音 {tokens.size(1) / TOKENS_PER_SEC:.1f} 秒碰到這段的上限 {limit / TOKENS_PER_SEC:.1f} 秒")
-    return tokens
-
-
-# 不改上游檔案：在執行期把這個物件的 inference 換成有上限的版本（上游以關鍵字參數呼叫它）。
-cosy.model.llm.inference = _capped_llm_inference
+# 暖機：第一次生成要多花二、三十秒（CUDA kernel 初始化等），實測服務啟動後第一則告警開口等了 31.5 秒。
+# 啟動時先念一句丟掉，第一則真的告警就不用付這筆。不寫進快取。
+print("[augur-tts] 暖機…", flush=True)
+model.generate_voice_clone(text="你好。", language="Chinese", voice_clone_prompt=VOICE, max_new_tokens=40)
 print(f"[augur-tts] 就緒。允許的 origin：{ORIGINS}", flush=True)
 
 
-def synthesize(text: str) -> torch.Tensor:
-    global _clause_max_tokens
-    pieces = []
-    for sentence in clauses(bopomofo(text)):
-        _clause_max_tokens = clause_max_tokens(spoken_units(sentence), MAX_SEC_PER_UNIT)
-        tok, tok_len = cosy.frontend._extract_text_token(sentence)
-        model_input = dict(BASE_INPUT, text=tok, text_len=tok_len)
+class Runaway(Exception):
+    """模型一路念到這段的長度上限 —— 幾乎一定是失控（見 textsplit.is_runaway）。"""
+
+
+def synthesize(text: str) -> tuple[np.ndarray, int]:
+    pieces: list[np.ndarray] = []
+    sr = 24000
+    for clause in clauses(to_model_text(text)):
+        limit = clause_limit_sec(spoken_units(clause), MAX_SEC_PER_UNIT)
+        wavs, sr = model.generate_voice_clone(
+            text=clause,
+            language="Chinese",
+            voice_clone_prompt=VOICE,
+            max_new_tokens=qwen_max_new_tokens(limit),
+        )
+        wav = np.asarray(wavs[0], dtype=np.float32)
+        if is_runaway(len(wav) / sr, limit):
+            raise Runaway(f"語音 {len(wav) / sr:.1f} 秒碰到這段的上限 {limit:.1f} 秒")
         # 每段都修頭尾：段數一多，每段句尾的空白會累加成整句裡的長停頓。
-        pieces.append(trim_silence(cosy.model.inference(**model_input)["tts_speech"], pad_sec=0.12))
+        pieces.append(trim_silence(wav, sr, pad_sec=0.12))
     if not pieces:
         raise HTTPException(status_code=400, detail="input 沒有可念的內容")
-    return torch.concat(pieces, dim=1)
+    return np.concatenate(pieces), sr
 
 
-def trim_silence(wav: torch.Tensor, pad_sec: float = 0.1) -> torch.Tensor:
+def trim_silence(wav: np.ndarray, sr: int, pad_sec: float = 0.1) -> np.ndarray:
     """
-    修掉頭尾靜音。模型偶爾在句尾留幾秒空白（實測「好消息，CPU 使用率已經恢復正常囉。」
-    10.6 秒裡只有 6.1 秒有聲音）—— 面板逐則播，句尾空白就是下一則告警白等的時間。
+    修掉頭尾靜音。模型偶爾在句尾留幾秒空白 —— 面板逐則播，句尾空白就是下一則告警白等的時間。
     門檻取這一段自己最大音框 RMS 的 5%，不用絕對值：不同輸出的音量差到 3 倍。
     """
     hop = 512
-    x = wav.squeeze(0)
-    n = x.numel() // hop
+    n = len(wav) // hop
     if n == 0:
         return wav
-    rms = x[: n * hop].reshape(n, hop).pow(2).mean(dim=1).sqrt()
-    voiced = (rms > rms.max() * 0.05).nonzero()
-    if voiced.numel() == 0:
+    rms = np.sqrt((wav[: n * hop].reshape(n, hop) ** 2).mean(axis=1))
+    voiced = np.nonzero(rms > rms.max() * 0.05)[0]
+    if voiced.size == 0:
         return wav
-    pad = int(pad_sec * SAMPLE_RATE)
-    start = max(0, int(voiced[0]) * hop - pad)
-    end = min(x.numel(), (int(voiced[-1]) + 1) * hop + pad)
-    return wav[:, start:end]
+    pad = int(pad_sec * sr)
+    return wav[max(0, int(voiced[0]) * hop - pad) : min(len(wav), (int(voiced[-1]) + 1) * hop + pad)]
 
 
 class SpeechRequest(BaseModel):
@@ -192,7 +149,7 @@ app.add_middleware(
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"ok": True, "reference": REF_WAV.name}
+    return {"ok": True, "model": MODEL, "reference": REF_WAV.name}
 
 
 @app.get("/v1/models")
@@ -226,15 +183,12 @@ def synthesize_wav(text: str) -> bytes:
     """
     以片段文字為鍵快取成品。面板逐句來要（見 `src/speech/remoteSpeaker.ts` 的 `splitClauses`），
     而告警句的片段大多會重複：「偵測到告警：<規則名>，」「嚴重度 warning，」與規則摘要，
-    同一條告警每次觸發都一字不差，變的只有數值那一段。
-    服務產語音約等於即時速度（RTX 4070 實測），沒有快取時開口要等第一句的 3–8 秒；
-    命中快取的那幾句是立即回應，只剩數值那句要現產，而它是在前幾句播放的同時產的。
+    同一條告警每次觸發都一字不差，變的只有數值那一段。命中快取的句子立即回應。
 
     兩道查詢：
       - 鎖外先查一次 —— 命中就不必排在別人的推論後面。
       - 拿到推論鎖之後再查一次 —— 同一句同時來 N 個請求（同一個 dashboard 有 N 個人在看）時，
-        只有第一個真的推論，其餘排到鎖時就命中。不用 functools.lru_cache 正是為了這個：
-        它不合併進行中的重複呼叫，N 個請求會各算一次（2026-10-05 複審 F3）。
+        只有第一個真的推論，其餘排到鎖時就命中（2026-10-05 複審 F3）。
     """
     wav = cache_get(text)
     if wav is not None:
@@ -243,9 +197,9 @@ def synthesize_wav(text: str) -> bytes:
         wav = cache_get(text)
         if wav is not None:
             return wav
-        audio = synthesize(text)
+        audio, sr = synthesize(text)
         buf = io.BytesIO()
-        sf.write(buf, audio.squeeze(0).cpu().numpy(), SAMPLE_RATE, format="WAV", subtype="PCM_16")
+        sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
         wav = buf.getvalue()
         # ⚠️ 寫入快取必須在鎖**裡面**：寫在外面的話，放開鎖到寫入之間，排在後面的同一句會拿到鎖、
         # 查不到、再算一次（2026-10-05 實測：同時 3 個同句請求產出兩種不同音訊）。

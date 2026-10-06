@@ -101,7 +101,7 @@ Panel options（`src/panelOptions.ts`）：`minSeverity`、`repeatFiringMin`、
 | ADR | 主題 | 狀態 |
 |---|---|---|
 | **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
-| ADR-005 | 選填的外部語音服務（OpenAI 相容 TTS，童聲／台灣口音），Web Speech 保留為預設與降級；修訂 ADR-004 決策 4 | FIRM（2026-10-05） |
+| ADR-005 | 選填的外部語音服務（OpenAI 相容 TTS，參考服務為 Qwen3-TTS 年輕男聲），Web Speech 保留為預設與降級；修訂 ADR-004 決策 4 | FIRM（2026-10-05） |
 | ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded（**§1／§2 被 ADR-004 決策 5 明文繼承**） |
 | ADR-003 | 前端 visual-web-stack | Superseded |
