@@ -67,9 +67,26 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
       .addTextInput({
         path: 'ttsVoice',
         name: '指定聲線',
-        description: '留空 = 自動挑（優先 zh-TW 且為本機引擎）。填 voice 的完整名稱。',
+        description:
+          '留空 = 自動挑（優先 zh-TW 且為本機引擎）。填聲線名稱的一段即可（例如 Zhiwei、Hanhan），面板上會顯示實際用到的聲線。',
         defaultValue: DEFAULT_OPTIONS.ttsVoice,
-        settings: { placeholder: 'Microsoft Hanhan - Chinese (Traditional, Taiwan)' },
+        settings: { placeholder: 'Zhiwei' },
+        showIf: (c) => c.enableTTS,
+      })
+      .addSliderInput({
+        path: 'ttsPitch',
+        name: '音高',
+        description: '1 = 聲線原本的音高。要像小男孩：選男聲、拉到 1.4–1.7。部分瀏覽器（例如 Edge）可能不支援調音高。',
+        defaultValue: DEFAULT_OPTIONS.ttsPitch,
+        settings: { min: 0, max: 2, step: 0.1 },
+        showIf: (c) => c.enableTTS,
+      })
+      .addSliderInput({
+        path: 'ttsRate',
+        name: '語速',
+        description: '1 = 原速。',
+        defaultValue: DEFAULT_OPTIONS.ttsRate,
+        settings: { min: 0.5, max: 2, step: 0.1 },
         showIf: (c) => c.enableTTS,
       })
       .addTextInput({

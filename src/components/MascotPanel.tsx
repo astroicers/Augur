@@ -184,6 +184,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 而 pending 的顯示條件含「未播報」，沒有這個 state 就判不出來。
   const [speaking, setSpeaking] = useState(false);
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
+  /** 播報器挑到的聲線名稱（onVoice 回報）；null = 引擎預設。 */
+  const [voiceName, setVoiceName] = useState<string | null>(null);
   /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
   const reactionRef = useRef<'click' | 'pending' | null>(null);
   /**
@@ -221,7 +223,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return undefined;
   }, [dpr]);
 
-  const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice } = options;
+  const { minSeverity, repeatFiringMin, fallbackSeverity, alertLang, enableTTS, ttsVoice, ttsPitch, ttsRate } = options;
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';
@@ -524,7 +526,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     const sp = createSpeaker(window.speechSynthesis, {
       ...(ttsVoice ? { preferredVoice: ttsVoice } : {}),
       lang: alertLang === 'en' ? 'en-US' : 'zh-TW',
+      pitch: ttsPitch,
+      rate: ttsRate,
       events: {
+        onVoice: (name) => setVoiceName(name),
         // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
         // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
         // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
@@ -565,7 +570,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       sp.dispose();
       speakerRef.current = null;
     };
-  }, [enableTTS, ttsVoice, alertLang]);
+  }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate]);
 
   useEffect(() => {
     // D10：載入中或查詢失敗時 data.series 可能是空的。在 threshold 路徑上
@@ -638,6 +643,17 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   }, [data, minSeverity, alertLang]);
 
   const unlock = useCallback(() => speakerRef.current?.unlock(), []);
+  // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
+  const preview = useCallback(() => {
+    speakerRef.current?.unlock();
+    speakerRef.current?.enqueue({
+      text: alertLang === 'en' ? 'Hi, I will read your alerts out loud.' : '嗨，我會幫你把告警念出來。',
+      severity: 'info',
+      emotion: 'calm',
+      name: 'preview',
+      status: 'firing',
+    });
+  }, [alertLang]);
 
   const chipColor = theme.visualization.getColorByName(
     ({ calm: 'blue', warning: 'orange', critical: 'red', resolved: 'green' } as const)[emotion]
@@ -671,6 +687,20 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           <button className={styles.btn} onClick={unlock} type="button">
             啟用語音
           </button>
+        )}
+        {roomy && enableTTS && (
+          <button className={styles.btn} onClick={preview} type="button" data-testid="tts-preview">
+            試聽
+          </button>
+        )}
+        {enableTTS && (
+          <span
+            className={styles.scopeChip}
+            data-testid="voice-chip"
+            title="目前用來播報的聲線。要換就在 panel 選項「指定聲線」填名稱的一段。"
+          >
+            聲線：{voiceName ?? '引擎預設'}
+          </span>
         )}
         {speechErr && (
           <span className={styles.chip} style={{ color: theme.colors.error.text }}>

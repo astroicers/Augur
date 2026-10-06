@@ -23,6 +23,8 @@ class FakeUtterance {
   onboundary: ((ev: unknown) => void) | null = null;
   voice: unknown = null;
   lang = '';
+  pitch = 1;
+  rate = 1;
   constructor(public text: string) {}
 }
 
@@ -49,7 +51,10 @@ class FakeSynth {
     this.listeners.set(type, arr);
   }
   removeEventListener(type: string, fn: Listener) {
-    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((f) => f !== fn));
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) ?? []).filter((f) => f !== fn)
+    );
   }
   emit(type: string) {
     [...(this.listeners.get(type) ?? [])].forEach((f) => f());
@@ -337,4 +342,68 @@ test('loadVoices：首呼為空時等 voiceschanged，且逾時回空陣列而�
   } finally {
     jest.useRealTimers();
   }
+});
+
+test('音高與語速套到每一句，超出範圍會夾住；非數字退回 1', async () => {
+  const synth = mk();
+  createSpeaker(synth as unknown as SpeechSynthesis, { pitch: 1.6, rate: 1.2 }).enqueue(plan('一'));
+  await settle();
+  expect([synth.spoken[0]!.pitch, synth.spoken[0]!.rate]).toEqual([1.6, 1.2]);
+
+  const synth2 = mk();
+  createSpeaker(synth2 as unknown as SpeechSynthesis, { pitch: 5, rate: 0 }).enqueue(plan('一'));
+  await settle();
+  expect([synth2.spoken[0]!.pitch, synth2.spoken[0]!.rate]).toEqual([2, 0.1]);
+
+  const synth3 = mk();
+  createSpeaker(synth3 as unknown as SpeechSynthesis, { pitch: Number.NaN }).enqueue(plan('一'));
+  await settle();
+  expect([synth3.spoken[0]!.pitch, synth3.spoken[0]!.rate]).toEqual([1, 1]);
+});
+
+test('語速放慢時 watchdog 跟著放寬 —— 否則慢速設定下每一則都被腰斬', async () => {
+  jest.useFakeTimers();
+  try {
+    const synth = mk();
+    const errors: string[] = [];
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+      rate: 0.5,
+      events: { onError: (e) => errors.push(e) },
+    });
+    sp.enqueue(plan('一'.repeat(56))); // 原速 10s → 0.5 倍速 20s → watchdog = 20*2+5 = 45s
+    await settle();
+    jest.advanceTimersByTime(30_000); // 原速的 25s 早就過了
+    await settle();
+    expect(errors).toEqual([]);
+    jest.advanceTimersByTime(16_000);
+    await settle();
+    expect(errors).toEqual(['watchdog-timeout']);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('指名聲線可以只填名稱的一段（不分大小寫）；onVoice 回報挑到的名稱，voiceName() 讀得到', async () => {
+  const v = (name: string, lang: string, localService = false) =>
+    ({ name, lang, localService }) as unknown as SpeechSynthesisVoice;
+  const voices = [
+    v('Microsoft Hanhan - Chinese (Traditional, Taiwan)', 'zh-TW', true),
+    v('Microsoft Zhiwei - Chinese (Traditional, Taiwan)', 'zh-TW', true),
+  ];
+  expect(pickVoice(voices, 'zhiwei')!.name).toContain('Zhiwei');
+  // 完整名稱優先於部分比對
+  expect(pickVoice([v('Zhi', 'zh-TW'), v('Zhiwei', 'zh-TW')], 'Zhiwei')!.name).toBe('Zhiwei');
+  // 空白不當成「全部都符合」
+  expect(pickVoice(voices, '   ')!.name).toContain('Hanhan');
+
+  const synth = mk();
+  synth.voices = voices as unknown as FakeSynth['voices'];
+  const seen: Array<string | null> = [];
+  const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+    preferredVoice: 'Zhiwei',
+    events: { onVoice: (n) => seen.push(n) },
+  });
+  await settle();
+  expect(seen).toEqual(['Microsoft Zhiwei - Chinese (Traditional, Taiwan)']);
+  expect(sp.voiceName()).toBe('Microsoft Zhiwei - Chinese (Traditional, Taiwan)');
 });
