@@ -127,13 +127,15 @@ export function mouthEnvelope(buf: AudioBufferLike, hopSec = ENVELOPE_HOP_SEC): 
  * 就是整則的時間都在空等 —— 實測 30 則 p50 15.5 秒、最慢 36.8 秒。逐句要、第一句回來就播、
  * 播的同時要下一句，開口等待只剩第一句的 2–4 秒；生成比播放快，後面接得上。
  *
- * 太短的片段併進下一段：「偵測到告警：」單獨一段只是多一次請求與一次停頓。
+ * 太短的片段併進下一段（不足 16 字）：「偵測到告警：」單獨一段只是多一次請求與一次停頓；而且上下文太短時
+ * 數字最容易念錯 —— 2026-10-05 實測「目前數值 91.35。」單獨成段 4 次錯 3 次，整句合成 3 次全對。
+ * 原本 8 字，改 16（伺服器端 `MIN_CLAUSE_CHARS` 同值，否則合好的段落到伺服器又被切開）。
  *
  * 半形的 `, : ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20:9182`、`12:30:05`、`http://`、`1,234`
  * 切開會變成兩次請求、中間多一個停頓（複審 2026-10-05 指出）。全形標點一律切。
  * 不吃掉標點後的空白，英文句子送出去時字與字之間的空格還在。
  */
-export function splitClauses(text: string, minChars = 8): string[] {
+export function splitClauses(text: string, minChars = 16): string[] {
   const raw = text.split(/(?<=[，：；。！？]|[,:;?!](?![\d/]))/).filter((s) => s.trim() !== '');
   const out: string[] = [];
   let buf = '';

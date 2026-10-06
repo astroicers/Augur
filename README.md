@@ -15,7 +15,7 @@
 P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位，5 個 POC gate 全數 PASS。
 
-目前有 172 個測試（13 個 suite）、167 條 sprite 工具自測。commit 閘共 10 道：
+目前有 173 個測試（13 個 suite）、167 條 sprite 工具自測。commit 閘共 10 道：
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / jest。
 CI 跑同樣這 10 道，另外還有 build 與 e2e。
 

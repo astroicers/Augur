@@ -31,6 +31,10 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   the parts of the sentence that repeat.
 - The panel's *Rate* setting is sent to the service, but the reference service ignores it;
   its speaking rate comes from its voice sample.
+- The reference voice is not perfect: it sometimes misreads a number, reads English words
+  such as "warning" with a Chinese accent, and now and then cannot stop talking. When a
+  phrase runs far longer than its length allows, the service cuts it off and the built-in
+  voice reads the rest of that alert instead.
 - There is no field for an API key. Panel options are stored in the dashboard and anyone
   who can see the dashboard can read them.
 - Decision record: ADR-005 (FIRM).

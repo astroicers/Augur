@@ -331,7 +331,7 @@ describe('fetch 同步丟例外', () => {
 
 describe('splitClauses', () => {
   it('在標點後切，太短的片段併進下一段', () => {
-    expect(splitClauses('偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。')).toEqual([
+    expect(splitClauses('偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。', 8)).toEqual([
       '偵測到告警：WindowsHighCPU，',
       '嚴重度 warning，',
       '目前數值 91.35。',
@@ -339,7 +339,7 @@ describe('splitClauses', () => {
   });
   it('結尾剩下的短片段併回最後一段', () => {
     expect(splitClauses('主機 CPU 使用率過高，請檢查。')).toEqual(['主機 CPU 使用率過高，請檢查。']);
-    expect(splitClauses('告警已恢復：WindowsLowDisk，受影響對象 C:。')).toEqual([
+    expect(splitClauses('告警已恢復：WindowsLowDisk，受影響對象 C:。', 8)).toEqual([
       '告警已恢復：WindowsLowDisk，',
       '受影響對象 C:。',
     ]);
@@ -351,14 +351,17 @@ describe('splitClauses', () => {
 });
 
 describe('逐句管線', () => {
-  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，主機 CPU 使用率過高，目前數值 91.35，已經持續兩分鐘了。';
 
   it('逐句要音訊、預取下一句；onStart／onEnd 各一次', async () => {
     const { sp, ctx, calls, log } = setup();
     sp.enqueue(plan(LONG));
     await flush();
     // 第一句在播，第二句已預取，第三句還沒送。
-    expect(calls.map((c) => c.body.input)).toEqual(['偵測到告警：WindowsHighCPU，', '嚴重度 warning，']);
+    expect(calls.map((c) => c.body.input)).toEqual([
+      '偵測到告警：WindowsHighCPU，',
+      '嚴重度 warning，主機 CPU 使用率過高，',
+    ]);
     expect(log).toEqual(['start:' + LONG]);
     ctx.sources[0]!.end();
     await flush();
@@ -391,7 +394,9 @@ describe('逐句管線', () => {
     await flush();
     ctx.sources[0]!.end();
     await flush();
-    expect(fb().spoken.map((p) => p.text)).toEqual(['嚴重度 warning，目前數值 91.35。']);
+    expect(fb().spoken.map((p) => p.text)).toEqual([
+      '嚴重度 warning，主機 CPU 使用率過高，目前數值 91.35，已經持續兩分鐘了。',
+    ]);
     fb().finishCurrent();
     await flush();
     expect(log.at(-1)).toBe('end:' + LONG);
@@ -409,9 +414,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe('splitClauses 預設 16 字', () => {
+  it('數值那段不會單獨成段，跟前一段合在一起（短段落上下文不夠，數字最容易念錯）', () => {
+    expect(splitClauses('偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。')).toEqual([
+      '偵測到告警：WindowsHighCPU，',
+      '嚴重度 warning，目前數值 91.35。',
+    ]);
+  });
+});
+
 describe('splitClauses：數字裡的半形標點不切', () => {
   it('IP:埠、時間、小數、千分位、網址留在同一段', () => {
-    expect(splitClauses('受影響對象 192.168.1.20:9182，時間 12:30:05，數量 1,234。')).toEqual([
+    expect(splitClauses('受影響對象 192.168.1.20:9182，時間 12:30:05，數量 1,234。', 8)).toEqual([
       '受影響對象 192.168.1.20:9182，',
       '時間 12:30:05，',
       '數量 1,234。',
@@ -419,7 +433,7 @@ describe('splitClauses：數字裡的半形標點不切', () => {
     expect(splitClauses('see http://grafana.local/d/x please')).toEqual(['see http://grafana.local/d/x please']);
   });
   it('英文句子保留標點後的空格', () => {
-    expect(splitClauses('Alert firing: WindowsHighCPU, severity warning.')).toEqual([
+    expect(splitClauses('Alert firing: WindowsHighCPU, severity warning.', 8)).toEqual([
       'Alert firing:',
       ' WindowsHighCPU,',
       ' severity warning.',
@@ -428,7 +442,7 @@ describe('splitClauses：數字裡的半形標點不切', () => {
 });
 
 describe('世代：stop() 之後晚到的非同步步驟一律放手', () => {
-  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，主機 CPU 使用率過高，目前數值 91.35，已經持續兩分鐘了。';
 
   it('多句播到一半 stop：舊音源晚到的 onended 不會接下一句、不會 onEnd', async () => {
     const { sp, ctx, calls, log } = setup();
@@ -492,7 +506,7 @@ describe('世代：stop() 之後晚到的非同步步驟一律放手', () => {
 
 describe('錯誤路徑', () => {
   it('從第 i>0 句降級：onStart 只發一次（不帶後半段文字再發一次）', async () => {
-    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，主機 CPU 使用率過高，目前數值 91.35，已經持續兩分鐘了。';
     let n = 0;
     const { sp, ctx, fb, log } = setup(async () =>
       n++ === 1 ? ({ ok: false, status: 503 } as Response) : okResponse()
@@ -554,7 +568,7 @@ describe('逾時從輪到那一句才起算', () => {
   it('預取的下一句在服務端排隊比逾時還久，但輪到它之後很快就到：不降級', async () => {
     // 逾時 50ms。第 0 句立刻到；第 1 句在送出後 120ms 才到（排隊），而第 0 句播到 100ms 才結束。
     // 從送出起算會在 50ms 誤判逾時；從輪到它（100ms）起算只等 20ms。
-    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning。';
+    const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，主機 CPU 使用率過高。';
     let n = 0;
     const { sp, ctx, fb, log } = setup(() =>
       n++ === 0 ? Promise.resolve(okResponse()) : new Promise((r) => setTimeout(() => r(okResponse()), 120))
@@ -632,14 +646,17 @@ function abortableFetch() {
 }
 
 describe('第二輪複審：取消與世代', () => {
-  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，主機 CPU 使用率過高，目前數值 91.35，已經持續兩分鐘了。';
 
   it('R1：第 0 句失敗而降級時，這則已預取的下一句被取消', async () => {
     const af = abortableFetch();
     const { sp, fb } = setup(af.impl);
     sp.enqueue(plan(LONG));
     await flush();
-    expect(af.reqs.map((r) => r.input)).toEqual(['偵測到告警：WindowsHighCPU，', '嚴重度 warning，']);
+    expect(af.reqs.map((r) => r.input)).toEqual([
+      '偵測到告警：WindowsHighCPU，',
+      '嚴重度 warning，主機 CPU 使用率過高，',
+    ]);
     af.reqs[0]!.settle({ ok: false, status: 500 } as Response);
     await flush();
     expect(fb().spoken).toHaveLength(1);

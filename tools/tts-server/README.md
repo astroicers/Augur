@@ -83,6 +83,7 @@ python tools/tts-server/server.py
 | `AUGUR_TTS_PORT` | 8765 | 8080–8099 常被 `kubectl port-forward` 等工具占用，所以避開 |
 | `AUGUR_TTS_HOST` | 0.0.0.0 | |
 | `AUGUR_TTS_CACHE` | 512 | 片段快取筆數，0 = 不快取 |
+| `AUGUR_TTS_MAX_SEC_PER_UNIT` | 0.8 | 失控上限：每個字最多念幾秒（另加 1 秒），見下方〈念錯與失控〉 |
 | `AUGUR_TTS_REFERENCE` | `voices/boy.wav` | 參考音；逐字稿預設是同名的 `.txt` |
 | `BREEZYVOICE_DIR` | `~/engines/BreezyVoice` | 上游程式的位置 |
 
@@ -91,7 +92,7 @@ python tools/tts-server/server.py
 模型產語音大約是即時速度：念 5 秒的話要算 3–5 秒。面板因此把一則告警切成短句、逐句來要，
 第一句回來就開始播。伺服器會記住念過的片段，所以：
 
-- **某種告警第一次出現**：開口前等大約 6 秒（實測 p50 5.7 秒、最慢 8.9 秒），句子之間偶爾會停頓。
+- **某種告警第一次出現**：開口前等大約 6 秒（實測 p50 6.2 秒、p95 9.6 秒、最慢 14.4 秒），句子之間偶爾停頓（最長約 4 秒）。
 - **同一種告警再出現**（只有數值不同）：幾乎立刻開口。只有數值那一段要現產，而它在前面幾句播放時就產好了。
 - 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 15 秒，從輪到這一段時起算），
   從這一段起改用瀏覽器聲線念完這則。下一則會再試外部服務。
@@ -104,6 +105,26 @@ python tools/tts-server/server.py
 **這個服務沒有驗證機制**，預設綁 `0.0.0.0`。CORS 只擋得住瀏覽器，擋不住其他程式直接呼叫。
 請放在可信的網段，或用 `AUGUR_TTS_HOST=127.0.0.1` 只開給本機、前面再放反向代理。
 
+## 念錯與失控
+
+這個模型不完美，試聽前先知道：
+
+- **偶爾念錯**：數字大多念得對，但不是每次（抽查「91.35」3 次對 2 次）。英文（`warning`、規則摘要）會用中文腔念。
+- **失控**：模型偶爾會停不下來，把參考音的話接著念下去。服務以字數算每段最多能念多久（每字 0.8 秒＋1 秒），
+  超過就截斷、回 502，面板把那則剩下的部分改用瀏覽器聲線念。失控的音訊不會被放出來。
+  只多念一小段的輕微失控擋不住，會照樣播出。
+
+## 自己驗證
+
+`eval/` 裡的腳本會把結果寫到 `~/.cache/augur-tts-eval/`：
+
+| 腳本 | 驗什麼 | 怎麼跑 |
+|---|---|---|
+| `runaway_check.py` | 失控上限：碰到上限會回 502、不寫進快取 | conda 環境裡 `python tools/tts-server/eval/runaway_check.py` |
+| `quality.py` | 念 4 句典型告警各 3 次，用 Whisper 轉回文字抽查（Whisper 對童聲本來就不準，結果只是線索） | 同上 |
+| `latency.py` | 模擬面板逐句要音訊，量冷／熱的開口等待與停頓 | 服務跑起來後 `python3 tools/tts-server/eval/latency.py http://127.0.0.1:8765` |
+| `browser-poc.mjs` | 在真的 Grafana 上用無頭瀏覽器按「試聽」：跨來源、播放、嘴型、各種失敗時的降級 | `GRAFANA_URL=… TTS_URL=… node tools/tts-server/eval/browser-poc.mjs`（會建一個暫時 dashboard、跑完刪掉） |
+
 ## 連不上的時候
 
 面板的聲線標籤會寫明原因：「外部語音失敗：…，已降級」。
@@ -111,7 +132,8 @@ python tools/tts-server/server.py
 | 標籤上的原因 | 通常是 |
 |---|---|
 | `Failed to fetch` | 服務沒開、埠不對、**CORS 擋下**（`AUGUR_TTS_ALLOW_ORIGINS` 沒有你的 Grafana 網址），或 Grafana 走 https 而服務是 http（混合內容） |
-| `HTTP 4xx／5xx` | 服務端錯誤，看伺服器的輸出 |
+| `HTTP 502` | 模型失控、已截斷（見〈念錯與失控〉）。偶爾發生是正常的 |
+| `HTTP 4xx／其他 5xx` | 服務端錯誤，看伺服器的輸出 |
 | `timeout` | 這一段超過逾時。第一次念某種告警時偶爾會發生 |
 | `autoplay-blocked` | 瀏覽器擋自動播放。點一下 panel 上的「啟用語音」 |
 
