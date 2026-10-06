@@ -29,9 +29,10 @@ export function splitForRemoteVoice(text: string, maxChars: number): string[] {
   if (text.length <= limit) {
     return [text];
   }
-  // 半形 `, . : ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20`、`91.35`、`12:30`、`http://`。
+  // 半形 `, . ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20`、`91.35`、`http://`。
+  // 半形 `:` 不是切點：IPv6（`fe80::1ff`）、時間（`12:30`）、路徑（`C:\`）都不切；`Alert firing: X` 靠冒號後的空白切（第二輪複審 R2）。
   // 切在數字中間會被念成兩段（複審 F1；remoteSpeaker 的 splitClauses 早有同一條，實測數值單獨成段時常念錯）。
-  const pieces = text.split(/(?<=[，。！？；、\s])|(?<=[,.:;?!])(?![\d/])/).filter((p) => p !== '');
+  const pieces = text.split(/(?<=[，。！？；、\s])|(?<=[,.;?!])(?![\d/])/).filter((p) => p !== '');
   const out: string[] = [];
   let buf = '';
   const flush = () => {

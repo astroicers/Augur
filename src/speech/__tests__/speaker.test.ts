@@ -539,6 +539,19 @@ describe('遠端聲線切段：複審補測', () => {
     }
   });
 
+  it('R2：IPv6、時間、Windows 路徑裡的半形冒號不切；冒號後接空白才切', () => {
+    // 舊規則（冒號一律可切）在這三個上限會把位址／路徑從冒號處拆開
+    expect(splitForRemoteVoice('對象 fe80::1ff:fe23:4567:890a 異常', 26)).toEqual([
+      '對象 ',
+      'fe80::1ff:fe23:4567:890a ',
+      '異常',
+    ]);
+    expect(splitForRemoteVoice('磁碟 C:\\Data\\logs 已滿', 14)).toEqual(['磁碟 ', 'C:\\Data\\logs ', '已滿']);
+    expect(splitForRemoteVoice('時間 12:30:05 觸發', 9)).toEqual(['時間 ', '12:30:05 ', '觸發']);
+    // 冒號後面是空白：可以切
+    expect(splitForRemoteVoice('Alert firing: WindowsHighCPU', 14)).toEqual(['Alert firing: ', 'WindowsHighCPU']);
+  });
+
   it('F2：段與段之間清掉前一段的 watchdog —— 長播報不會在第一段的估時到期時被腰斬', async () => {
     jest.useFakeTimers();
     try {
