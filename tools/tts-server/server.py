@@ -219,4 +219,4 @@ def speech(req: SpeechRequest) -> Response:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=os.environ.get("AUGUR_TTS_HOST", "0.0.0.0"), port=int(os.environ.get("AUGUR_TTS_PORT", "8090")))
+    uvicorn.run(app, host=os.environ.get("AUGUR_TTS_HOST", "0.0.0.0"), port=int(os.environ.get("AUGUR_TTS_PORT", "8765")))

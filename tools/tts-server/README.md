@@ -71,16 +71,16 @@ python tools/tts-server/make_reference.py
 conda activate breezyvoice && export PYTHONNOUSERSITE=1
 python tools/tts-server/server.py
 # [augur-tts] 就緒。允許的 origin：[...]
-# Uvicorn running on http://0.0.0.0:8090
+# Uvicorn running on http://0.0.0.0:8765
 ```
 
 啟動約需 25 秒（實測：載模型 12 秒、算參考音特徵 7 秒）。之後在 panel 選項「外部語音服務網址」填
-`http://<這台機器>:8090`，按「試聽」。面板上的聲線標籤會顯示「外部語音（主機:埠）」。
+`http://<這台機器>:8765`，按「試聽」。面板上的聲線標籤會顯示「外部語音（主機:埠）」。
 
 | 環境變數 | 預設 | 說明 |
 |---|---|---|
 | `AUGUR_TTS_ALLOW_ORIGINS` | localhost／127.0.0.1 的 3000 與 3002 | 允許的 Grafana 網址，逗號分隔。**要寫成瀏覽器網址列上的樣子**：`localhost` 與 `127.0.0.1` 是不同的 origin |
-| `AUGUR_TTS_PORT` | 8090 | |
+| `AUGUR_TTS_PORT` | 8765 | 8080–8099 常被 `kubectl port-forward` 等工具占用，所以避開 |
 | `AUGUR_TTS_HOST` | 0.0.0.0 | |
 | `AUGUR_TTS_CACHE` | 512 | 片段快取筆數，0 = 不快取 |
 | `AUGUR_TTS_REFERENCE` | `voices/boy.wav` | 參考音；逐字稿預設是同名的 `.txt` |
@@ -93,7 +93,7 @@ python tools/tts-server/server.py
 
 - **某種告警第一次出現**：開口前等大約 6 秒（實測 p50 5.7 秒、最慢 8.9 秒），句子之間偶爾會停頓。
 - **同一種告警再出現**（只有數值不同）：幾乎立刻開口。只有數值那一段要現產，而它在前面幾句播放時就產好了。
-- 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 15 秒，不含它在服務端排隊的時間），
+- 輪到某一段時，若等超過 panel 選項「外部語音逾時」（預設 15 秒，從輪到這一段時起算），
   從這一段起改用瀏覽器聲線念完這則。下一則會再試外部服務。
 
 快取存在記憶體，重啟服務後歸零。同一段同時有好幾個請求（例如好幾個人開著同一個 dashboard）時只算一次。

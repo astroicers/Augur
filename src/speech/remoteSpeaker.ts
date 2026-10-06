@@ -254,10 +254,19 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
     return ctx;
   }
 
-  /** 送出一句的請求。**不在這裡計逾時** —— 見 awaitClause。 */
+  /** 送出一句的請求。正常的逾時**不在這裡計** —— 見 awaitClause；這裡只有防漏的絕對上限。 */
   function startFetch(text: string): Fetching {
     const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
     let reason: string | null = null;
+    // 絕對上限：任何請求不論有沒有人在等，最久活這麼久。逾時從輪到該句才起算，
+    // 萬一哪條路徑漏了 abort（R1 那類），這道保證請求不會永遠掛著、佔著連線。
+    const ceiling = setTimeout(
+      () => {
+        reason ??= 'timeout';
+        ac?.abort();
+      },
+      Math.max(60000, timeoutMs * 4)
+    );
     // ⚠️ 包在 then 裡呼叫：fetchFn **同步**丟例外（沒有 fetch 的環境、URL 不合法）時，
     // 直接呼叫會從 pump() 的 try 外面炸出去，佇列停住 —— 這裡讓它變成一般的 rejection、走降級。
     const promise = Promise.resolve()
@@ -284,7 +293,8 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
       .catch((e: unknown) => {
         // abort 會以 AbortError 落到這裡；換成我們自己記的原因（timeout／stopped）。
         throw new Error(reason ?? (e instanceof Error ? e.message : String(e)));
-      });
+      })
+      .finally(() => clearTimeout(ceiling));
     // 預取的那一句可能在被取用前就失敗；先掛一個空 catch，免得變成未處理的 rejection。
     promise.catch(() => undefined);
     return {
@@ -441,6 +451,14 @@ export function createRemoteSpeaker(deps: RemoteSpeakerDeps, opts: RemoteSpeaker
         return;
       }
       setLabel(`${fallbackVoice ?? '引擎預設'}（外部語音失敗：${reason}，已降級）`);
+      // 這則剩下的句子改由 Web Speech 念，已送出的預取用不到了 —— 取消掉。不取消的話它們沒有人 await、
+      // 也就沒有逾時計時器（逾時從輪到該句才起算），服務卡住時會一直佔著瀏覽器對同一主機的連線
+      // （2026-10-05 第二輪複審 R1）。下一則第一句的預取不在 entry 裡，不受影響。
+      entry.audio.forEach((f, j) => {
+        if (j >= from) {
+          f?.abort('degraded');
+        }
+      });
       const rest = from === 0 ? entry.plan : { ...entry.plan, text: entry.clauses.slice(from).join('') };
       fallbackPending = { plan: rest, done: finish, suppressStart: from > 0 };
       try {

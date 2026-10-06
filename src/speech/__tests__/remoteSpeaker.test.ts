@@ -615,3 +615,74 @@ describe('降級中 stop', () => {
     expect(log).toEqual(['start:一', 'boundary:2']);
   });
 });
+
+/** 會理會 AbortSignal 的假 fetch：記錄每個請求是否被 abort，回應由測試決定。 */
+function abortableFetch() {
+  const reqs: Array<{ input: string; aborted: boolean; settle: (r: Response) => void }> = [];
+  const impl = (_u: string, init: RequestInit) =>
+    new Promise<Response>((resolve, reject) => {
+      const r = { input: JSON.parse(String(init.body)).input as string, aborted: false, settle: resolve };
+      init.signal?.addEventListener('abort', () => {
+        r.aborted = true;
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+      reqs.push(r);
+    });
+  return { reqs, impl };
+}
+
+describe('第二輪複審：取消與世代', () => {
+  const LONG = '偵測到告警：WindowsHighCPU，嚴重度 warning，目前數值 91.35。';
+
+  it('R1：第 0 句失敗而降級時，這則已預取的下一句被取消', async () => {
+    const af = abortableFetch();
+    const { sp, fb } = setup(af.impl);
+    sp.enqueue(plan(LONG));
+    await flush();
+    expect(af.reqs.map((r) => r.input)).toEqual(['偵測到告警：WindowsHighCPU，', '嚴重度 warning，']);
+    af.reqs[0]!.settle({ ok: false, status: 500 } as Response);
+    await flush();
+    expect(fb().spoken).toHaveLength(1);
+    expect(af.reqs[1]!.aborted).toBe(true);
+  });
+
+  it('R2：請求進行中 stop：請求被 abort，而 abort 造成的失敗不會觸發降級、不改標籤', async () => {
+    const af = abortableFetch();
+    const { sp, fb, voices, log } = setup(af.impl);
+    sp.enqueue(plan('一'));
+    await flush();
+    sp.stop();
+    await flush();
+    expect(af.reqs[0]!.aborted).toBe(true);
+    expect(fb().spoken).toHaveLength(0);
+    expect(voices).toEqual(['外部語音（gpu.local:8090）']);
+    expect(log).toEqual([]);
+  });
+
+  it('R3（S2）：舊音源晚到的 onended 不會清掉新一代正在播的那段的嘴型與 watchdog', async () => {
+    const { sp, ctx, mouth, frames } = setup();
+    sp.enqueue(plan('舊'));
+    await flush();
+    sp.stop();
+    sp.enqueue(plan('新'));
+    await flush();
+    expect(ctx.sources).toHaveLength(2);
+    // 新那段開播，嘴型迴圈在跑。
+    ctx.currentTime = 0.1;
+    frames.splice(0).forEach((f) => f());
+    expect(mouth.at(-1)).toBe(1);
+    // 舊音源的 onended 晚到。
+    ctx.sources[0]!.end();
+    await flush();
+    // 新那段的嘴型迴圈還在：有排下一幀，且推進到靜音段時嘴會閉上。
+    expect(frames.length).toBeGreaterThan(0);
+    ctx.currentTime = 0.8;
+    frames.splice(0).forEach((f) => f());
+    expect(mouth.at(-1)).toBe(0);
+    expect(ctx.sources[1]!.stopped).toBe(false);
+    expect(sp.isSpeaking()).toBe(true);
+    // 而且 stop() 仍停得掉新那段 —— 舊 onended 若把共用的收尾指標清掉，這裡會停不到。
+    sp.stop();
+    expect(ctx.sources[1]!.stopped).toBe(true);
+  });
+});
