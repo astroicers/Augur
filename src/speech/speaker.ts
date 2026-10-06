@@ -24,11 +24,14 @@ export const REMOTE_CHUNK_SEC = 10;
  * 切出來的段落接起來必須等於原文（boundary 的位置換算靠這個）。
  */
 export function splitForRemoteVoice(text: string, maxChars: number): string[] {
-  const limit = Math.max(1, maxChars);
+  // 整數、至少 1：NaN 或小數會讓下面的硬切迴圈遺失或重疊文字（複審 F6）。
+  const limit = Math.max(1, Math.floor(maxChars) || 1);
   if (text.length <= limit) {
     return [text];
   }
-  const pieces = text.split(/(?<=[，。！？；、,.!?;\s])/).filter((p) => p !== '');
+  // 半形 `, . : ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20`、`91.35`、`12:30`、`http://`。
+  // 切在數字中間會被念成兩段（複審 F1；remoteSpeaker 的 splitClauses 早有同一條，實測數值單獨成段時常念錯）。
+  const pieces = text.split(/(?<=[，。！？；、\s])|(?<=[,.:;?!])(?![\d/])/).filter((p) => p !== '');
   const out: string[] = [];
   let buf = '';
   const flush = () => {
@@ -43,15 +46,18 @@ export function splitForRemoteVoice(text: string, maxChars: number): string[] {
       continue;
     }
     flush();
-    // 單一片段就超過上限（長串沒有標點）：硬切。
-    for (let i = 0; i < piece.length; i += limit) {
-      const part = piece.slice(i, i + limit);
-      if (part.length === limit) {
-        out.push(part);
-      } else {
-        buf = part;
+    // 單一片段就超過上限（長串沒有標點）：硬切。不切在 UTF-16 代理對中間（emoji 會變成亂碼，複審 F7）。
+    let i = 0;
+    while (piece.length - i > limit) {
+      let end = i + limit;
+      const code = piece.charCodeAt(end - 1);
+      if (code >= 0xd800 && code <= 0xdbff && end - 1 > i) {
+        end -= 1;
       }
+      out.push(piece.slice(i, end));
+      i = end;
     }
+    buf = piece.slice(i);
   }
   flush();
   return out;
@@ -254,7 +260,9 @@ export function createSpeaker(synth: SpeechSynthesis, opts: SpeakerOptions = {})
     }
     const myGen = gen;
     const rate = clamp(opts.rate ?? 1, 0.1, 10);
-    // ADR-004 決策 4：遠端聲線才切段，本機聲線整則一次念。
+    // ADR-004 決策 4：「偵測到」遠端聲線才切段，本機聲線整則一次念。
+    // voice 為 null（聲線還沒載到、取不到、或沒有中文聲線，交給引擎預設）時不切：
+    // 沒偵測到就不切，引擎預設實際上是不是遠端聲線無從得知（複審 F5，有測試釘住）。
     const chunks =
       voice?.localService === false
         ? splitForRemoteVoice(plan.text, Math.floor(REMOTE_CHUNK_SEC * CHARS_PER_SEC * rate))

@@ -521,3 +521,82 @@ describe('遠端聲線切段', () => {
     expect(log).toEqual(['err:network']);
   });
 });
+
+describe('遠端聲線切段：複審補測', () => {
+  it('F1：不切在小數點或 IP 中間', () => {
+    // 複審推算的例子：用字數上限逼出「切在 192.168.1. 後面」的位置。
+    const text = '偵測到告警：WindowsHighCPULoad，嚴重度 critical，受影響對象 192.168.1.20，目前數值 91.35。';
+    // 實際上限至少 28 字（10 秒 × 5.6 字/秒 × 最慢語速 0.5）。比這更小時，像「192.168.1.20，」這種
+    // 本身就超過上限的片段只能硬切，切在中間無可避免 —— 那不是這條要釘的行為。
+    for (let max = 28; max <= 90; max++) {
+      const out = splitForRemoteVoice(text, max);
+      expect(out.join('')).toBe(text);
+      for (const c of out.slice(0, -1)) {
+        // 段落結尾不能是「數字＋半形 . , :」緊接著下一段的數字。
+        const next = out[out.indexOf(c) + 1]!;
+        expect(/[\d][.,:]$/.test(c) && /^\d/.test(next)).toBe(false);
+      }
+    }
+  });
+
+  it('F2：段與段之間清掉前一段的 watchdog —— 長播報不會在第一段的估時到期時被腰斬', async () => {
+    jest.useFakeTimers();
+    try {
+      const synth = mk({ voices: [{ name: 'Online', lang: 'zh-TW', localService: false }] } as Partial<FakeSynth>);
+      const log: string[] = [];
+      const sp = createSpeaker(synth as unknown as SpeechSynthesis, {
+        events: { onError: (e) => log.push('err:' + e) },
+      });
+      // 第一段短、第二段長（50 字、無標點）：兩段的 watchdog 時長才分得開。
+      const short = '偵測到告警，主機的處理器使用率過高。';
+      const long = 'x'.repeat(50);
+      sp.enqueue(plan(short + long));
+      await jest.advanceTimersByTimeAsync(0);
+      const first = synth.current!;
+      expect(first.text).toBe(short);
+      const firstMs = (short.length / CHARS_PER_SEC) * 1000 * 2 + 5000;
+      const secondMs = (long.length / CHARS_PER_SEC) * 1000 * 2 + 5000;
+      expect(secondMs).toBeGreaterThan(firstMs + 1000);
+      synth.current = null;
+      first.onend?.(); // 第一段念完，開始第二段
+      // 第一段的 watchdog 若沒清掉會在這裡觸發；第二段的還沒到期。
+      await jest.advanceTimersByTimeAsync(firstMs + 500);
+      expect(synth.cancelled).toBe(0);
+      expect(log).toEqual([]);
+      expect(synth.spoken).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('F5：聲線是 null（交給引擎預設）時不切 —— 沒偵測到遠端聲線就不切', async () => {
+    const synth = mk({ voices: [] } as Partial<FakeSynth>);
+    const sp = createSpeaker(synth as unknown as SpeechSynthesis);
+    const long = '這是一段很長的告警內容，'.repeat(10);
+    sp.enqueue(plan(long));
+    synth.emit('voiceschanged'); // 聲線清單載完：仍是空的 → 交給引擎預設（voice 為 null）
+    await settle();
+    expect(synth.spoken.map((u) => u.text)).toEqual([long]);
+  });
+
+  it('F6：上限是小數或 NaN 時仍然不遺失、不重疊文字', () => {
+    const text = 'abcdefghij';
+    const frac = splitForRemoteVoice(text, 2.5);
+    expect(frac.join('')).toBe(text);
+    expect(frac.every((c) => c.length <= 2)).toBe(true); // 小數上限取整數
+    const nan = splitForRemoteVoice(text, Number.NaN);
+    expect(nan.join('')).toBe(text);
+    expect(nan.every((c) => c.length === 1)).toBe(true); // NaN 視為 1
+    expect(splitForRemoteVoice(text, 0).every((c) => c.length === 1)).toBe(true);
+  });
+
+  it('F7：硬切不切在 emoji 的代理對中間', () => {
+    const text = 'a😀b😀c😀d😀';
+    const out = splitForRemoteVoice(text, 2);
+    expect(out.join('')).toBe(text);
+    for (const c of out) {
+      const last = c.charCodeAt(c.length - 1);
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false); // 結尾不是代理對的前半
+    }
+  });
+});
