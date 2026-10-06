@@ -43,7 +43,7 @@ avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，�
 | ADR | 主題 | 狀態 |
 |---|---|---|
 | **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
-| ADR-005 | 選填的外部語音服務（Qwen3-TTS 年輕男聲）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | FIRM（2026-10-05） |
+| ADR-005 | 選填的外部語音服務（Qwen3-TTS 年輕男聲）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | **Accepted**（2026-10-06） |
 | ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded |
 | ADR-003 | 前端 visual-web-stack | Superseded |

@@ -38,7 +38,7 @@ all. The old pipeline's code was deleted rather than archived; `git log` still h
   was replaced before release: in listening tests it sounded like a woman.
 - There is no field for an API key. Panel options are stored in the dashboard and anyone
   who can see the dashboard can read them.
-- Decision record: ADR-005 (FIRM).
+- Decision record: ADR-005 (Accepted).
 
 ### Voice settings (2026-10-05)
 

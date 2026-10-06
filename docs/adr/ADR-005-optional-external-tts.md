@@ -1,10 +1,10 @@
-<!-- ADR-005 | Status: FIRM -->
+<!-- ADR-005 | Status: Accepted -->
 # ADR-005：選填的外部語音服務（OpenAI 相容 TTS），Web Speech 保留為預設與降級
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `FIRM` |
-| **日期** | 2026-10-05 |
+| **狀態** | `Accepted` |
+| **日期** | 2026-10-06（提出 2026-10-05）|
 | **決策者** | astroicers |
 
 > **狀態說明**：`Draft`（**禁止實作生產代碼**）→ `FIRM`（POC 驗證）→ `Accepted`（人類審核放行）。**AI 不可自行升級狀態**（ASP 鐵則）。
@@ -24,6 +24,14 @@
 > 口音改為標準普通話與速度變慢的代價照實記錄、BreezyVoice 程式移除）後回覆逐字：**「確認」**。
 > 起因：使用者試聽 BreezyVoice 合成童聲四輪都判定「聽起來是女生」，再裁定「不要透過變聲」「年輕人也行」，
 > 最後在 Qwen3-TTS 的試聽中選定「年輕男生、簡體輸入」那一段（「這個還可以」）。
+
+> ⬆️ **由 `FIRM` 升 `Accepted`（2026-10-06）**：astroicers 授權（`/asp:approve-adr` 流程，於對話中回覆）。
+> 看過的摘要項目：決策 8 條；Verification Evidence 在 —— G-ADR005-1～5 皆有實測（G1／G2／G3 真 Grafana＋無頭 Chromium、
+> G4 兩輪各 30 則、G5 機械量測＋使用者實際試聽），另驗 V-2（Frontend Sandbox、https）；四輪獨立唯讀複審，發現皆已修正或記入本檔；
+> 路徑 FIRM → Accepted。照實列出的缺項：G5「嘴型與聲音同步」除機械量測外只有使用者試聽；生成比播放慢、vLLM 加速未成；
+> https 只在 Chromium 驗過；本 repo 無 `.asp/gate.sh`，`adr-draft`／`adr-index` 機械驗證跑不了。
+> 前一步：使用者在開發環境的試聽 dashboard 實際聽過年輕男聲，回覆「聽起來沒問題」。
+> 回覆逐字：**「升 Accepted」**。**人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
 
 ## 痛點 / 需求
 
