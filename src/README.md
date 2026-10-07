@@ -16,6 +16,13 @@ has the dashboard open.
   12.3.x needed a fix to get there: its `alertState` object carries a numeric
   `dashboardId` rather than `dashboardUID` (renamed in 12.4.0), so the panel now
   falls back to the public `data.request.dashboardUID`.
+  On 2026-10-07 the same checks also passed on **12.4.12**, including after an
+  in-place upgrade of an 11.2.2 database.
+  The 12.3.0 floor is a real limit, not a scaffold default. On **11.2.2** the plugin
+  loads and both e2e gates pass, but Grafana fetches the panel's alert state only
+  once, when the page loads. The mascot never hears about an alert that starts or
+  ends after that until someone reloads the page. 13.2.2 and 12.4.12 refresh it on
+  every dashboard refresh.
 - A browser with the Web Speech API (Chrome and Edge are the tested ones).
 - For Chinese speech: a Chinese voice installed **in your operating system**. The
   browser does not ship voices of its own — it exposes whatever the OS provides. The
