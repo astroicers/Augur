@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-10-08
 
 First release as a Grafana panel plugin. The version stays at 0.x until the sprite
 artwork exists — the panel works today, but shipping a mascot panel whose mascot is a
