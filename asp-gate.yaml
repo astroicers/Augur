@@ -1,0 +1,27 @@
+# asp-gate.yaml — 檢查單一事實源(asp-ng ADR-000 §7)
+# 渲染(於 asp-ng checkout):
+#   asp render gate -s <此檔> -o .asp/gate.sh
+#   asp render ci --consumer -s <此檔> --out-dir <repo 根> --branches main
+# 本地 gate 與 CI 跑同一份渲染物 → 判定一致由構造保證。
+# 移除本檔與 .asp/、.github/workflows/asp-ci.yml、.mega-linter.yml 即卸載(§19)。
+#
+# 型別、測試、建置、e2e 由本 repo 既有的 `.github/workflows/ci.yml` 承擔(每個 PR 都跑);
+# 這裡只放 asp 這一側要的兩道關:密鑰與 commit 訊息。
+version: 0.1
+checks:
+  - id: gitleaks
+    layer: gate
+    tool: gitleaks
+    args: [detect, --no-git, --redact, --config, .asp/gitleaks.toml]
+    requires: [.asp/gitleaks.toml]
+    severity: blocker
+    origin: "asp-ng gitleaks 規則(含各家模型金鑰 pattern);規則庫自 asp-ng vendoring"
+
+  - id: commit-format
+    layer: gate
+    tool: builtin-regex
+    args:
+      pattern: '^(feat|fix|docs|refactor|test|chore|ci|perf|build|style)(\([A-Za-z0-9._/-]+\))?!?: .+'
+    severity: blocker
+    origin: "Conventional Commits(近 40 筆非 merge commit:feat 18 / fix 10 / docs 10 / test 2,全數合式)"
+    notes: "驗非 merge commit;merge 訊息由 forge 產生,豁免"

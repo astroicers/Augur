@@ -21,6 +21,27 @@
 
 未完成項目在本檔〈未完成項目〉（2026-10-02 起；先前的逐條計畫 `docs/handoff/remaining-plan.md` 已退役）。
 
+## asp-ng 階段節（機器讀；2026-10-10 接入時新增）
+
+> 下面兩節給 asp-ng 的 runtime 讀（`parse_roadmap`：`## <帶> — P<n> <名稱>`），內容對齊上方〈階段與現況〉那張表。
+> runtime 只從 **now** 帶派工，票要貼上 now 帶的 milestone（`P5`、`P7`）才會被派出去。
+> 〈未完成項目〉原本沒有階段代號，接入時立為 **P7**，讓那裡的條目能進派工面。改階段劃分時兩處一起改。
+> 欄位行（`P5:`、`P5 判準:`）的冒號必須是**半形**——asp-ng 的解析器目前只認半形。
+
+## done — P0 保護既有未版控資產 [closed] / P1 ADR-004 定案 [closed] / P2 腳手架與遷移 [closed] / P3 開發環境 [closed] / P4 plugin 實作 [closed] / P6 文件 [closed]
+P0: 保護既有未版控資產（`14a481d`）。
+P1: ADR-004 supersede ADR-001/002/003，Accepted 2026-09-18，5 個 POC gate 全過。
+P2: 腳手架併入、`src/core/` 遷入、舊管線刪除。
+P3: 開發環境（Grafana 升版、plugin 掛載、provisioned dashboard）；衝突項 2026-10-02 經 ADR-004 決策 7 訂正裁定為刪除。
+P4: plugin 實作（來源層、語音層、跨 panel 互動、`AvatarController`）。
+P6: 根 README、`src/README.md`、CHANGELOG 對齊現況（2026-09-21）。
+
+## now — P5 sprite 素材 / P7 未完成項目收斂
+P5: sprite 素材。工具側（規格、SOP、SP-7 機械驗收、SP-V.1 盲測頁）已就位，缺的是畫。
+P5 判準: 素材交付並通過 SP-7 機械驗收與 SP-V.1 盲測。
+P7: 〈未完成項目〉逐條收斂（卡在人的、不卡人的兩類），含 `src/core/` 的缺陷修補。
+P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由，或移到別的階段）。
+
 ## 未完成項目
 
 > **2026-10-02 自 `docs/handoff/remaining-plan.md` 遷入**（該檔已退役，見它的檔頭）。
