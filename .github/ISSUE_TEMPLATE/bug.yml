@@ -1,0 +1,21 @@
+name: Bug(缺陷)
+description: 缺陷回報;附重現步驟與連結
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: repro
+    attributes: {label: 重現步驟, placeholder: "1. …\n2. …\n預期 vs 實際"}
+    validations: {required: true}
+  - type: textarea
+    id: ac
+    attributes:
+      label: 驗收準則(Given/When/Then)
+      description: 每條含可觀察結果;修復以重現測試轉綠為準
+      placeholder: "Given …\nWhen …\nThen …"
+    validations: {required: true}
+  - type: input
+    id: links
+    attributes: {label: 相關 PR / commit / session}
+  - type: dropdown
+    id: defect-class
+    attributes: {label: defect-class(triage 時定), options: ["instance", "class", "structural", "未定"]}

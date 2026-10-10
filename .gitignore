@@ -69,3 +69,6 @@ live2d/_archive/layerwork/_cutout.png
 # 生成式繪圖的原始檔與參考圖（SP-9.11：分層／原始檔不進版控）
 assets/sprite-src/
 tools/tts-server/voices/
+
+# ---- asp-ng 消費端:launcher 寫進工作卷的任務簡報,不進版控(#811 brief-not-in-tree)----
+.asp/brief.md

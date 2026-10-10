@@ -1,0 +1,74 @@
+# asp-ng 附加密鑰偵測規則(ADR-000 §16 決策 51:Gitleaks 規則庫納入模型金鑰 pattern,封 skill 誘導 exfil)
+# 與 gitleaks 內建規則全集併用;由 asp-gate.yaml 的 gitleaks check 引用。
+title = "asp-ng additional secret rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "claude-code-oauth-token"
+description = "Claude Code OAuth token(CLAUDE_CODE_OAUTH_TOKEN 值格式)"
+regex = '''sk-ant-oat01-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-oat01-"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key"
+regex = '''sk-ant-api03-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-ant-api03-"]
+
+[[rules]]
+id = "openai-api-key-scoped"
+description = "OpenAI scoped API key(project/service account 前綴,降誤報)"
+regex = '''sk-(proj|svcacct)-[A-Za-z0-9_-]{20,}'''
+keywords = ["sk-proj-", "sk-svcacct-"]
+
+[[rules]]
+id = "google-ai-api-key"
+description = "Google AI API key"
+regex = '''AIza[0-9A-Za-z_-]{35}'''
+keywords = ["AIza"]
+
+[[rules]]
+id = "claude-oauth-var-assignment"
+description = "CLAUDE_CODE_OAUTH_TOKEN 變數賦值——值任意即報,防「任何包裝方式」"
+regex = '''CLAUDE_CODE_OAUTH_TOKEN\s*[=:]\s*['"]?[A-Za-z0-9_-]{8,}'''
+keywords = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
+# ── 例外(#641)────────────────────────────────────────────────────────────
+#
+# **例外掛在「那個假值」上,不掛在「那個檔」上。** 路徑形豁免會讓整支測試檔從此
+# 對真憑證免疫——而測試檔正是最可能被貼進真 token 的地方(複製一份 fixture、
+# 換成手邊真的那一把來 debug)。gitleaks v8 的 `regexTarget = "match"` 做得到值
+# 錨定,故 repo 內既有的假 token fixture 逐值列出,每條寫明豁免的是哪個檔哪一行、
+# 以及那個值為什麼不可能是真的。
+#
+# **逐條 `^…$` 錨定**:不錨的話 `sk-ant-api03-AAAA…` 這條會以**子字串**命中
+# 「前綴相同、後面接真值」的字串,於是「豁免一個假值」變成「豁免一整個前綴」
+# ——那正是 #587/#631 記下的教訓(低熵 dummy 讓掃描恆綠)的鏡像版本。
+#
+# **值改了就會紅,這是刻意的**:fixture 的假值一改,豁免即失效並要求人重新確認
+# 「這個新值為什麼不是真的」。代價是新增假憑證 fixture 的人要順手加一條。
+# 不採 `# gitleaks:allow` 行內註解:那個開關可被 `--ignore-gitleaks-allow` 一次
+# 關掉,且散落在測試檔裡,「規則庫的例外有幾條」就沒有單一的家。
+[allowlist]
+description = "值錨定的假 token fixture,加上規則庫自身與其 schema 測試"
+regexTarget = "match"
+regexes = [
+  # tests/test_profile.py 的 _CANARY——字面自證:值本身寫著這是不得外洩的誘餌,
+  # 主體是固定英文詞加十位遞增數字,沒有任何真 token 會長這樣。
+  '''^sk-ant-oat01-CANARY-MUST-NOT-LEAK-[0-9]{10}$''',
+  # tests/test_test_env_lint.py 的 test-env 宣告 fixture——全 A 自證。上限 40 而非
+  # 開放:真 key 的主體不會是四十個相同字元,bounded 量詞也順帶避開 ReDoS。
+  '''^sk-ant-api03-A{20,40}$''',
+  # tests/test_profile.py 的注入斷言——`oauth-value` 自證(profile.py 的假值,
+  # 同檔上下文即為「訂閱制注入這一格」的斷言)。
+  '''^CLAUDE_CODE_OAUTH_TOKEN=oauth-value$''',
+]
+# 兩條路徑形舊例外留著,理由逐條寫明(它們豁免的是**規則庫自己**,不是測試資產):
+paths = [
+  # 規則庫自身:上面那幾條 regex 的字面即為可命中的 pattern。
+  '''\.asp/gitleaks\.toml''',
+  # 規則庫的 schema 測試:驗的是「規則庫涵蓋哪些 pattern」,故必然寫出前綴。
+  '''tests/test_gate_schema\.sh''',
+]

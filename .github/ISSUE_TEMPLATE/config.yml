@@ -1,0 +1,7 @@
+# issue 入口(asp-ng 消費端):task / bug 兩套表單的 AC 欄必填 Given/When/Then;
+# 想法階段的票走 blank issue,triage 時補 AC 或歸檔。
+blank_issues_enabled: true
+contact_links:
+  - name: 想提 idea?開 blank issue
+    url: https://github.com/astroicers/Augur/issues/new
+    about: 想法階段的票走這裡(AC 留白即可);上面兩套表單供 AC 已成形的工作使用。
