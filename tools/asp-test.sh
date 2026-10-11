@@ -223,15 +223,18 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（2026-10-06 由 jest --json 實數，不是手算）：
-#   core/dedup 13 + core/emotion 3 + core/severity 4 + core/format-plan 4
+# MIN_TESTS = 所有測試檔之和（2026-10-11 由 jest --json 實數，不是手算）：
+#   core/dedup 13 + core/emotion 3 + core/severity 11 + core/format-plan 4
 # + sources/panelAlerts 18 + speech/speaker 30 + speech/remoteSpeaker 41 + components/MascotPanel 25
 # + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 = 189（13 個 suite）
+# + __tests__/implementation-contract 6 = 196（13 個 suite）
+# ⚠️ core/severity 由 4 → 11 是 #19 加的 7 條（缺值/非字串防禦）。這個數字是**下限**，
+#    不同步也不會紅 —— 正是檔頭那句「閘門會對『測試被刪掉』無感」的情形：
+#    停在 189 的話，#19 新增的 7 條可以被整批刪掉而閘門照樣綠。
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=189
+MIN_TESTS=196
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
