@@ -58,9 +58,23 @@ test('meetsMin: 缺值/非字串的嚴重度不拋,且低於任何已知門檻�
   }
 });
 
+test('meetsMin: 缺值與字串 unknown 行為完全一致（AC-1 的「等同 unknown」）', () => {
+  // 這是本檔對 AC-2 邊界的裁定來源,不是個別挑出來的特例:
+  // src/sources/panelAlerts.ts:128 的 `labels['severity'] ?? 'unknown'` 已把
+  // 「沒有 severity 標籤」收斂成字串 'unknown',所以缺值在本專案就是 unknown。
+  // 任何門檻下兩者都必須判一樣——不得分岔。
+  for (const min of ['critical', 'error', 'warning', 'info', 'unknown', 'garbage', '', undefined]) {
+    const expected = meetsMin('unknown', min);
+    expect(meetsMin(undefined, min)).toBe(expected);
+    expect(meetsMin(null, min)).toBe(expected);
+    expect(meetsMin(42, min)).toBe(expected);
+    expect(meetsMin({}, min)).toBe(expected);
+  }
+});
+
 test('meetsMin: 門檻為 unknown 是排名底線,等同不過濾', () => {
-  // AC-2 的「低於任何已知門檻即不放行」止於排名 0 的門檻:
-  // unknown 是底線,拿底線當門檻放行所有東西（含缺值），與既有 0 >= 0 行為一致。
+  // 上一條等同的推論:unknown 排名 0,拿底線當門檻放行所有東西（含缺值）。
+  // 既有行為亦同（舊實作 0 >= 0 放行）,故對先前能跑的字串輸入零改變。
   expect(meetsMin(undefined, 'unknown')).toBe(true);
   expect(meetsMin(null, 'unknown')).toBe(true);
   expect(meetsMin('garbage', 'unknown')).toBe(true);
