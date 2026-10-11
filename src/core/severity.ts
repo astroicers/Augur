@@ -12,8 +12,13 @@
 /**
  * 已知嚴重度 → 排名(數字越大越嚴重)。未知值視為最低(0)。
  *
- * 用 `Map` 而非物件字面值:物件查表會連 `Object.prototype` 一起查到,
- * `rankOf('toString')` 會回到一個 function、`isKnownSeverity('constructor')` 會回 `true`。
+ * 用 `Map` 而非物件字面值:物件查表會連 `Object.prototype` 一起查到。
+ * 查表前先 `toLowerCase()`,所以舊實作實際踩到的只有**全小寫**的那幾個原型成員:
+ * `rankOf('constructor')` 會回到 `Object` 這個 function、`rankOf('__proto__')` 會回到
+ * `Object.prototype`,`isKnownSeverity` 對這兩個都回 `true`。
+ * (`'toString'`/`'hasOwnProperty'` 被小寫成 `tostring`/`hasownproperty` 而查不到,
+ * 舊實作本來就回 0 —— 列在測試裡是為了把整類鍵一起釘住,不是因為它們壞過。)
+ * `Map` 把整類問題一次拿掉,不必逐個列舉哪些鍵會中。
  */
 const RANK = new Map<string, number>([
   ['critical', 4],
