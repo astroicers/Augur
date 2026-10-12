@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-10-08
 
 First release as a Grafana panel plugin. The version stays at 0.x until the sprite
 artwork exists — the panel works today, but shipping a mascot panel whose mascot is a
@@ -11,6 +11,15 @@ webhooks through a Node director and Edge TTS to a 3D VRM avatar on a separate w
 That page was not the page anyone was looking at. ADR-004 reversed the direction — the
 mascot now lives inside the dashboard and pulls its own alert state, with no backend at
 all. The old pipeline's code was deleted rather than archived; `git log` still has it.
+
+### Grafana version support, rechecked (2026-10-07)
+
+- Also tested on Grafana 12.4.12, including a Grafana that was upgraded in place from 11.2.2.
+  Everything works there.
+- Grafana 11.2.2 is confirmed not to work, even though the plugin loads and the automated tests
+  pass. On 11.2.2 the panel only learns the alert state when the dashboard is opened. Alerts
+  that start or end afterwards are not spoken until the page is reloaded. The minimum stays at
+  12.3.0.
 
 ### Long alerts on online voices (2026-10-06)
 
