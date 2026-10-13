@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.0 — Unreleased
+
+### The mascot keeps a record of what it said (ADR-006)
+
+- The list next to the mascot is now a **record**, not just what this browser tab heard. It reads
+  Grafana's own alert state history for this panel, so it survives a page reload, everyone looking at
+  the dashboard sees the same list, and alerts that happened while nobody had the dashboard open are
+  there too.
+- Each line is the same sentence the mascot speaks, including the summary.
+- **Look further back** by changing the dashboard's time range. Up to 200 lines are shown; if there are
+  more, the panel says so.
+- **Search** with the box above the list: rule name, words in the sentence, or a host / pod name.
+- Lines loaded from the record are **never spoken**. Only alerts that change while the tab is open are.
+- Sentences the mascot spoke in this tab but that fall outside the time range (an alert that started
+  before the range) are still listed at the top.
+- Needs Grafana's alert state history stored as annotations, which is Grafana's default. If it is
+  stored in Loki or Prometheus instead, the panel says so and falls back to listing only what this tab
+  spoke. Viewers can read the record; no extra permission is needed. How long records are kept is up to
+  Grafana (`[unified_alerting.state_history.annotations] max_age`, default: forever).
+
 ## 0.1.0 — 2026-10-08
 
 First release as a Grafana panel plugin. The version stays at 0.x until the sprite

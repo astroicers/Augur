@@ -62,11 +62,23 @@ GET /api/annotations?type=alert&dashboardUID=<本 dashboard>&panelId=<本 panel>
 - **規則名、嚴重度**：紀錄本身有規則名（`alertName`）。嚴重度從規則端點的 rule-level `labels.severity` 取。
 - **數值**：取紀錄 `data.values` 的 `A`（規則的查詢結果。ADR-004 實作的條件 B＝`$A`，兩者相同）。
 - **摘要**：紀錄**沒有**存渲染後的 annotation。改用規則端點回傳的 rule-level `annotations.summary` **樣板**，把紀錄 `text` 欄位裡的 instance labels 填進去。
-  - 只支援 `{{ $labels.<名稱> }}` 與 `{{ $value }}`，其中 `$value` 取 A 的值。
-  - 遇到其他 Go template 語法，或 labels 解析失敗，**那一條就不帶摘要**。不猜，也不實作完整的 Go template。
+  - **只支援 `{{ $labels.<名稱> }}`，而且照 Grafana 的規則填**：Grafana 渲染時的 `$labels` 只有查詢結果的 label
+    加上 `alertname`、`grafana_folder`；**規則層的 label（`severity` 等）與不存在的 label 都渲染成 `[no value]`**（V-7）。
+    紀錄字串裡卻有規則層的 label，照填就會和念出來的不一樣，所以這些一律填 `[no value]`。規則層有哪些 label 由 rules 端點提供。
+  - 遇到其他 Go template 語法（包括 `{{ $value }}`），或 labels 解析失敗，**那一條就不帶摘要**。不猜，也不實作完整的 Go template。
+    > 🔧 **2026-10-13 實作時更正**（狀態維持 `FIRM`）：原本的設計是「缺 label 就不帶摘要」。
+    > G-ADR006-2 在真 Grafana 上比對時抓到：念出來的是「FlapTest 翻轉中（[no value]）」，紀錄卻是「（warning）」。
+    > 改成照 Grafana 的規則填之後，G-ADR006-2 逐字相同。
+    > 🔧 **2026-10-13 實作時更正**（狀態維持 `FIRM`）：原文寫「支援 `{{ $value }}`（取 A 的值）」，這是錯的。
+    > Grafana-managed 規則裡的 `$value` 會被 Grafana 渲染成 `[ var='A' labels={…} value=0.93 ], [ var='B' … ]` 這樣的字串，
+    > 前端不可能逐字重現，硬做就違反「紀錄句與播報句逐字相同」（G-ADR006-2）。
 - 組句函式用 `src/core/` 現有的播報組句。紀錄與播報**不得各寫一套**，否則兩邊的措辭遲早會分岔。
 
 ### 4. 介面：feed 變成「紀錄」，跟著 dashboard 的時間範圍走，可以篩選
+
+- **本分頁念過、但範圍內紀錄沒有的句子也要列出**，排在最上面。典型情境是範圍開始前就在燒的告警：
+  載入時吉祥物照樣念（ADR-004 的既有行為），但那次狀態變化不在範圍內。不補就會「念了、清單上卻找不到」。
+  （2026-10-13 實作時補上，狀態維持 `FIRM`。）
 
 - **翻看舊紀錄**：載入時依 **dashboard 時間挑選器的範圍**讀取歷史，可以捲動，最多 200 條，並顯示「範圍內共 N 條，已顯示前 200 條」。要看更早的紀錄就調整時間範圍，這是 Grafana 使用者本來就熟悉的操作，不另做分頁 UI。
 - **即時查詢**：feed 上方加一個關鍵字篩選框，比對規則名、句子與 labels，只篩選、不重新查詢。
@@ -88,6 +100,10 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 
 發生時，feed 退回目前的「只顯示本分頁的播報」，並在 panel 上標明「讀不到告警歷史：<原因>」。不靜默退回。
 
+⚠️ backend 不是 annotations 時，`/api/annotations` 回的是**空清單**而不是錯誤，單看回應分不出「沒有紀錄」與「紀錄存在別處」。
+所以讀取前先看前端設定 `unifiedAlerting.alertStateHistoryBackend`（V-8，Viewer 可讀）：`loki`、`prometheus` 等直接報原因；
+`annotations`、`multiple`、欄位不存在則放行（`multiple` 時 annotations 可能是其中之一，讀不到就是空清單，README 寫明）。
+
 ## 接受的代價
 
 - **labels 要從字串解析。** 紀錄的 `text` 是 Grafana 組出來的字串，格式為 `<規則名> {k=v, k=v, …} - A=…, B=…`，**沒有文件保證**。`/api/v1/rules/history` 在 annotations 後端下回傳的也是同一個字串（V-3）。
@@ -96,6 +112,9 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
   - 兩種情況都只會讓摘要消失，規則名、嚴重度、數值、時間照樣正確，這就是決策 3 的退路。
 - **嚴重度取的是規則「現在」的設定。** 規則事後被改過嚴重度的話，舊紀錄會顯示新的值。摘要樣板也一樣，用的是現在的樣板。
 - **規則刪除後，它的舊紀錄只剩規則名、數值、時間**：規則端點已經查不到它，嚴重度與摘要會缺。
+- **同一條規則有多個 instance 時，紀錄逐一列出，吉祥物只念一次。** 播報的 fingerprint 只看規則名（ADR-004 實作，
+  `panelAlerts.ts`），兩個 pod 同時記憶體過高只念第一個；紀錄則是 Grafana 的每一次 instance 狀態變化。
+  這正是決策 2「事件紀錄而非播報紀錄」的語意，不是缺陷；G-ADR006-2 比對的是**同一個 instance** 的那一句。
 - **每個觀看者、每次 refresh，都會多一次 `/api/annotations` 查詢。** 查詢以 dashboard＋panel＋時間範圍過濾，量很小。
 
 ## 不採用的選項
@@ -120,6 +139,24 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 | V-4 | Viewer 能否讀取摘要樣板與嚴重度 | ✅ `GET /api/prometheus/grafana/api/v1/rules?dashboard_uid=…&panel_id=…` 回 200；rule-level `annotations.summary` 是原始樣板（`merak-prod {{ $labels.pod }}/{{ $labels.container }} 記憶體 > 90% limit（10m）`），`labels.severity` 是 `warning` |
 | V-5 | 保存期限預設值 | ✅ 12.4.12 `defaults.ini`：`[unified_alerting.state_history] enabled = true`、`backend =`（＝annotations）；`[unified_alerting.state_history.annotations] max_age =`、`max_annotations_to_keep =`（0＝永久） |
 | V-6 | 現成替代方案 | ❌ Annotations list panel：No annotations found；全域 Alerting → History：500 `ruleUID is required`；✅ 單條規則的 History 分頁可用 |
+| V-7 | Grafana 渲染摘要時 `$labels` 有哪些 | 實驗規則 LabelProbe（查詢回傳 `pod` label），樣板含六種 label。Grafana 渲染：`an=LabelProbe\|sev=[no value]\|folder=Augur Mascot\|am=[no value]\|pod=pod-xyz\|none=[no value]`；同一筆的紀錄字串卻含 `augur_mascot=true, severity=warning` ⇒ 規則層 label 不在 `$labels` |
+| V-8 | 前端能否得知 state history 的 backend | ✅ `/api/frontend/settings` 的 `unifiedAlerting.alertStateHistoryBackend`（12.4.12 與 13.2.2 皆有，Viewer 可讀）；設成 loki 後值為 `loki` |
+
+### POC gate 機械證據（2026-10-13，本機隔離 compose，非推理）
+
+> 環境：Grafana 12.4.12，plugin 為本分支 build；以新建的 **Viewer** 帳號（`role=Viewer`）在無頭 Chromium 操作；
+> 吉祥物念的句子以攔截 `speechSynthesis.speak` 取得。
+
+| Gate | 結果 | 證據 |
+|---|---|---|
+| G-ADR006-1 | ✅ | Viewer 打開試用 dashboard，紀錄 41 條，無降級提示 |
+| G-ADR006-2 | ✅ | 收集到 5 句真的念出來的話（含「告警已恢復」與帶 `[no value]` 的 LabelProbe），**每一句在紀錄裡都有逐字相同的一句**。第一輪比對失敗，抓出決策 3 的 `[no value]` 規則（見決策 3 更正）；判準設「至少念到 N 句」防空集合假綠 |
+| G-ADR006-3 | ✅ | 載入時攔截到的播報為 0 句；admin 與 Viewer 看到的紀錄逐條相同；重新整理後 41 條、內容相同 |
+| G-ADR006-4 | ✅ | 時間範圍 6 小時 45 條、5 分鐘 5 條；篩選「AugurMascotSelfTest」剩 1 條且符合 |
+| G-ADR006-5 | ✅ | state history backend 設成 loki 後，panel 顯示「讀不到告警歷史：Grafana 的告警歷史存在 loki，不是 annotations。只顯示本分頁的播報。」 |
+| G-ADR006-6 | ⏳ | 待 EKS 上線；依使用者規則以 eks-infra issue 交辦 |
+
+另：既有 e2e（G-ADR004-1／-2）在開發環境 13.2.2 上全過；13.2.2 上紀錄模式啟用（篩選框在、無降級提示），`alertStateHistoryBackend` 為 `annotations`。
 
 ## Follow-up / POC gate（升 Accepted 前必過）
 

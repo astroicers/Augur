@@ -43,6 +43,10 @@ Implemented and in use:
   spoken only for alerts that were actually announced.
 - **Cursor tracking and click detection** across the whole dashboard, with automatic
   fallback to this panel alone when the surrounding DOM is not reachable.
+- **A record of what it said.** The list next to the mascot reads Grafana's own alert
+  state history for this panel, so it survives a reload and everyone sees the same list.
+  Each line is the sentence the mascot speaks. Change the dashboard time range to look
+  further back, and use the search box to filter. Lines from the record are never spoken.
 
 Not implemented:
 
@@ -101,6 +105,14 @@ degrades to tracking only within its own panel rather than breaking outright.
 Those same two features rely on Grafana DOM attributes that carry no compatibility
 guarantee. They are expected to need attention across Grafana upgrades, and they fail
 soft by design.
+
+**The record needs Grafana's alert state history in annotations**, which is Grafana's
+default (`[unified_alerting.state_history] backend`). With `loki` or `prometheus` the
+panel says it cannot read the history and lists only what this tab spoke. With
+`multiple`, the record is complete only if annotations is one of the backends. Records
+are kept as long as Grafana keeps them (`[unified_alerting.state_history.annotations]
+max_age`, default: forever). The summary in older lines is filled in from the rule's
+*current* summary template, so a rule edited since then shows its new wording.
 
 The panel reads **its own** query results and alert state. Grafana gives a panel no
 supported way to read another panel's data. To react to a different panel's numbers,
