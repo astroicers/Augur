@@ -158,19 +158,29 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 
 ### POC gate 機械證據（2026-10-13，本機隔離 compose，非推理）
 
-> 環境：Grafana 12.4.12，plugin 為本分支 build；以新建的 **Viewer** 帳號（`role=Viewer`）在無頭 Chromium 操作；
-> 吉祥物念的句子以攔截 `speechSynthesis.speak` 取得。
+> 環境：Grafana 12.4.12（隔離 compose），plugin 為 **commit `1988fc4` 的 build**（工作樹乾淨）；
+> 以新建的 **Viewer** 帳號（`role=Viewer`）在無頭 Chromium 操作；吉祥物念的句子以攔截 `speechSynthesis.speak` 取得（不偽造 voices）。
+> 探測規則：AugurMascotSelfTest（常駐）、FlapTest（每分鐘翻轉，摘要用規則層 label）、LabelProbe（V-7）、
+> ThresholdProbe（兩個 instance，條件 C＝reduce→threshold）、DecimalProbe（兩個 instance，0.934211／0.512345，條件 B＝`$A`）。
 
 | Gate | 結果 | 證據 |
 |---|---|---|
-| G-ADR006-1 | ✅ | Viewer 打開試用 dashboard，紀錄 41 條，無降級提示 |
-| G-ADR006-2 | ✅ | 收集到 5 句真的念出來的話（含「告警已恢復」與帶 `[no value]` 的 LabelProbe），**每一句在紀錄裡都有逐字相同的一句**。第一輪比對失敗，抓出決策 3 的 `[no value]` 規則（見決策 3 更正）；判準設「至少念到 N 句」防空集合假綠 |
-| G-ADR006-3 | ✅ | 載入時攔截到的播報為 0 句；admin 與 Viewer 看到的紀錄逐條相同；重新整理後 41 條、內容相同 |
-| G-ADR006-4 | ✅ | 時間範圍 6 小時 45 條、5 分鐘 5 條；篩選「AugurMascotSelfTest」剩 1 條且符合 |
-| G-ADR006-5 | ✅ | state history backend 設成 loki 後，panel 顯示「讀不到告警歷史：Grafana 的告警歷史存在 loki，不是 annotations。只顯示本分頁的播報。」 |
+| G-ADR006-1 | ✅ | Viewer 打開試用 dashboard：紀錄列 31 條，無降級提示 |
+| G-ADR006-2 | ✅ | 念出 6 句（含「告警已恢復」、DecimalProbe「目前數值 0.93」、ThresholdProbe 條件 C 的「目前數值 1」、帶 `[no value]` 的 LabelProbe），**每一句在 `data-origin="history"` 的紀錄列裡都有逐字相同的一句**；DecimalProbe 兩個 instance（p1、p2）都在紀錄裡（吉祥物只念 p1，符合〈接受的代價〉） |
+| G-ADR006-3 | ✅ | 載入時念出 5 句，**全部是當下正在燒的規則**的「偵測到」、沒有任何舊紀錄被念；admin 與 Viewer 同時看到 35 條、逐條相同；重新整理後 36 條（新增 1 條翻轉紀錄），**先前 35 條無一遺失** |
+| G-ADR006-4 | ✅ | 時間範圍 6 小時 35 條、2 分鐘 2 條；篩選「p2」剩 2 條且全部含 p2 |
+| G-ADR006-5 | ✅ | state history backend 設成 loki，以 Viewer 打開：「讀不到告警歷史：Grafana 的告警歷史存在 loki，不是 annotations。只顯示本分頁的播報。」 |
 | G-ADR006-6 | ⏳ | 待 EKS 上線；依使用者規則以 eks-infra issue 交辦 |
 
-另：既有 e2e（G-ADR004-1／-2）在開發環境 13.2.2 上全過；13.2.2 上紀錄模式啟用（篩選框在、無降級提示），`alertStateHistoryBackend` 為 `annotations`。
+另：既有 e2e（G-ADR004-1／-2）在開發環境 13.2.2 上全過；13.2.2 上紀錄模式啟用（篩選框在、無降級提示）。
+
+> 🧾 **作廢的前一輪**（獨立複審 2026-10-13 指出，照實留檔）：
+> - 前一輪 G2 的探測拿整個清單比對；加入「本分頁念過的句子也列出」之後，那種比法依構造不可能失敗（H1）。
+>   當時通過的那一輪其實跑在加入該功能之前的 build，但證據應以最終 build 為準，故重跑並改為只比紀錄列。
+> - 前一輪 G3「載入時念 0 句」是在偽造 voices、播報卡住的環境量的，0 句沒有意義；判準也錯（正在燒的告警依 ADR-004 本來就該念）（H2）。
+> - 前一輪 G1／G3／G4 跑在 `[no value]` 修正之前的 build；G5 用 admin 跑。以上本輪皆以 `1988fc4` 的 build、Viewer 重跑。
+> - 前一輪的 G3 重新整理比對用「前 20 條完全相同」，資料持續增加時必然失敗；本輪改為「先前的每一條都還在」。
+> - 「無權限帳號讀不到」只有 mock 403 的單元測試，未在真環境驗；「超過 200 條提示」只有單元／元件測試。
 
 ## Follow-up / POC gate（升 Accepted 前必過）
 
