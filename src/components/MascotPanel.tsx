@@ -9,6 +9,8 @@ import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
 import { createPanelAlertSource, type AlertStateLike, type PanelAlertSource } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
+import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
+import { fetchPanelHistory } from '../sources/historyFetcher';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
 import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
@@ -24,6 +26,14 @@ import {
   shouldRenderSprite,
   spriteSide,
 } from '../avatar/spriteSheet';
+
+/**
+ * 本分頁念過的一句，和紀錄裡同文字的一筆，時間差多少以內算「同一件事」。
+ * 紀錄時間是 Grafana 評估出狀態變化的時刻；panel 要到下一次 refresh 才念，所以念出時刻會晚一些
+ * （refresh 間隔＋評估間隔）。窗開寬一點無妨：同一條規則在十分鐘內又出現同一句，本來就是同一類事件。
+ * 上限：refresh 間隔超過 10 分鐘時，同一事件可能同時出現一列紀錄列與一列本分頁列 —— 只是重複，資訊不錯。
+ */
+const SESSION_MATCH_WINDOW_MS = 10 * 60 * 1000;
 
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
@@ -97,6 +107,28 @@ const getStyles = () => ({
     border: 0;
     box-sizing: border-box;
   `,
+  /** feed 欄：篩選框、提示與紀錄清單。min-width/min-height 歸零的理由同下方 feed。 */
+  feedCol: css`
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  `,
+  filter: css`
+    font: inherit;
+    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    border: 1px solid rgba(127, 127, 127, 0.4);
+    background: transparent;
+    color: inherit;
+  `,
+  notice: css`
+    font-size: 11px;
+    opacity: 0.75;
+  `,
   feed: css`
     flex: 1 1 auto;
     min-width: 0;
@@ -142,6 +174,8 @@ const getStyles = () => ({
 interface FeedLine {
   key: string;
   when: string;
+  /** 念出的時刻（epoch ms）。紀錄模式要拿它和紀錄的時間比，判斷「這一句是不是已經在紀錄裡」。 */
+  at: number;
   plan: BroadcastPlan;
 }
 
@@ -167,6 +201,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const flapRef = useRef<FlapDriver | null>(null);
 
   const [feed, setFeed] = useState<FeedLine[]>([]);
+  // ADR-006：播報紀錄。history 有值＝紀錄模式；historyError 有值＝降級回本分頁 feed（決策 7）。
+  const [history, setHistory] = useState<HistoryResult | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState('');
+  // 每次讀取的序號：只採用最後一次發出的讀取結果。
+  // 不能用「讀取中就跳過」—— 讀取中改了時間範圍或門檻，那次 refresh 會被吞掉，
+  // dashboard 沒開 auto-refresh 時就一直停在舊範圍（複審 M3）。
+  const historySeqRef = useRef(0);
   const [emotion, setEmotion] = useState<Emotion>('calm');
   const [speechErr, setSpeechErr] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
@@ -649,6 +691,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           plans.push({
             key: `${a.fingerprint}:${a.status}:${plans.length}:${Date.now()}`,
             when: new Date().toLocaleTimeString(),
+            at: Date.now(),
             plan,
           });
         }
@@ -678,6 +721,45 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       });
   }, [data, minSeverity, alertLang]);
 
+  // ADR-006：每次 panel data 刷新就重讀一次這個 panel 的告警歷史。
+  // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進 speakerRef / dedup**（決策 5）——
+  // 否則每次重新整理，吉祥物都會把範圍內的舊告警重念一遍。
+  useEffect(() => {
+    if (data.state !== LoadingState.Done) {
+      return;
+    }
+    const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
+    // 與導播 effect 同一套取法（12.3.x 的 alertState 沒有 dashboardUID）。
+    const dashboardUid = alertState?.dashboardUID ?? data.request?.dashboardUID;
+    const to = Number(data.timeRange?.to?.valueOf?.());
+    const from = Number(data.timeRange?.from?.valueOf?.());
+    const toMs = Number.isFinite(to) ? to : Date.now();
+    const fromMs = Number.isFinite(from) ? from : toMs - 60 * 60 * 1000;
+    const seq = ++historySeqRef.current;
+    // 沒有 dashboard uid（例如還沒存檔的 dashboard）也走同一條非同步鏈，當成一次讀取失敗：
+    // 在 effect 裡同步 setState 會觸發連鎖重繪（react-hooks lint）。
+    const job = dashboardUid
+      ? fetchPanelHistory(dashboardUid, id, fromMs, toMs)
+      : Promise.reject(new Error('不在已存檔的 dashboard 裡'));
+    // 過期的回應（期間又發了新的讀取）一律丟掉，不論它比新的早到還是晚到。
+    void job
+      .then((h) => historyToEntries(h.raw, h.templates, { minSeverity, lang: alertLang }))
+      .then(
+        (result) => {
+          if (seq === historySeqRef.current) {
+            setHistory(result);
+            setHistoryError(null);
+          }
+        },
+        (e: unknown) => {
+          if (seq === historySeqRef.current) {
+            setHistory(null);
+            setHistoryError(errorText(e));
+          }
+        }
+      );
+  }, [data, id, minSeverity, alertLang]);
+
   const unlock = useCallback(() => speakerRef.current?.unlock(), []);
   // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
   const preview = useCallback(() => {
@@ -690,6 +772,56 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       status: 'firing',
     });
   }, [alertLang]);
+
+  // 紀錄模式顯示告警歷史（ADR-006）；讀不到時退回本分頁念過的句子（決策 7）。
+  const renderFeedLines = () => {
+    if (history) {
+      const q = historyFilter.trim().toLowerCase();
+      // 本分頁念過、但紀錄裡沒有的句子：典型是範圍開始前就在燒的告警 —— 載入時照樣念，
+      // 但那次狀態變化不在範圍內。不補上就會「念了、清單上卻找不到」。它們是剛念的，排在最上面。
+      // 「已經在紀錄裡」要同文字**而且時間對得上**：紀錄時間在念出時刻前後的窗內。
+      // 只比文字的話，數值沒變的 firing 或沒有數值的 resolved，會被幾小時前同文字的舊紀錄吃掉（複審 L3）。
+      const sessionOnly = feed.filter(
+        (l) => !history.entries.some((e) => e.text === l.plan.text && Math.abs(e.time - l.at) <= SESSION_MATCH_WINDOW_MS)
+      );
+      const rows = [
+        ...sessionOnly.map((l) => ({
+          key: l.key,
+          origin: 'session',
+          when: l.when,
+          text: l.plan.text,
+          search: l.plan.text.toLowerCase(),
+        })),
+        ...history.entries.map((e) => ({
+          key: e.key,
+          origin: 'history',
+          when: formatWhen(e.time),
+          text: e.text,
+          search: e.search,
+        })),
+      ];
+      const shown = q ? rows.filter((r) => r.search.includes(q)) : rows;
+      if (!shown.length) {
+        return <span className={styles.empty}>{q ? '沒有符合的紀錄。' : '這段時間範圍內沒有播報紀錄。'}</span>;
+      }
+      // data-origin 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。
+      return shown.map((r) => (
+        <div key={r.key} className={styles.line} data-origin={r.origin}>
+          <span className={styles.when}>{r.when}</span>
+          <span>{r.text}</span>
+        </div>
+      ));
+    }
+    if (!feed.length) {
+      return <span className={styles.empty}>尚無播報。持續 firing 只會念一次 —— 那是 dedup 在生效。</span>;
+    }
+    return feed.map((l) => (
+      <div key={l.key} className={styles.line} data-origin="session">
+        <span className={styles.when}>{l.when}</span>
+        <span>{l.plan.text}</span>
+      </div>
+    ));
+  };
 
   const chipColor = theme.visualization.getColorByName(
     ({ calm: 'blue', warning: 'orange', critical: 'red', resolved: 'green' } as const)[emotion]
@@ -779,22 +911,49 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           style={{ color: chipColor, width: side, height: side }}
         />
 
-        <div className={styles.feed}>
-          {feed.length === 0 ? (
-            <span className={styles.empty}>尚無播報。持續 firing 只會念一次 —— 那是 dedup 在生效。</span>
-          ) : (
-            feed.map((l) => (
-              <div key={l.key} className={styles.line}>
-                <span className={styles.when}>{l.when}</span>
-                <span>{l.plan.text}</span>
-              </div>
-            ))
+        <div className={styles.feedCol}>
+          {history && (
+            <input
+              className={styles.filter}
+              value={historyFilter}
+              onChange={(e) => setHistoryFilter(e.currentTarget.value)}
+              placeholder="篩選紀錄（規則名、內容、主機、pod…）"
+              aria-label="篩選播報紀錄"
+            />
           )}
+          {historyError && (
+            <span className={styles.notice}>讀不到告警歷史：{historyError}。只顯示本分頁的播報。</span>
+          )}
+          {history?.truncated === 'display' && (
+            <span className={styles.notice}>只顯示最新 {HISTORY_DISPLAY_LIMIT} 條，要看更早的請縮小時間範圍。</span>
+          )}
+          {history?.truncated === 'fetch' && (
+            <span className={styles.notice}>
+              這段範圍內的狀態變化超過 {HISTORY_FETCH_LIMIT} 筆，只讀了最新的部分，要看更早的請縮小時間範圍。
+            </span>
+          )}
+          <div className={styles.feed}>{renderFeedLines()}</div>
         </div>
       </div>
     </div>
   );
 };
+
+/** 錯誤物件 → 給人看的一行原因。backendSrv 丟出來的是 `{ status, statusText, data: { message } }`。 */
+function errorText(e: unknown): string {
+  if (e instanceof Error) {
+    return e.message;
+  }
+  const r = e as { status?: number; statusText?: string; data?: { message?: string } } | undefined;
+  const parts = [r?.status, r?.statusText, r?.data?.message].filter((x) => x !== undefined && x !== '');
+  return parts.length ? parts.join(' ') : '未知錯誤';
+}
+
+/** 今天的紀錄只顯示時間；更早的連日期一起顯示，翻舊紀錄時才分得出是哪一天。 */
+function formatWhen(time: number): string {
+  const d = new Date(time);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString() : d.toLocaleString();
+}
 
 /** 沒有 speechSynthesis 的環境裡，外部語音降級時的接手者：每一則都直接報錯，佇列照走。 */
 function unavailableSpeaker(ev: SpeakerEvents): Speaker {

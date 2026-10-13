@@ -6,13 +6,15 @@
  * 那個理由不成立 —— 而這支檔案是整條導播管線唯一的匯流處
  * （過濾 → 防洪 → 組句 → 播報全在同一個 effect 裡）。
  *
- * **只 mock 兩個邊界**：`fetchPanelRules`（網路）與 `createSpeaker`（瀏覽器語音）。
+ * **只 mock 邊界**：`fetchPanelRules`、`fetchPanelHistory`（網路）與 `createSpeaker`（瀏覽器語音）。
+ * `fetchPanelHistory` 預設讓它失敗 —— 既有測試因此走 ADR-006 決策 7 的降級路徑，也就是原本的
+ * 「只顯示本分頁的播報」，斷言不必改；紀錄模式由檔尾的 ADR-006 測試另外驗。
  * `panelAlerts` / `dedup` / `severity` / `format` 全部跑真的 —— mock 掉它們就等於
  * 又回到「自己接線自己斷言」。
  */
 
 import React from 'react';
-import { render, act, waitFor } from '@testing-library/react';
+import { render, act, waitFor, fireEvent } from '@testing-library/react';
 import { LoadingState, PanelProps } from '@grafana/data';
 
 import { MascotPanel } from '../MascotPanel';
@@ -20,12 +22,17 @@ import type { MascotPanelOptions } from '../../panelOptions';
 import type { BroadcastPlan } from '../../core/types';
 import type { SpeakerEvents } from '../../speech/speaker';
 import { fetchPanelRules } from '../../sources/rulesFetcher';
+import { fetchPanelHistory } from '../../sources/historyFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
 
 jest.mock('../../sources/rulesFetcher', () => ({
   RULES_ENDPOINT: '/api/prometheus/grafana/api/v1/rules',
   fetchPanelRules: jest.fn(),
+}));
+
+jest.mock('../../sources/historyFetcher', () => ({
+  fetchPanelHistory: jest.fn(),
 }));
 
 /** createSpeaker 的攔截器：記下 enqueue 進來的 plan，並把 events 留給測試觸發。 */
@@ -47,6 +54,7 @@ jest.mock('../../speech/speaker', () => ({
 }));
 
 const mockedFetch = fetchPanelRules as unknown as jest.Mock;
+const mockedHistory = fetchPanelHistory as unknown as jest.Mock;
 
 const OPTIONS: MascotPanelOptions = {
   minSeverity: 'warning',
@@ -67,6 +75,7 @@ function props(over: {
   state?: LoadingState;
   alertState?: unknown;
   options?: Partial<MascotPanelOptions>;
+  timeRange?: unknown;
 }): PanelProps<MascotPanelOptions> {
   return {
     id: 7,
@@ -76,7 +85,7 @@ function props(over: {
     data: {
       state: over.state ?? LoadingState.Done,
       series: [],
-      timeRange: {},
+      timeRange: over.timeRange ?? {},
       ...(over.alertState === undefined ? {} : { alertState: over.alertState }),
     },
   } as unknown as PanelProps<MascotPanelOptions>;
@@ -90,6 +99,8 @@ beforeEach(() => {
   spoken.length = 0;
   capturedEvents = undefined;
   mockedFetch.mockReset();
+  mockedHistory.mockReset();
+  mockedHistory.mockRejectedValue(new Error('history not mocked in this test'));
   // speaker effect 的守門是 `!window.speechSynthesis`，mock 掉 createSpeaker 也繞不過它。
   Object.defineProperty(window, 'speechSynthesis', { value: {}, configurable: true });
 });
@@ -801,4 +812,215 @@ test('播報中改語音選項（播報器重建）：被 dispose 的那一則�
   // speaking 沒歸零的話 pending 表情會一直被壓住。
   expect(setReaction).toHaveBeenLastCalledWith('pending');
   setReaction.mockRestore();
+});
+
+// ─── ADR-006：播報紀錄 ─────────────────────────────────────────────────────────
+
+/** 12.4.12 實測形狀的一筆狀態歷史（ADR-006 V-2）。 */
+function histAnn(over: Record<string, unknown> = {}) {
+  return {
+    id: 11,
+    alertName: 'MerakContainerMemoryHigh',
+    prevState: 'Normal',
+    newState: 'Alerting',
+    time: Date.UTC(2026, 9, 13, 9, 0, 0),
+    text: 'MerakContainerMemoryHigh {alertname=MerakContainerMemoryHigh, container=app, pod=api-7f9c, severity=warning} - A=0.93, B=0.93',
+    data: { values: { A: 0.93, B: 0.93 } },
+    ...over,
+  };
+}
+
+const HIST_TEMPLATES = new Map([
+  ['MerakContainerMemoryHigh', { severity: 'warning', summary: '{{ $labels.pod }} 記憶體過高' }],
+  ['DiskFull', { severity: 'critical', summary: '{{ $labels.pod }} 磁碟滿了' }],
+]);
+
+test('ADR-006：讀得到歷史時 feed 顯示紀錄，而且紀錄一句都不念', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() =>
+    expect(view.container.textContent).toContain('偵測到告警：MerakContainerMemoryHigh，嚴重度 warning，目前數值 0.93，api-7f9c 記憶體過高。')
+  );
+  await settle();
+  expect(spoken).toEqual([]);
+});
+
+test('ADR-006：依 dashboard 的時間範圍讀取這個 panel 的歷史', async () => {
+  mockedHistory.mockResolvedValue({ raw: [], templates: new Map() });
+  mockedFetch.mockResolvedValue([]);
+  const timeRange = { from: { valueOf: () => 1000 }, to: { valueOf: () => 2000 } };
+
+  render(<MascotPanel {...props({ alertState: OK, timeRange })} />);
+
+  await waitFor(() => expect(mockedHistory).toHaveBeenCalledWith('dash-1', 7, 1000, 2000));
+});
+
+test('ADR-006：讀不到歷史就退回本分頁的播報，並寫明原因（不靜默）', async () => {
+  mockedHistory.mockRejectedValue(new Error('403 Forbidden'));
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '本分頁播的' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+
+  await waitFor(() => expect(view.container.textContent).toContain('讀不到告警歷史'));
+  expect(view.container.textContent).toContain('403 Forbidden');
+  await waitFor(() => expect(view.container.textContent).toContain('本分頁播的'));
+});
+
+test('ADR-006：篩選框只留下符合關鍵字的紀錄（比對 label，例如 pod 名）', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: [
+      histAnn({ id: 1 }),
+      histAnn({
+        id: 2,
+        alertName: 'DiskFull',
+        text: 'DiskFull {alertname=DiskFull, pod=db-0, severity=critical} - A=99, B=99',
+        data: { values: { A: 99 } },
+      }),
+    ],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(view.container.textContent).toContain('db-0 磁碟滿了'));
+
+  const box = view.getByPlaceholderText(/篩選紀錄/);
+  fireEvent.change(box, { target: { value: 'api-7f9c' } });
+
+  expect(view.container.textContent).toContain('api-7f9c 記憶體過高');
+  expect(view.container.textContent).not.toContain('db-0 磁碟滿了');
+});
+
+test('ADR-006：範圍內紀錄超過顯示上限時提示縮小時間範圍', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: Array.from({ length: 205 }, (_, i) => histAnn({ id: i + 1, time: i })),
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.textContent).toContain('只顯示最新 200 條'));
+});
+
+/**
+ * 告警在時間範圍開始前就燒起來了：載入時吉祥物照樣念（本分頁的播報），但那次狀態變化不在範圍內，
+ * 紀錄裡沒有它。只顯示紀錄的話就會「念了、清單上卻找不到」。
+ */
+test('ADR-006：本分頁念過、但不在範圍內紀錄裡的句子，也要列在清單上', async () => {
+  mockedHistory.mockResolvedValue({ raw: [], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([{ alertname: 'LongBurn', severity: 'critical', summary: '燒了三小時' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+
+  await waitFor(() => expect(spoken.map((p) => p.text).join()).toContain('燒了三小時'));
+  // 先確定已在紀錄模式（篩選框只在紀錄模式出現），否則下面的否定斷言會白過。
+  await waitFor(() => expect(view.queryByPlaceholderText(/篩選紀錄/)).not.toBeNull());
+  await waitFor(() => expect(view.container.textContent).toContain('偵測到告警：LongBurn'));
+  expect(view.container.textContent).not.toContain('這段時間範圍內沒有播報紀錄');
+});
+
+// ─── 複審修正（reality-checker 2026-10-13） ─────────────────────────────────────
+
+/** 可以從外部決定何時 resolve 的 promise。 */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+test('M3：讀取還沒回來就改了時間範圍，最後顯示的是新範圍的結果', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const first = deferred<unknown>();
+  const second = deferred<unknown>();
+  mockedHistory.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  const r1 = { from: { valueOf: () => 1000 }, to: { valueOf: () => 2000 } };
+  const r2 = { from: { valueOf: () => 5000 }, to: { valueOf: () => 6000 } };
+
+  const view = render(<MascotPanel {...props({ alertState: OK, timeRange: r1 })} />);
+  await waitFor(() => expect(mockedHistory).toHaveBeenCalledTimes(1));
+  view.rerender(<MascotPanel {...props({ alertState: OK, timeRange: r2 })} />);
+  await waitFor(() => expect(mockedHistory).toHaveBeenLastCalledWith('dash-1', 7, 5000, 6000));
+
+  await act(async () => {
+    second.resolve({ raw: [histAnn({ id: 2, text: 'MerakContainerMemoryHigh {pod=new-range, severity=warning} - A=0.93' })], templates: HIST_TEMPLATES });
+  });
+  await act(async () => {
+    first.resolve({ raw: [histAnn({ id: 1, text: 'MerakContainerMemoryHigh {pod=old-range, severity=warning} - A=0.93' })], templates: HIST_TEMPLATES });
+  });
+
+  await waitFor(() => expect(view.container.textContent).toContain('new-range 記憶體過高'));
+  expect(view.container.textContent).not.toContain('old-range');
+});
+
+test('L3：範圍內有同文字的舊紀錄，剛念的那一列也不會被吃掉', async () => {
+  const sentence = '偵測到告警：LongBurn，嚴重度 critical，燒了三小時。';
+  mockedHistory.mockResolvedValue({
+    raw: [
+      {
+        id: 5,
+        alertName: 'LongBurn',
+        prevState: 'Normal',
+        newState: 'Alerting',
+        time: Date.now() - 3 * 60 * 60 * 1000,
+        text: 'LongBurn {alertname=LongBurn, severity=critical} - ',
+        data: { values: {} },
+      },
+    ],
+    templates: new Map([['LongBurn', { severity: 'critical', summary: '燒了三小時' }]]),
+  });
+  mockedFetch.mockResolvedValue([{ alertname: 'LongBurn', severity: 'critical', summary: '燒了三小時' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(view.queryByPlaceholderText(/篩選紀錄/)).not.toBeNull());
+  await waitFor(() => expect(spoken.map((p) => p.text)).toContain(sentence));
+
+  await waitFor(() => {
+    const rows = Array.from(view.container.querySelectorAll('[data-origin]'));
+    expect(rows.filter((r) => r.textContent?.includes(sentence)).map((r) => r.getAttribute('data-origin')).sort()).toEqual([
+      'history',
+      'session',
+    ]);
+  });
+});
+
+test('H1：每一列標明來源（data-origin＝history／session），探測才分得出紀錄列', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin="history"]').length).toBe(1));
+});
+
+test('L2：原始狀態變化拿滿上限時，提示寫的是「超過 500 筆」而不是「只顯示 200 條」', async () => {
+  const raw = Array.from({ length: 500 }, (_, i) => histAnn({ id: i + 1, newState: 'Pending' }));
+  raw[0] = histAnn({ id: 9999 });
+  mockedHistory.mockResolvedValue({ raw, templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.textContent).toContain('超過 500 筆'));
+  expect(view.container.textContent).not.toContain('只顯示最新 200 條');
+});
+
+test('紀錄模式下新的在上（依狀態變化的時間）', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: [
+      histAnn({ id: 1, time: 1000, text: 'MerakContainerMemoryHigh {pod=older, severity=warning} - A=0.93' }),
+      histAnn({ id: 2, time: 2000, text: 'MerakContainerMemoryHigh {pod=newer, severity=warning} - A=0.93' }),
+    ],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(view.container.textContent).toContain('older'));
+
+  const t = view.container.textContent ?? '';
+  expect(t.indexOf('newer')).toBeLessThan(t.indexOf('older'));
 });

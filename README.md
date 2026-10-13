@@ -44,6 +44,7 @@ avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，�
 |---|---|---|
 | **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
 | ADR-005 | 選填的外部語音服務（Qwen3-TTS 年輕男聲）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | **Accepted**（2026-10-06） |
+| ADR-006 | 播報紀錄：以 Grafana 告警狀態歷史當吉祥物的持久紀錄（唯讀、零後端）；修訂 ADR-004 決策 2 | **FIRM**（2026-10-13） |
 | ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded |
 | ADR-003 | 前端 visual-web-stack | Superseded |
@@ -97,6 +98,14 @@ ADR-002 有兩個抽象被 ADR-004 明文繼承，不隨 supersede 作廢：
    在一台有 NVIDIA GPU 的機器上跑 `tools/tts-server/`（Qwen3-TTS，步驟見該目錄的 README），
    再把 panel 選項「外部語音服務網址」填成它的位址。沒填就照舊用瀏覽器聲線；
    服務失敗或逾時的那一則也會自動改用瀏覽器聲線（ADR-005）。
+7. **播報紀錄**（ADR-006）：吉祥物旁邊的清單讀的是 Grafana 自己存的告警狀態歷史，重新整理不會不見，
+   每個人看到的都一樣，dashboard 沒開著時發生的事也查得到。每一條就是吉祥物念的那句話。
+   改 dashboard 的時間範圍可以翻更早的紀錄（一次最多 200 條），上方的篩選框可以用規則名、內容、主機／pod 名過濾。
+   紀錄只顯示、不會念。
+   - 前提：Grafana 的告警歷史存在 annotations（`[unified_alerting.state_history] backend`，Grafana 的預設）。
+     改成 loki 或 prometheus 時，panel 會寫明讀不到，並只列本分頁念過的句子；設成 `multiple` 時，要 annotations 是其中之一才完整。
+   - Viewer 就讀得到，不需要額外權限。保存多久由 Grafana 決定（`[unified_alerting.state_history.annotations] max_age` 與 `max_annotations_to_keep`，預設都是永久）。
+   - 舊紀錄的摘要是用規則**現在的**樣板填的：規則事後改過措辭，舊紀錄會顯示新的措辭。
 
 ## 開發
 
