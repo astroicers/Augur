@@ -104,7 +104,7 @@ ADR-002 有兩個抽象被 ADR-004 明文繼承，不隨 supersede 作廢：
    紀錄只顯示、不會念。
    - 前提：Grafana 的告警歷史存在 annotations（`[unified_alerting.state_history] backend`，Grafana 的預設）。
      改成 loki 或 prometheus 時，panel 會寫明讀不到，並只列本分頁念過的句子；設成 `multiple` 時，要 annotations 是其中之一才完整。
-   - Viewer 就讀得到，不需要額外權限。保存多久由 Grafana 決定（`[unified_alerting.state_history.annotations] max_age`，預設永久）。
+   - Viewer 就讀得到，不需要額外權限。保存多久由 Grafana 決定（`[unified_alerting.state_history.annotations] max_age` 與 `max_annotations_to_keep`，預設都是永久）。
    - 舊紀錄的摘要是用規則**現在的**樣板填的：規則事後改過措辭，舊紀錄會顯示新的措辭。
 
 ## 開發

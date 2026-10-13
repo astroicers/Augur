@@ -917,6 +917,110 @@ test('ADR-006：本分頁念過、但不在範圍內紀錄裡的句子，也要�
   const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
 
   await waitFor(() => expect(spoken.map((p) => p.text).join()).toContain('燒了三小時'));
+  // 先確定已在紀錄模式（篩選框只在紀錄模式出現），否則下面的否定斷言會白過。
+  await waitFor(() => expect(view.queryByPlaceholderText(/篩選紀錄/)).not.toBeNull());
   await waitFor(() => expect(view.container.textContent).toContain('偵測到告警：LongBurn'));
   expect(view.container.textContent).not.toContain('這段時間範圍內沒有播報紀錄');
+});
+
+// ─── 複審修正（reality-checker 2026-10-13） ─────────────────────────────────────
+
+/** 可以從外部決定何時 resolve 的 promise。 */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+test('M3：讀取還沒回來就改了時間範圍，最後顯示的是新範圍的結果', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const first = deferred<unknown>();
+  const second = deferred<unknown>();
+  mockedHistory.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  const r1 = { from: { valueOf: () => 1000 }, to: { valueOf: () => 2000 } };
+  const r2 = { from: { valueOf: () => 5000 }, to: { valueOf: () => 6000 } };
+
+  const view = render(<MascotPanel {...props({ alertState: OK, timeRange: r1 })} />);
+  await waitFor(() => expect(mockedHistory).toHaveBeenCalledTimes(1));
+  view.rerender(<MascotPanel {...props({ alertState: OK, timeRange: r2 })} />);
+  await waitFor(() => expect(mockedHistory).toHaveBeenLastCalledWith('dash-1', 7, 5000, 6000));
+
+  await act(async () => {
+    second.resolve({ raw: [histAnn({ id: 2, text: 'MerakContainerMemoryHigh {pod=new-range, severity=warning} - A=0.93' })], templates: HIST_TEMPLATES });
+  });
+  await act(async () => {
+    first.resolve({ raw: [histAnn({ id: 1, text: 'MerakContainerMemoryHigh {pod=old-range, severity=warning} - A=0.93' })], templates: HIST_TEMPLATES });
+  });
+
+  await waitFor(() => expect(view.container.textContent).toContain('new-range 記憶體過高'));
+  expect(view.container.textContent).not.toContain('old-range');
+});
+
+test('L3：範圍內有同文字的舊紀錄，剛念的那一列也不會被吃掉', async () => {
+  const sentence = '偵測到告警：LongBurn，嚴重度 critical，燒了三小時。';
+  mockedHistory.mockResolvedValue({
+    raw: [
+      {
+        id: 5,
+        alertName: 'LongBurn',
+        prevState: 'Normal',
+        newState: 'Alerting',
+        time: Date.now() - 3 * 60 * 60 * 1000,
+        text: 'LongBurn {alertname=LongBurn, severity=critical} - ',
+        data: { values: {} },
+      },
+    ],
+    templates: new Map([['LongBurn', { severity: 'critical', summary: '燒了三小時' }]]),
+  });
+  mockedFetch.mockResolvedValue([{ alertname: 'LongBurn', severity: 'critical', summary: '燒了三小時' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(view.queryByPlaceholderText(/篩選紀錄/)).not.toBeNull());
+  await waitFor(() => expect(spoken.map((p) => p.text)).toContain(sentence));
+
+  await waitFor(() => {
+    const rows = Array.from(view.container.querySelectorAll('[data-origin]'));
+    expect(rows.filter((r) => r.textContent?.includes(sentence)).map((r) => r.getAttribute('data-origin')).sort()).toEqual([
+      'history',
+      'session',
+    ]);
+  });
+});
+
+test('H1：每一列標明來源（data-origin＝history／session），探測才分得出紀錄列', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin="history"]').length).toBe(1));
+});
+
+test('L2：原始狀態變化拿滿上限時，提示寫的是「超過 500 筆」而不是「只顯示 200 條」', async () => {
+  const raw = Array.from({ length: 500 }, (_, i) => histAnn({ id: i + 1, newState: 'Pending' }));
+  raw[0] = histAnn({ id: 9999 });
+  mockedHistory.mockResolvedValue({ raw, templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.textContent).toContain('超過 500 筆'));
+  expect(view.container.textContent).not.toContain('只顯示最新 200 條');
+});
+
+test('紀錄模式下新的在上（依狀態變化的時間）', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: [
+      histAnn({ id: 1, time: 1000, text: 'MerakContainerMemoryHigh {pod=older, severity=warning} - A=0.93' }),
+      histAnn({ id: 2, time: 2000, text: 'MerakContainerMemoryHigh {pod=newer, severity=warning} - A=0.93' }),
+    ],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(view.container.textContent).toContain('older'));
+
+  const t = view.container.textContent ?? '';
+  expect(t.indexOf('newer')).toBeLessThan(t.indexOf('older'));
 });

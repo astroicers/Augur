@@ -18,7 +18,8 @@
 - Needs Grafana's alert state history stored as annotations, which is Grafana's default. If it is
   stored in Loki or Prometheus instead, the panel says so and falls back to listing only what this tab
   spoke. Viewers can read the record; no extra permission is needed. How long records are kept is up to
-  Grafana (`[unified_alerting.state_history.annotations] max_age`, default: forever).
+  Grafana (`[unified_alerting.state_history.annotations] max_age` and `max_annotations_to_keep`,
+  default: forever).
 
 ## 0.1.0 — 2026-10-08
 

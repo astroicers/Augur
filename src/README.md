@@ -111,7 +111,10 @@ default (`[unified_alerting.state_history] backend`). With `loki` or `prometheus
 panel says it cannot read the history and lists only what this tab spoke. With
 `multiple`, the record is complete only if annotations is one of the backends. Records
 are kept as long as Grafana keeps them (`[unified_alerting.state_history.annotations]
-max_age`, default: forever). The summary in older lines is filled in from the rule's
+max_age` and `max_annotations_to_keep`, default: forever). Each line uses the
+value of the rule's *condition* query, which is what the mascot speaks; if Grafana won't
+say which query is the condition, a line leaves the value out rather than show a
+different number. The summary in older lines is filled in from the rule's
 *current* summary template, so a rule edited since then shows its new wording.
 
 The panel reads **its own** query results and alert state. Grafana gives a panel no

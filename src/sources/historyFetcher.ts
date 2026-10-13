@@ -8,10 +8,19 @@
  * （2026-10-13 於 12.4.12 實測，ADR-006 V-1）。
  */
 import { config, getBackendSrv } from '@grafana/runtime';
-import { HISTORY_FETCH_LIMIT, historyBackendProblem, parseRuleTemplates, type RuleTemplate } from './history';
+import {
+  HISTORY_FETCH_LIMIT,
+  historyBackendFrom,
+  historyBackendProblem,
+  parseRulerConditions,
+  parseRuleTemplates,
+  type RuleTemplate,
+} from './history';
 import { RULES_ENDPOINT } from './rulesFetcher';
 
 export const ANNOTATIONS_ENDPOINT = '/api/annotations';
+/** 唯一給得出規則「條件欄」的端點（rules 端點沒有這個欄位）。Viewer 可讀（12.4.12 實測）。 */
+export const RULER_ENDPOINT = '/api/ruler/grafana/api/v1/rules';
 
 export interface PanelHistory {
   /** `/api/annotations` 的原始回應；形狀由 `historyToEntries` 檢查。 */
@@ -26,14 +35,11 @@ export async function fetchPanelHistory(
   fromMs: number,
   toMs: number
 ): Promise<PanelHistory> {
-  // 12.4.12 實測：前端設定帶 `unifiedAlerting.alertStateHistoryBackend`；@grafana/runtime 的型別沒列，故走結構型別。
-  const backend = (config as unknown as { unifiedAlerting?: { alertStateHistoryBackend?: unknown } }).unifiedAlerting
-    ?.alertStateHistoryBackend;
-  const problem = historyBackendProblem(backend);
+  const problem = historyBackendProblem(historyBackendFrom(config.unifiedAlerting));
   if (problem) {
     throw new Error(problem);
   }
-  const [raw, rules] = await Promise.all([
+  const [raw, rules, ruler] = await Promise.all([
     // showErrorAlert: false —— 讀不到時由 panel 自己寫明原因（決策 7），
     // 不要讓 Grafana 每次 refresh 都跳一個錯誤通知。
     getBackendSrv().get(
@@ -46,6 +52,14 @@ export async function fetchPanelHistory(
     getBackendSrv()
       .get(RULES_ENDPOINT, { dashboard_uid: dashboardUid, panel_id: panelId }, undefined, { showErrorAlert: false })
       .catch(() => null),
+    // 條件欄拿不到也不算失敗：數值改用「各欄相同才給」的退路（history.ts 的 conditionValue）。
+    getBackendSrv()
+      .get(RULER_ENDPOINT, { dashboard_uid: dashboardUid, panel_id: panelId }, undefined, { showErrorAlert: false })
+      .catch(() => null),
   ]);
-  return { raw, templates: parseRuleTemplates(rules, dashboardUid, panelId) };
+  const templates = parseRuleTemplates(rules, dashboardUid, panelId);
+  for (const [title, condition] of parseRulerConditions(ruler, dashboardUid, panelId)) {
+    templates.set(title, { ...templates.get(title), condition });
+  }
+  return { raw, templates };
 }

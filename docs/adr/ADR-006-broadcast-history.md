@@ -51,7 +51,9 @@ GET /api/annotations?type=alert&dashboardUID=<本 dashboard>&panelId=<本 panel>
 
 紀錄列的是 Grafana 判定發生過的狀態變化。那一刻有沒有任何瀏覽器開著、有沒有真的發出聲音，紀錄不知道，panel 上也不得這樣暗示。
 
-- 列入的變化有兩種：任何狀態 → `Alerting`，對應「偵測到告警」；`Alerting` → `Normal*`，對應「告警已恢復」。
+- 列入的變化有兩種：**非 Alerting** → `Alerting*`，對應「偵測到告警」；`Alerting*` 或 `Recovering` → `Normal*`，對應「告警已恢復」。
+  `Alerting (NoData)` → `Alerting` 這種只換 reason 的變化不列，播報端不會再念一次；`Recovering` 是 keep_firing_for 的過渡態。
+  （2026-10-13 依複審 L1 補上，狀態維持 `FIRM`。）
 - 不列 `Pending`，也不列 `NoData` ↔ `Normal`。這兩者吉祥物本來就不念。
 - 套用 panel 的「最低播報嚴重度」選項，和播報同一套篩選。
 
@@ -59,8 +61,12 @@ GET /api/annotations?type=alert&dashboardUID=<本 dashboard>&panelId=<本 panel>
 
 每一條紀錄要顯示成和吉祥物念的一樣的中文句子，例如「偵測到告警：MerakContainerMemoryHigh，嚴重度 warning，目前數值 0.93，merak-prod api-7f…/app 記憶體 > 90% limit」。
 
-- **規則名、嚴重度**：紀錄本身有規則名（`alertName`）。嚴重度從規則端點的 rule-level `labels.severity` 取。
-- **數值**：取紀錄 `data.values` 的 `A`（規則的查詢結果。ADR-004 實作的條件 B＝`$A`，兩者相同）。
+- **規則名、嚴重度**：紀錄本身有規則名（`alertName`）。嚴重度**先取紀錄字串裡的 `severity` label，沒有才用規則端點的 rule-level `labels.severity`**。
+  這和播報端一致（`panelAlerts.ts`：instance labels 優先於 rule labels）。（2026-10-13 依複審 M4 更正原文「從規則層取」。）
+- **數值**：取紀錄 `data.values` 裡**規則條件那一欄**的值。播報念的「目前數值」是 rules 端點 `alerts[].value`，那是條件欄的值（V-9）。
+  條件欄名從 ruler API（`/api/ruler/grafana/api/v1/rules`）取，Viewer 可讀。讀不到時，各欄數值相同就照用，不同就不給數值（寧缺勿錯）。
+  > 🔧 **2026-10-13 依複審 M1 更正**（狀態維持 `FIRM`）：原文寫「取 A」，在條件為 `$A` 時碰巧正確；
+  > 條件是 reduce→threshold（Grafana UI 的預設寫法）時，念的是 1、紀錄卻是 A 的 0.93。
 - **摘要**：紀錄**沒有**存渲染後的 annotation。改用規則端點回傳的 rule-level `annotations.summary` **樣板**，把紀錄 `text` 欄位裡的 instance labels 填進去。
   - **只支援 `{{ $labels.<名稱> }}`，而且照 Grafana 的規則填**：Grafana 渲染時的 `$labels` 只有查詢結果的 label
     加上 `alertname`、`grafana_folder`；**規則層的 label（`severity` 等）與不存在的 label 都渲染成 `[no value]`**（V-7）。
@@ -83,6 +89,11 @@ GET /api/annotations?type=alert&dashboardUID=<本 dashboard>&panelId=<本 panel>
 - **翻看舊紀錄**：載入時依 **dashboard 時間挑選器的範圍**讀取歷史，可以捲動，最多 200 條，並顯示「範圍內共 N 條，已顯示前 200 條」。要看更早的紀錄就調整時間範圍，這是 Grafana 使用者本來就熟悉的操作，不另做分頁 UI。
 - **即時查詢**：feed 上方加一個關鍵字篩選框，比對規則名、句子與 labels，只篩選、不重新查詢。
 - **即時更新**：每次 panel data refresh（dashboard 的 refresh 間隔）就重新讀一次歷史，新事件出現在最上面。
+  每次讀取都帶序號，只採用最後一次發出的讀取結果；讀取中改了時間範圍或門檻也不會停在舊結果（複審 M3）。
+- **截斷提示分兩種**：紀錄超過 200 條時寫「只顯示最新 200 條」；原始狀態變化拿滿請求上限（500 筆，其中含不列的 Pending 等）時，
+  寫「範圍內的狀態變化超過 500 筆，只讀了最新的部分」。（原文要求的「範圍內共 N 條」做不到：API 不回總數。複審 L2。）
+- 每一列帶 `data-origin`（`history`／`session`），讓探測與測試分得出紀錄列與本分頁列（複審 H1）。
+  「本分頁念過的句子已在紀錄裡」的判定是**同文字且時間差 10 分鐘內**；只比文字的話，數值沒變的句子會被幾小時前的舊紀錄吃掉（複審 L3）。
 
 ### 5. 歷史只顯示，不播報
 
@@ -109,13 +120,15 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 - **labels 要從字串解析。** 紀錄的 `text` 是 Grafana 組出來的字串，格式為 `<規則名> {k=v, k=v, …} - A=…, B=…`，**沒有文件保證**。`/api/v1/rules/history` 在 annotations 後端下回傳的也是同一個字串（V-3）。
   - label 的值裡如果含有 `, ` 或 `}`，就會解析錯。
   - Grafana 改了格式，摘要就會消失。
-  - 兩種情況都只會讓摘要消失，規則名、嚴重度、數值、時間照樣正確，這就是決策 3 的退路。
-- **嚴重度取的是規則「現在」的設定。** 規則事後被改過嚴重度的話，舊紀錄會顯示新的值。摘要樣板也一樣，用的是現在的樣板。
-- **規則刪除後，它的舊紀錄只剩規則名、數值、時間**：規則端點已經查不到它，嚴重度與摘要會缺。
+  - 多數情況只會讓摘要消失，規則名、數值、時間照樣正確，這就是決策 3 的退路。
+  - **例外**：label 值本身含有 `, severity=x` 這種樣子時，會拆出一個假的 severity，連帶改變嚴重度與門檻判斷。實務上 label 值不會長這樣，接受。
+- **摘要樣板與條件欄用的是規則「現在」的設定。** 規則事後改過措辭或條件，舊紀錄會用新的去填。嚴重度則是紀錄當時的 label，不受影響。
+- **規則刪除後，它的舊紀錄沒有摘要**：規則端點已經查不到樣板。嚴重度仍取自紀錄自己的 label。
 - **同一條規則有多個 instance 時，紀錄逐一列出，吉祥物只念一次。** 播報的 fingerprint 只看規則名（ADR-004 實作，
   `panelAlerts.ts`），兩個 pod 同時記憶體過高只念第一個；紀錄則是 Grafana 的每一次 instance 狀態變化。
   這正是決策 2「事件紀錄而非播報紀錄」的語意，不是缺陷；G-ADR006-2 比對的是**同一個 instance** 的那一句。
-- **每個觀看者、每次 refresh，都會多一次 `/api/annotations` 查詢。** 查詢以 dashboard＋panel＋時間範圍過濾，量很小。
+- **每個觀看者、每次 refresh，都會多三個 GET**：`/api/annotations`（紀錄）、rules 端點（摘要樣板）、ruler API（條件欄）。
+  都以 dashboard＋panel 過濾，量很小。後兩者讀不到不算失敗，只是少了摘要或數值。
 
 ## 不採用的選項
 
@@ -140,7 +153,8 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 | V-5 | 保存期限預設值 | ✅ 12.4.12 `defaults.ini`：`[unified_alerting.state_history] enabled = true`、`backend =`（＝annotations）；`[unified_alerting.state_history.annotations] max_age =`、`max_annotations_to_keep =`（0＝永久） |
 | V-6 | 現成替代方案 | ❌ Annotations list panel：No annotations found；全域 Alerting → History：500 `ruleUID is required`；✅ 單條規則的 History 分頁可用 |
 | V-7 | Grafana 渲染摘要時 `$labels` 有哪些 | 實驗規則 LabelProbe（查詢回傳 `pod` label），樣板含六種 label。Grafana 渲染：`an=LabelProbe\|sev=[no value]\|folder=Augur Mascot\|am=[no value]\|pod=pod-xyz\|none=[no value]`；同一筆的紀錄字串卻含 `augur_mascot=true, severity=warning` ⇒ 規則層 label 不在 `$labels` |
-| V-8 | 前端能否得知 state history 的 backend | ✅ `/api/frontend/settings` 的 `unifiedAlerting.alertStateHistoryBackend`（12.4.12 與 13.2.2 皆有，Viewer 可讀）；設成 loki 後值為 `loki` |
+| V-9 | 播報的「目前數值」是哪一欄 | 規則 ThresholdProbe（A 回兩個 series 0.934211／0.512345 → B reduce last → C threshold >0.5，條件 C）：rules 端點兩個 instance 的 `value` 都是 `1e+00`；紀錄 `data.values` 為 `{"A":0.934211,"B":0.934211,"C":1}` ⇒ 播報值＝條件欄。ruler API 以 Viewer 讀取回 200，`grafana_alert.condition` 為 `C` |
+| V-8 | 前端能否得知 state history 的 backend | ✅ `/api/frontend/settings` 的 `unifiedAlerting.alertStateHistoryBackend`（12.4.12 與 13.2.2 皆有，Viewer 可讀）；設成 loki 後值為 `loki`。該欄在 @grafana/data 型別中已被標為棄用，實作優先讀 `stateHistory.backend`（複審 M2） |
 
 ### POC gate 機械證據（2026-10-13，本機隔離 compose，非推理）
 

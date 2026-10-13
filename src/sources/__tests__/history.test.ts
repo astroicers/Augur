@@ -5,7 +5,10 @@ import { buildBroadcastPlan } from '../../core/format';
 import { createPanelAlertSource } from '../panelAlerts';
 import {
   HISTORY_DISPLAY_LIMIT,
+  HISTORY_FETCH_LIMIT,
+  historyBackendFrom,
   historyBackendProblem,
+  parseRulerConditions,
   historyToEntries,
   parseAnnotationText,
   parseRuleTemplates,
@@ -196,7 +199,7 @@ describe('historyToEntries', () => {
     const many = Array.from({ length: HISTORY_DISPLAY_LIMIT + 5 }, (_, i) => ann({ id: i + 1, time: 1000 + i }));
     const out = historyToEntries(many, templates(), opts);
     expect(out.entries).toHaveLength(HISTORY_DISPLAY_LIMIT);
-    expect(out.truncated).toBe(true);
+    expect(out.truncated).toBe('display');
     expect(out.entries[0]!.time).toBe(1000 + HISTORY_DISPLAY_LIMIT + 4);
   });
 
@@ -256,5 +259,84 @@ describe('historyBackendProblem', () => {
   test('loki、prometheus 等其他 backend：回報原因並點名 backend', () => {
     expect(historyBackendProblem('loki')).toContain('loki');
     expect(historyBackendProblem('prometheus')).toContain('prometheus');
+  });
+});
+
+describe('複審修正（reality-checker 2026-10-13）', () => {
+  const opts = { minSeverity: '', lang: 'zh' as const };
+
+  /**
+   * M1（12.4.12 實測）：rules 端點的 `alerts[].value` 是**條件那一欄**的值。條件是 C（reduce→threshold）時
+   * 念的是「目前數值 1」，紀錄若取 A（0.93）就對不上。條件欄名取自 ruler API。
+   */
+  test('數值取條件那一欄（C），不是 A', () => {
+    const t = templates({ MerakContainerMemoryHigh: { severity: 'warning', summary: MEM_TEMPLATE, condition: 'C' } });
+    const [e] = historyToEntries([ann({ data: { values: { A: 0.934211, B: 0.934211, C: 1 } } })], t, opts).entries;
+    expect(e!.text).toContain('目前數值 1，');
+  });
+
+  test('不知道條件欄、各欄數值又不同時不念數值（寧缺勿錯）；各欄相同時照用', () => {
+    const differing = historyToEntries([ann({ data: { values: { A: 0.93, C: 1 } } })], templates(), opts).entries[0]!;
+    expect(differing.text).not.toContain('目前數值');
+    const same = historyToEntries([ann({ data: { values: { A: 0.93, B: 0.93 } } })], templates(), opts).entries[0]!;
+    expect(same.text).toContain('目前數值 0.93');
+  });
+
+  test('只換 reason 的 Alerting (NoData)→Alerting 不是新的「偵測到」', () => {
+    const out = historyToEntries([ann({ prevState: 'Alerting (NoData)', newState: 'Alerting' })], templates(), opts);
+    expect(out.entries).toEqual([]);
+  });
+
+  test('Recovering→Normal（keep_firing_for）是「已恢復」', () => {
+    const [e] = historyToEntries([ann({ prevState: 'Recovering', newState: 'Normal' })], templates(), opts).entries;
+    expect(e!.text.startsWith('告警已恢復：')).toBe(true);
+  });
+
+  test('嚴重度：紀錄自己的 label 優先於規則層（與播報端 instance labels 優先一致）', () => {
+    const t = templates({ MerakContainerMemoryHigh: { severity: 'critical', summary: MEM_TEMPLATE } });
+    const [e] = historyToEntries([ann({})], t, opts).entries;
+    expect(e!.text).toContain('嚴重度 warning');
+  });
+
+  test('原始紀錄拿滿上限時，截斷原因是 fetch（不是「只顯示 200 條」）', () => {
+    const raw = Array.from({ length: HISTORY_FETCH_LIMIT }, (_, i) => ann({ id: i, newState: 'Pending' }));
+    raw[0] = ann({ id: 999999 });
+    const out = historyToEntries(raw, templates(), opts);
+    expect(out.entries).toHaveLength(1);
+    expect(out.truncated).toBe('fetch');
+  });
+
+  test('沒有截斷時是 null', () => {
+    expect(historyToEntries([ann({})], templates(), opts).truncated).toBeNull();
+  });
+});
+
+/** M2：`alertStateHistoryBackend` 在 @grafana/data 型別裡已被標為棄用，優先讀 `stateHistory.backend`。 */
+describe('historyBackendFrom', () => {
+  test('優先 stateHistory.backend，退回已棄用的 alertStateHistoryBackend', () => {
+    expect(historyBackendFrom({ stateHistory: { backend: 'loki' }, alertStateHistoryBackend: 'annotations' })).toBe('loki');
+    expect(historyBackendFrom({ alertStateHistoryBackend: 'loki' })).toBe('loki');
+    expect(historyBackendFrom(undefined)).toBeUndefined();
+  });
+});
+
+describe('parseRulerConditions', () => {
+  test('取綁在本 panel 的規則的條件欄名（ruler API 形狀，12.4.12 實測）', () => {
+    const raw = {
+      'Augur Mascot': [
+        {
+          name: 'g',
+          rules: [
+            { annotations: { __dashboardUid__: DASH, __panelId__: '1' }, grafana_alert: { title: 'ThresholdProbe', condition: 'C' } },
+            { annotations: { __dashboardUid__: DASH, __panelId__: '9' }, grafana_alert: { title: 'Other', condition: 'B' } },
+          ],
+        },
+      ],
+    };
+    expect(parseRulerConditions(raw, DASH, PANEL)).toEqual(new Map([['ThresholdProbe', 'C']]));
+  });
+
+  test('形狀不對就回空表', () => {
+    expect(parseRulerConditions(null, DASH, PANEL)).toEqual(new Map());
   });
 });

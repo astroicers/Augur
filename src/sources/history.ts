@@ -31,6 +31,11 @@ export interface RuleTemplate {
    * 但紀錄字串裡有 —— 填樣板時必須排除，否則紀錄句和念出來的不一樣。
    */
   ruleLabels?: string[];
+  /**
+   * 規則的條件欄（refId，例如 `B`、`C`），取自 ruler API。播報念的「目前數值」是 rules 端點的
+   * `alerts[].value`，那是**條件那一欄**的值（12.4.12 實測：A→B reduce→C threshold 時念 1，不是 A 的 0.93）。
+   */
+  condition?: string;
 }
 
 export interface HistoryEntry {
@@ -46,14 +51,27 @@ export interface HistoryEntry {
 
 export interface HistoryResult {
   entries: HistoryEntry[];
-  /** 範圍內可能還有更多（顯示被截斷，或原始紀錄拿滿了上限）。 */
-  truncated: boolean;
+  /**
+   * 範圍內可能還有更多，以及原因：`display`＝紀錄超過顯示上限；`fetch`＝原始狀態變化拿滿了請求上限
+   * （其中有些是不列的 Pending／NoData，所以列出來的可能遠少於 200 條）。兩者的提示要分開寫。
+   */
+  truncated: 'display' | 'fetch' | null;
 }
 
 const LABEL_NAME = '[A-Za-z_][A-Za-z0-9_]*';
 
 /**
- * 告警歷史存在哪裡（前端設定 `unifiedAlerting.alertStateHistoryBackend`）會決定讀不讀得到。
+ * 從前端設定的 `unifiedAlerting` 取出 state history 的 backend。
+ * `alertStateHistoryBackend` 在 @grafana/data 的型別裡已被標為棄用、要改用 `stateHistory.backend`；
+ * 只讀舊欄位的話，Grafana 移除它之後會拿到 undefined 而放行 —— 部署若用 loki，就會靜默顯示「沒有紀錄」。
+ */
+export function historyBackendFrom(unifiedAlerting: unknown): unknown {
+  const ua = unifiedAlerting as { stateHistory?: { backend?: unknown }; alertStateHistoryBackend?: unknown } | undefined;
+  return ua?.stateHistory?.backend ?? ua?.alertStateHistoryBackend;
+}
+
+/**
+ * 告警歷史存在哪裡會決定讀不讀得到（取法見 `historyBackendFrom`）。
  *
  * backend 不是 annotations 時，`/api/annotations` 回的是**空清單**而不是錯誤 —— 不先擋的話，
  * panel 會把「歷史存在別處」顯示成「這段時間沒有紀錄」（ADR-006 決策 7）。
@@ -154,6 +172,39 @@ export function parseRuleTemplates(raw: unknown, dashboardUid: string, panelId: 
   return out;
 }
 
+/**
+ * 從 ruler API（`/api/ruler/grafana/api/v1/rules`）的回應取「綁在本 panel 的規則 → 條件欄」。
+ * 回應形狀（12.4.12 實測）：`{ <資料夾>: [ { name, rules: [ { annotations, grafana_alert: { title, condition } } ] } ] }`。
+ */
+export function parseRulerConditions(raw: unknown, dashboardUid: string, panelId: number): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!raw || typeof raw !== 'object') {
+    return out;
+  }
+  for (const groups of Object.values(raw as Record<string, unknown>)) {
+    if (!Array.isArray(groups)) {
+      continue;
+    }
+    for (const g of groups) {
+      const rules = (g as { rules?: unknown[] })?.rules;
+      if (!Array.isArray(rules)) {
+        continue;
+      }
+      for (const r of rules) {
+        const rule = r as { annotations?: Record<string, string>; grafana_alert?: { title?: string; condition?: string } };
+        const ann = rule.annotations ?? {};
+        const title = rule.grafana_alert?.title;
+        const condition = rule.grafana_alert?.condition;
+        if (!title || !condition || ann['__dashboardUid__'] !== dashboardUid || ann['__panelId__'] !== String(panelId)) {
+          continue;
+        }
+        out.set(title, condition);
+      }
+    }
+  }
+  return out;
+}
+
 interface RawAnnotation {
   id?: number;
   alertName?: string;
@@ -182,12 +233,16 @@ export function historyToEntries(
   for (const a of sorted) {
     const prev = String(a.prevState ?? '');
     const next = String(a.newState ?? '');
-    // 吉祥物只念兩種變化：進入 Alerting（偵測到）、離開 Alerting 回到 Normal（恢復）。
-    const status = next.startsWith('Alerting')
-      ? 'firing'
-      : prev.startsWith('Alerting') && next.startsWith('Normal')
-        ? 'resolved'
-        : null;
+    // 吉祥物只念兩種變化：從非 Alerting 進入 Alerting（偵測到）、離開 Alerting／Recovering 回到 Normal（恢復）。
+    // `Alerting (NoData)`→`Alerting` 這種只換 reason 的變化不是新的「偵測到」——播報端不會再念一次。
+    // `Recovering` 是 keep_firing_for 的過渡態；它回到 Normal 時，播報端會念恢復。
+    const wasFiring = prev.startsWith('Alerting') || prev.startsWith('Recovering');
+    const status =
+      next.startsWith('Alerting') && !prev.startsWith('Alerting')
+        ? 'firing'
+        : wasFiring && next.startsWith('Normal')
+          ? 'resolved'
+          : null;
     if (!status) {
       continue;
     }
@@ -202,7 +257,7 @@ export function historyToEntries(
     }
     const summary =
       tpl?.summary !== undefined && parsed ? renderSummary(tpl.summary, parsed.labels, tpl.ruleLabels) : undefined;
-    const value = status === 'firing' ? firstValue(a.data?.values) : undefined;
+    const value = status === 'firing' ? conditionValue(a.data?.values, tpl?.condition) : undefined;
     const time = a.time ?? 0;
     const alert: ParsedAlert = {
       status,
@@ -225,15 +280,26 @@ export function historyToEntries(
   }
   return {
     entries: entries.slice(0, HISTORY_DISPLAY_LIMIT),
-    truncated: entries.length > HISTORY_DISPLAY_LIMIT || raw.length >= HISTORY_FETCH_LIMIT,
+    truncated: raw.length >= HISTORY_FETCH_LIMIT ? 'fetch' : entries.length > HISTORY_DISPLAY_LIMIT ? 'display' : null,
   };
 }
 
-/** 規則的查詢結果是 A（ADR-004 實作的條件 B＝`$A`）；沒有 A 才退回第一個數值。 */
-function firstValue(values: Record<string, unknown> | undefined): number | undefined {
+/**
+ * 與播報同一個數值：條件那一欄的值（見 `RuleTemplate.condition`）。
+ * 不知道條件欄時（ruler API 讀不到）：各欄數值都相同就照用，不同就**不給數值** ——
+ * 寧可紀錄句少一段，也不要顯示一個和當時念的不一樣的數字。
+ */
+function conditionValue(values: Record<string, unknown> | undefined, condition: string | undefined): number | undefined {
   if (!values) {
     return undefined;
   }
-  const pick = values['A'] ?? Object.values(values)[0];
-  return typeof pick === 'number' && Number.isFinite(pick) ? pick : undefined;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  if (condition !== undefined) {
+    return num(values[condition]);
+  }
+  const all = Object.values(values).map(num);
+  if (!all.length || all.some((v) => v === undefined)) {
+    return undefined;
+  }
+  return all.every((v) => v === all[0]) ? all[0] : undefined;
 }
