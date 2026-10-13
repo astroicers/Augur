@@ -235,7 +235,8 @@ export function historyToEntries(
     const next = String(a.newState ?? '');
     // 吉祥物只念兩種變化：從非 Alerting 進入 Alerting（偵測到）、離開 Alerting／Recovering 回到 Normal（恢復）。
     // `Alerting (NoData)`→`Alerting` 這種只換 reason 的變化不是新的「偵測到」——播報端不會再念一次。
-    // `Recovering` 是 keep_firing_for 的過渡態；它回到 Normal 時，播報端會念恢復。
+    // `Recovering` 是 keep_firing_for 的過渡態；列在它回到 Normal 時。⚠️ 未實測：播報端可能在進入 Recovering
+    // 時就念恢復（它只保留 alerting 的 instance）；Alerting→NoData／Error 也可能播報端念恢復而此處不列（ADR-006 待驗風險 4）。
     const wasFiring = prev.startsWith('Alerting') || prev.startsWith('Recovering');
     const status =
       next.startsWith('Alerting') && !prev.startsWith('Alerting')
