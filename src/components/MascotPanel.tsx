@@ -275,6 +275,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
   /** 播報器挑到的聲線名稱（onVoice 回報）；null = 引擎預設。 */
   const [voiceName, setVoiceName] = useState<string | null>(null);
+  // 使用者已經為「外部語音被擋」按過一次的那個聲線標籤。標籤要等下一次外部語音成功才會改回，
+  // 不記下來的話按鈕會一直停在「點一下啟用語音」、按不到靜音（第二輪複審 N1）。標籤一旦不再是被擋，就清掉。
+  const [autoplayAck, setAutoplayAck] = useState<string | null>(null);
   /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
   const reactionRef = useRef<'click' | 'pending' | null>(null);
   /**
@@ -618,7 +621,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       return;
     }
     const events: SpeakerEvents & { onMouth?: (open: number) => void } = {
-      onVoice: (name) => setVoiceName(name),
+      onVoice: (name) => {
+        setVoiceName(name);
+        if (!(name ?? '').includes(AUTOPLAY_BLOCKED)) {
+          setAutoplayAck(null);
+        }
+      },
       // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
       // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
       // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
@@ -648,7 +656,13 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       },
       onError: (e, plan) => {
         if (e === 'not-allowed' && plan && !PREVIEW_PLANS.has(plan)) {
-          blockedRef.current.push({ plan, at: Date.now() });
+          // 寫入時就修剪（第二輪複審 N2）：丟掉超出補念時限的、同一則告警只留最新一筆。
+          // 沒人點的牆面螢幕配上重播間隔時，清單才不會一直長。
+          const now = Date.now();
+          blockedRef.current = [
+            ...blockedRef.current.filter((b) => b.at >= now - BLOCKED_REPLAY_WINDOW_MS && b.plan.name !== plan.name),
+            { plan, at: now },
+          ];
         }
         setSpeechErr(e);
         flapRef.current?.stop();
@@ -848,6 +862,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         // 瀏覽器擋著：這一下是使用者手勢，叫醒引擎、補念被擋的句子，狀態維持「開」（不是切成靜音）。
         // 補念只取最近 10 分鐘內的；同一則告警只留最後的狀態（被擋期間已恢復的就只念恢復句）（複審 F2）。
         sp?.unlock();
+        if ((voiceName ?? '').includes(AUTOPLAY_BLOCKED)) {
+          setAutoplayAck(voiceName);
+        }
         const cutoff = Date.now() - BLOCKED_REPLAY_WINDOW_MS;
         const recent = blockedRef.current.filter((b) => b.at >= cutoff);
         blockedRef.current = [];
@@ -867,7 +884,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       writeMuted(next);
       window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: next }));
     },
-    [applyMuted]
+    [applyMuted, voiceName]
   );
 
   // 同頁其他吉祥物 panel 按了開關（MUTE_EVENT），或另一個分頁改了本機儲存（storage 事件）：跟著同步。
@@ -959,7 +976,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 開著但瀏覽器擋著（使用者還沒在頁面上互動）：按鈕要邀請「啟用」，不能讓人一按就變靜音。
   // 外部語音（ADR-005）被自動播放政策擋下時不會丟錯誤，而是降級並把原因寫進聲線標籤；
   // 喚醒 AudioContext 需要在使用者手勢裡呼叫 unlock，所以也算「被擋」（複審 F3）。
-  const voiceBlocked = !muted && (speechErr === 'not-allowed' || (voiceName ?? '').includes(AUTOPLAY_BLOCKED));
+  const voiceBlocked =
+    !muted &&
+    (speechErr === 'not-allowed' || ((voiceName ?? '').includes(AUTOPLAY_BLOCKED) && voiceName !== autoplayAck));
   // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
   const sideBySide = width >= 320;
 

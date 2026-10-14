@@ -1264,3 +1264,27 @@ test('F4：同一頁兩個吉祥物 panel —— 一個按靜音，另一個立�
   fireEvent.click(b!);
   expect(a!.textContent).toContain('語音開');
 });
+
+/**
+ * N1（第二輪複審）：外部語音被擋時「被擋」是從聲線標籤推得，而標籤要等下一次外部語音成功才會改回。
+ * 按下後若仍顯示「點一下啟用語音」，使用者就按不到靜音 —— 正是當初「按了不會變」的症狀。
+ */
+test('N1：外部語音被擋，按一下後變回「語音開」，再按一下能靜音；之後再被擋會再提示', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  const blockedLabel = '引擎預設（外部語音失敗：autoplay-blocked，已降級）';
+  act(() => capturedEvents?.onVoice?.(blockedLabel));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('語音開');
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('靜音中');
+  fireEvent.click(view.getByTestId('voice-toggle'));
+
+  // 外部語音恢復一次之後又被擋：要再提示（不能被先前的「已確認」吃掉）
+  act(() => capturedEvents?.onVoice?.('外部語音（tts.local:8765）'));
+  act(() => capturedEvents?.onVoice?.(blockedLabel));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+});
