@@ -7,7 +7,7 @@
 > 更要緊的是：那份計畫裡有一條與已 Accepted 的 ADR-004 **正面衝突**，
 > 而衝突的兩造先前不在同一個地方，誰都看不出有矛盾。下面〈已裁定的衝突〉把兩造並列（2026-10-02 經 ADR 訂正裁定）。
 
-## 階段與現況（2026-10-02）
+## 階段與現況（2026-10-14）
 
 | 階段 | 內容 | 現況 |
 |---|---|---|
@@ -16,31 +16,48 @@
 | P2 | 腳手架併入、`src/core/` 遷入、舊管線刪除 | ✅ |
 | P3 | 開發環境（Grafana 升版、plugin 掛載、provisioned dashboard） | ✅（下方衝突項 2026-10-02 經 ADR-004 決策 7 訂正裁定為刪除） |
 | P4 | plugin 實作（來源層、語音層、跨 panel 互動、`AvatarController`） | ✅ |
-| P5 | sprite 素材 | **工具側 ✅、素材側未開工** —— 規格、SOP、SP-7 機械驗收、SP-V.1 盲測頁都就位；缺的是畫 |
-| P6 | 文件 | ✅ 根 README / `src/README.md` / CHANGELOG 已對齊現況（2026-09-21） |
+| P5 | sprite 素材 | ✅ **2026-10-05 定稿**（Gemini 原圖改格、`SPRITE-CHECK: PASS`、視線不做）；收尾（規格凍結、門檻改硬限、logo）移到 P7 |
+| P6 | 文件 | ✅ 2026-09-21 對齊；2026-10-06 之後的漂移由 P7 的文件同步票處理 |
+| P7 | 〈未完成項目〉收斂 | **now** |
+| P8 | 語音與紀錄 | ✅ ADR-005 外部語音、ADR-006 播報紀錄、v0.2.1 語音開關；發版 v0.1.0、v0.2.0、v0.2.1 |
+| P9 | 播報強化（新功能） | **now** |
+| P10 | 結構重構 | **now** |
+| P11 | 1.0 準備 | next |
+| P12 | 卡在人的實機驗證、授權與 ADR 修訂 | later |
 
 未完成項目在本檔〈未完成項目〉（2026-10-02 起；先前的逐條計畫 `docs/handoff/remaining-plan.md` 已退役）。
 
-## asp-ng 階段節（機器讀；2026-10-10 接入時新增）
+## asp-ng 階段節（機器讀；2026-10-10 接入時新增，2026-10-14 重整）
 
-> 下面兩節給 asp-ng 的 runtime 讀（`parse_roadmap`：`## <帶> — P<n> <名稱>`），內容對齊上方〈階段與現況〉那張表。
-> runtime 只從 **now** 帶派工，票要貼上 now 帶的 milestone（`P5`、`P7`）才會被派出去。
-> 〈未完成項目〉原本沒有階段代號，接入時立為 **P7**，讓那裡的條目能進派工面。改階段劃分時兩處一起改。
-> 欄位行（`P5:`、`P5 判準:`）的冒號必須是**半形**——asp-ng 的解析器目前只認半形。
+> 下面四節給 asp-ng 的 runtime 讀（`parse_roadmap`：`## <帶> — P<n> <名稱>`），內容對齊上方〈階段與現況〉那張表。
+> runtime 只從 **now** 帶派工，票要貼上 now 帶的 milestone（`P7`、`P9`、`P10`）才會被派出去；milestone 由 asp-ng 的 triage 判級時貼上。
+> 欄位行（`P7:`、`P7 判準:`）的冒號必須是**半形**——asp-ng 的解析器目前只認半形。
+> **不寫 `- [ ]` 核取方塊**：asp-ng 的 Path 2 會把它開成沒有驗收準則的 idea 票。now 帶的工作一律先開成帶 Given/When/Then 的票，這裡以 `→ #n` 指過去。
+> 2026-10-14 的重整由 asp-ng 主管層（兼 PM，ADR-000 決策 96）依唯讀稽核進行：P5 素材早已交付卻仍在 now、P5 判準的 SP-V.1 盲測在 `features.gaze = false` 下無從通過、近兩週的工作不在任何階段、也沒有 next / later 帶。
 
-## done — P0 保護既有未版控資產 [closed] / P1 ADR-004 定案 [closed] / P2 腳手架與遷移 [closed] / P3 開發環境 [closed] / P4 plugin 實作 [closed] / P6 文件 [closed]
+## done — P0 保護既有未版控資產 [closed] / P1 ADR-004 定案 [closed] / P2 腳手架與遷移 [closed] / P3 開發環境 [closed] / P4 plugin 實作 [closed] / P5 sprite 素材 [closed] / P6 文件 [closed] / P8 語音與紀錄 [closed]
 P0: 保護既有未版控資產（`14a481d`）。
 P1: ADR-004 supersede ADR-001/002/003，Accepted 2026-09-18，5 個 POC gate 全過。
 P2: 腳手架併入、`src/core/` 遷入、舊管線刪除。
 P3: 開發環境（Grafana 升版、plugin 掛載、provisioned dashboard）；衝突項 2026-10-02 經 ADR-004 決策 7 訂正裁定為刪除。
 P4: plugin 實作（來源層、語音層、跨 panel 互動、`AvatarController`）。
+P5: sprite 素材 2026-10-05 定稿（`src/img/sprite/` 兩張圖與 manifest、`docs/sprite/SOURCE-PROMPTS.md`，`SPRITE-CHECK: PASS`，視線不做）。原判準的 SP-V.1 方向盲測在 `features.gaze = false` 下不適用，作廢；規格凍結、門檻改硬限、logo 三項收尾移到 P7。
 P6: 根 README、`src/README.md`、CHANGELOG 對齊現況（2026-09-21）。
+P8: ADR-005 外部語音（Accepted 2026-10-06）、ADR-006 播報紀錄（Accepted 2026-10-14）、語音開關（#25，v0.2.1）；發版 v0.1.0、v0.2.0、v0.2.1。語音開關的設計決策補進 ADR → #32。
 
-## now — P5 sprite 素材 / P7 未完成項目收斂
-P5: sprite 素材。工具側（規格、SOP、SP-7 機械驗收、SP-V.1 盲測頁）已就位，缺的是畫。
-P5 判準: 素材交付並通過 SP-7 機械驗收與 SP-V.1 盲測。
-P7: 〈未完成項目〉逐條收斂（卡在人的、不卡人的兩類），含 `src/core/` 的缺陷修補。
-P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由，或移到別的階段）。
+## now — P7 未完成項目收斂 / P9 播報強化 / P10 結構重構
+P7: 〈未完成項目〉「不卡人」那一類逐條收斂，含 `src/core/` 的缺陷修補與文件同步。已開票：`emotion.ts` 同類缺陷 → #30；文件與程式現況對齊 → #31；ADR-007 語音開關（Draft）→ #32。其餘不卡人的條目（A0-1、A0-6、A0-7、散落-2、散落-3、asset、A2-1、A2-3、A5-2、B7-6、B3-4，以及 P5 移來的 B2-1 凍結、B2-6 門檻、logo）由主管層逐批開票。「卡在人」那一類移到 P12。
+P7 判準: 〈未完成項目〉每一條都有處置——完成、作廢附理由，或移到 P11 / P12；每張票的 `npm run typecheck`、`npm run lint`、`npm run test:unit`、`npm run build` 全綠。
+P9: 播報強化——只靠 jest 單元測試、typecheck、lint、build 就能驗收，不新增相依、維持零後端（ADR-004）。第一批：嚴重度別名對應 → #35；跨 panel 偵測降級後可恢復（附錄-7）→ #36。第二批（第一批合入後開票）：靜音／值班時段、播報紀錄篩選與匯出、抖動告警（flapping）抑制。
+P9 判準: 每項功能都有可觀察的行為（panel 選項或畫面狀態）與單元測試；選項留空時行為與現在完全相同；`src/README.md` 與 `docs/ARCHITECTURE.md` 同步。
+P10: 結構重構——對外行為與既有測試不變。第一批：`ownershipMask` 只留一份 → #33；Grafana rules 回應的 panel 走訪三份合一 → #34。第二批（第一批合入後依序開票，避免同時改 `MascotPanel.tsx` 互撞）：導播收成深模組（`BroadcastDirector`）、樣式與工具函式移出、紀錄合併抽成純函式、語音開關抽成 hook 與補念佇列、斷句規則集中（先寫 golden 測試）。
+P10 判準: 每張票的既有測試不修改且全綠；以可機械驗證的數字收尾（例：`MascotPanel.tsx` 行數與 `useEffect` 數、重複實作只剩一處的 `grep` 結果）。
+
+## next — P11 1.0 準備
+P11: 1.0 的前置——有視線的素材（連同 B7-3 視線閒置回中央）、D2「先不上架 catalogue」的重議、logo 與 `plugin.json` metadata、簽署。
+
+## later — P12 卡在人的實機驗證、授權與 ADR 修訂
+P12: 〈未完成項目〉「卡在人」的那一類——B2-3 分層原始檔與授權書、D1 A1 衍生 blob、B3-3 憑證作廢、B7-1 / B7-4 什麼該公開、B4-1~B4-7 ADR-004 下一次修訂、B5-1 / B5-2 實機驗證。都需要專案主人裁定或親手操作，AI 不代處理。
 
 ## 未完成項目
 
@@ -53,7 +70,7 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 **已裁定**：D2 **先不上架公開 Grafana catalogue**（2026-10-02）—— 維持未簽署、以 `npm run package` 的 zip 自行安裝。
 理由：素材未交付（截圖只能拍點陣），且送審會公開 repo，D1 的歷史問題要先處理。
 
-### 卡在人
+### 卡在人（2026-10-14 起屬 P12；需要專案主人裁定或親手操作）
 
 **素材**
 
@@ -63,12 +80,12 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 
 - **B2-1　凍結比例** —— 凍結清單的數值在 docs/sprite/sprite-sheet-spec.md §2 都已到位，已廢除的兩項也已從 docs/sprite/production-sop.md 階段 1 劃掉。剩下的只是把規格檔頭「尚未凍結」改成「已凍結 YYYY-MM-DD」。凍結後改一個比例就是 18 格全部重畫，需要專案主人點頭；髮色（SP-0.8）屬可調的顏色，不擋凍結。
 - ~~**B2-10　吉祥物定稿**~~ ✅ **2026-10-05 完成**：專案主人的 Gemini 原圖（坐姿、雙手捧臉，不轉正面），BiRefNet 去背＋`face-edits.py` 從原圖像素改出閉嘴、張嘴、閉眼，以及表情 5 格（click 閃光＋小圓嘴、warning 大汗滴＋擔心嘴、critical 怒筋＋張大嘴、resolved 腮紅加深、pending 小汗滴）。ComfyUI 局部重繪試過，40px 的嘴眼上破圖，未採用。`assemble.mjs` fit 模式組裝，`SPRITE-CHECK: PASS`，開發環境 Grafana 深淺主題實看過；**專案主人在有語音的瀏覽器確認說話動嘴正常**。聲音：專案主人要小男孩的聲音 → 新增音高／語速選項、聲線部分比對、面板顯示目前聲線與「試聽」鈕（Web Speech 沒有童聲可選，靠男聲拉高音高；Windows 台灣男聲是 Zhiwei）。出處照實揭露 prompt 點名小埋（SP-9.7 依實改寫，專案主人裁定）。**視線不做**：這張圖的眼睛半閉、虹膜只露出約 6px 高，左右最多移 ±5px，換算到顯示尺寸只動 1–2 個螢幕像素，看不出來（`features.gaze = false`）。
-- **B2-2　自繪或委外、發包 brief** —— 要裁定自繪或委外，然後交出 brief：docs/sprite/production-sop.md 階段 2 的七項加 6b 硬數字，盲測固定每個非中央方向 10 題；不要求畫師交參數值。委外的話，書面著作權讓與或授權書的形式與歸檔位置要在發包時就約定好。這題就是 sprite-sheet-spec.md §10〈仍然開著〉的「master frame 由誰畫」。 **前置**：發包前必須先裁定 B7-5 髮色（現行色票照畫會被亮度夾制擋下）。
+- ~~**B2-2　自繪或委外、發包 brief**~~ **2026-10-14 作廢**：素材已於 2026-10-05 由專案主人以 Gemini 生成並定稿（B2-10），不再發包；前置的 B7-5 也已不適用。原文 —— 要裁定自繪或委外，然後交出 brief：docs/sprite/production-sop.md 階段 2 的七項加 6b 硬數字，盲測固定每個非中央方向 10 題；不要求畫師交參數值。委外的話，書面著作權讓與或授權書的形式與歸檔位置要在發包時就約定好。這題就是 sprite-sheet-spec.md §10〈仍然開著〉的「master frame 由誰畫」。 **前置**：發包前必須先裁定 B7-5 髮色（現行色票照畫會被亮度夾制擋下）。
 - **B2-3　分層原始檔、描邊變體、授權書歸檔** —— 三題一起裁：分層原始檔要不要進版控（SP-9.11；不進的話要在 docs/asset-provenance.md 註明存放位置與負責人，並寫明本 repo 無法單獨重建）；描邊走 SP-6.4 烘進（變體 A）還是 SP-6.7 執行期 drop-shadow（變體 B）；委外授權書放在哪。產製若用到生成式服務，要實讀其條款並逐字內嵌進版控（SP-9.5a/SP-9.6）。
 - **B2-4　交付後跑機械驗收** —— 素材交付四項：src/img/sprite/ 下的兩張 PNG 與 sprite-manifest.json，以及 docs/sprite/SOURCE-PROMPTS.md。驗收：node tools/check-sprite-sheets.mjs exit 0、sentinel 消失；.sprite-check/ 下的逐格診斷表、洋紅診斷圖，以及 SP-7.9 的四張聯絡表都要產出並經人工複核。同一批素材也要重量描邊估計器的偏差（docs/ROADMAP.md〈measureStrokeWidths〉）。
-- **B2-5　真素材的 SP-V.1 盲測** —— 用 tools/blind-test/（npm run blindtest）讀真的 directions sheet，門檻是整體 ≥85% 且任一方向不低於 60%。沒達標就把誤判的方向與被誤認成什麼回饋給畫師做局部修正，不得放行。這一關是人工測試，check-sprite-sheets.mjs 量不到。
+- ~~**B2-5　真素材的 SP-V.1 盲測**~~ **2026-10-14 作廢**：定稿素材不做視線（`features.gaze = false`，九個方向格是同一張臉），方向盲測在定義上無從通過；換成有視線的素材時隨 P11 重開。原文 —— 用 tools/blind-test/（npm run blindtest）讀真的 directions sheet，門檻是整體 ≥85% 且任一方向不低於 60%。沒達標就把誤判的方向與被誤認成什麼回饋給畫師做局部修正，不得放行。這一關是人工測試，check-sprite-sheets.mjs 量不到。
 - **B2-6　回填三個留白門檻** —— 第一批素材到貨後回填三個門檻：SP-7.1 格內不透明覆蓋率（起點 54.7%）與 SP-7.6 的 128px 眉線對比（暫定 0.25）目前只發 warn，校準後改成硬限；SP-7.8 pngquant 後的體積（每張 ≤900KB、合計 ≤1.2MB，以及 S=384 的退路）**已經是硬失敗**，要確認的是預算本身對真素材合不合理。改完拿交付素材重跑，必須仍然 exit 0。
-- ~~**B2-7　SpriteController / spriteAssets**~~ ✅ **2026-10-02 完成**：四層（視線／表情／嘴型／眨眼）、SP-8.7 四條降級、SP-8.10 定速 fallback、SP-8.12 click 420ms、pending 加速眨眼；25 條測試、9 個關鍵行為反向驗證。PR #8 複審後補修：點擊後 420ms 內換 avatar 會讓 click 卡住、420ms 內連點只有第一下有回饋、兩條 dispose 測試拔掉守門照樣綠（各補回歸測試並反向驗證）。開發環境 Grafana 實測：表情、視線、點擊反應都正確疊層。dead-zone 驗收與公式的矛盾已於 2026-10-04 解決：「離中心 60px」是估的，實測出界的是額頭不是臉頰；視線原點改為臉中心（SP-1.10 訂正），整張臉都在 dead zone 內，有測試釘住。**18 格實走（2026-10-04，開發環境 Grafana 13.2.2 + headless Chromium，記錄四層實際顯示過的格）**：方向格 0–8 全部、表情格 0／1／2／8、眨眼格 6／7 —— 18 格走到 15 格。**仍未實走**：表情格 3（resolved，開發環境的 PocAlwaysFiring 恆定告警不會恢復）與嘴型格 4／5（headless Chromium 沒有語音，`getVoices()` = 0，播報不會開始）。三格都有單元測試（`SpriteController.test.ts` 的 emotion → expr 與 mouth 兩組），缺的只是真環境目視：要在有語音的桌面瀏覽器按「啟用語音」聽一則播報，並讓一條告警恢復。
+- ~~**B2-7　SpriteController / spriteAssets**~~ ✅ **2026-10-02 完成**：四層（視線／表情／嘴型／眨眼）、SP-8.7 四條降級、SP-8.10 定速 fallback、SP-8.12 click 420ms、pending 加速眨眼；25 條測試、9 個關鍵行為反向驗證。PR #8 複審後補修：點擊後 420ms 內換 avatar 會讓 click 卡住、420ms 內連點只有第一下有回饋、兩條 dispose 測試拔掉守門照樣綠（各補回歸測試並反向驗證）。開發環境 Grafana 實測：表情、視線、點擊反應都正確疊層。dead-zone 驗收與公式的矛盾已於 2026-10-04 解決：「離中心 60px」是估的，實測出界的是額頭不是臉頰；視線原點改為臉中心（SP-1.10 訂正），整張臉都在 dead zone 內，有測試釘住。**18 格實走（2026-10-04，開發環境 Grafana 13.2.2 + headless Chromium，記錄四層實際顯示過的格）**：方向格 0–8 全部、表情格 0／1／2／8、眨眼格 6／7 —— 18 格走到 15 格。**仍未實走**：表情格 3（resolved，開發環境的 PocAlwaysFiring 恆定告警不會恢復）與嘴型格 4／5（headless Chromium 沒有語音，`getVoices()` = 0，播報不會開始）。三格都有單元測試（`SpriteController.test.ts` 的 emotion → expr 與 mouth 兩組），缺的只是真環境目視：要在有語音的桌面瀏覽器聽一則播報（「啟用語音」鈕已於 v0.2.1 由語音開關取代，見 #32），並讓一條告警恢復。
 - ~~**B2-8　兩個 sprite URL 選項**~~ ✅ **2026-10-02 完成**：`directionsImgUrl` / `reactionsImgUrl`，空字串時用打包的圖，填外部 URL 時顯示「自訂圖，對齊未驗證」；三條路徑（留空、相對路徑、壞路徑降級）以單元測試覆蓋，尚未在真 Grafana 裡各跑一次。
 - ~~**B2-9　驗收工具的五個盲點（PR #8 複審找到）**~~ ✅ **2026-10-02 完成**：下襬（`SP-2.8/下襬不透明`、`SP-2.8/下襬未清空`、`SP-6.5/下襬描邊`）、描邊連續（`SP-6.4/描邊缺口`）、眨眼蓋滿九個方向（`SP-7.4/眨眼漏線`；點擊格 `SP-7.4/點擊格漏線` 為 warn）三類硬失敗，加上 SP-2.15 色彩擴張與 SP-2.14 斜邊寬度兩條 warn。規格見 SP-7.7a。第一版暫定圖（`7f8933a`）實測全部會紅，現行暫定圖全綠。合成基準原本自己也違反下襬與眨眼兩條，已一併修正（下襬預設不描邊、眨眼修補塊蓋滿整隻眼），自測 156 → 167 條，描邊電池仍 20/20。**仍知的限制**：fixture 的羽化是 L1 斜坡，45° 讀 0.91px（現在會被 warn 記下，自測有一條釘住它）；改成歐氏斜坡會動到描邊電池的校準，另案。
 - ~~**B7-5　髮色亮度超出夾制（SP-0.8，角色設定）**~~ **2026-10-04 不再適用**：原角色已被藍鯨男孩取代（規格 SP-0.9），這個髮色不會再被畫。
@@ -78,7 +95,7 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 - **D1　A1 衍生 blob 是否從 main 歷史移除** —— main 可抵達的 24 個 commit 的 tree 仍含 `assets/a1-*`，且已推上 GitHub。移除＝改寫 `14a481d` 之後的全部 commit（71+ 個換 SHA）並 force-push main，屬破壞性操作、需逐次授權；GitHub 端還要另請 Support 清除。**先做便宜的那一步**：專案主人回想當初用的生成服務並實讀條款 —— 條款允許，改寫就不必做。
 - **B3-3　輪換或作廢 WEBHOOK_SECRET** —— WEBHOOK_SECRET 曾進過 Grafana 容器環境與 provisioning 檔，要由人輪換，讓舊值失效。不論 B3-1 怎麼裁都要做；AI 不代處理，也不編輯 .env。 本次（2026-10-02）刪除 contactpoints 後它已無任何消費者，作廢即可。
 - **B3-4　根目錄 `.env.example` 與 `docs/sample-grafana-firing.json` 的去留** —— 根 `.env.example` 全是已刪的 bridge/AIRI 設定（ADR-004 決策 7 拿它當 dormant 污染的反例）；`docs/sample-grafana-firing.json` 同屬舊架構。`monitoring/.env.example` 的 WEBHOOK_SECRET 三行已於 2026-10-02 隨 contactpoints 刪除拿掉。
-- **B7-1　`.claude/settings.json` 移出版控** —— .claude/settings.json 仍在公開版控裡：deny 12 條、ask 12 條，另有三條 /home/ubuntu/.claude/asp/hooks/ 絕對路徑的 hook。移出前要先替 deny 規則與 ship-gate 找好著落，而且不能把 pretooluse-ship-gate.sh 直接搬到全域（其他 repo 沒有 .asp-test-result.json）。.claude/skills/ 下的 11 個專案資產不要一起移。這是「什麼該公開」的問題，需專案主人裁定。
+- **B7-1　`.claude/settings.json` 移出版控** —— .claude/settings.json 仍在公開版控裡：deny 12 條、ask 12 條（三條 v4 hook 已於 asp-ng 接入時移除，2026-10-10）。移出前要先替 deny 規則與 ship-gate 找好著落，而且不能把 pretooluse-ship-gate.sh 直接搬到全域（其他 repo 沒有 .asp-test-result.json）。.claude/skills/ 下的 11 個專案資產不要一起移。這是「什麼該公開」的問題，需專案主人裁定。
 - **B7-4　`.config/AGENTS/` 四個檔的去留** —— A4-7 已讀完 .config/AGENTS/ 四個檔（instructions.md、e2e-testing.md、skills/build-plugin.md、skills/validate-plugin.md）：沒有本機絕對路徑、沒有憑證，內容是腳手架帶進來的公開文件摘要，建議四個都留在公開版控。需專案主人一句裁定，因為屬「什麼該公開」。這份審查結論目前只寫在退役檔裡，搬移時要一起帶走。
 
 **ADR-004 的下一次修訂**（2026-10-02 只授權了三處；以下同類、需另一次授權）
@@ -98,7 +115,7 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 - **B5-1　sandbox 下語音能否發聲（Windows 實機）** —— Frontend Sandbox 開啟時語音能不能用仍未驗，因為 headless 環境沒有聲線。需要在專案主人實際看 dashboard 的 Windows 11 / Chrome 上，用 SANDBOX_PLUGINS=augur-mascot-panel 開、關各跑一次 PocAlwaysFiring，記三件事：speechSynthesis 是否存在、getVoices() 筆數、有沒有聽到聲音。若 sandbox 下發不了聲要另做產品決定，因為官方建議開 sandbox。結果回填 ADR 需走 B4 的授權。
 - **B5-2　windows_exporter + 真規則跑 G-ADR004-2b** —— Windows 側還沒裝 windows_exporter（9182 無 listener）。G-ADR004-2 只用合成規則 vector(1)>0 驗過，真實指標能不能走到 panel 還沒驗。需要主機持有者以管理員身分跑 monitoring/windows/windows_exporter-install.ps1，再讓 rules-perf.yml 的真規則觸發；provisioning 熱重載後要整頁重新載入（hasAlertRules latch）。驗收：真實 CPU 告警被吉祥物念出來。
 
-### 不卡人（可直接做）
+### 不卡人（可直接做；屬 P7）
 
 **開發環境**
 - ~~**B3-2　開發環境的一次性清除（merge 後）**~~ ✅ **2026-10-02 完成**：PR #5 merge 後照 `monitoring/README.md`〈告警通知〉跑兩支 API DELETE（先政策樹 → 202、根 receiver 變 `empty`；再 contact point `augur_bridge_webhook` → 202）。驗收：`augur-bridge/webhook` 累計行數清除前 27,998、T+60s 27,999（Alertmanager 換設定前多一行，README 預告過）、T+180s 27,999 —— 兩次相同，停止累積。同日 main 的 CI e2e 在無 contactpoints/policies 的全新 volume 上全綠。
@@ -108,10 +125,10 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 - **A0-6　規格檔尾〈待人類決定〉逐條補狀態** —— docs/sprite/sprite-sheet-spec.md 檔尾〈待人類決定〉自規格 v1 以來沒更新過，六條已有答案卻沒有狀態標記：A1 出處（已退出版控）、setReaction?（已授權實作）、斗篷亮度、瀏海高度（SP-0.7 已裁定）、panel 版面重排（A3-5 已做）、情緒衰減（已實作）。這六條逐條標註並指向 §10〈已有答案〉；其餘四條（master frame 誰畫、分層原始檔進不進版控、生成服務條款、描邊變體）改指向 §10〈仍然開著〉。〈未決/未驗〉的 pending 轉換條目補一句指向 docs/measurements.md M-3。 先刪掉 §10〈仍然開著〉表內那行空行 —— 它讓第 3 到 6 項脫離表格。
 - **A0-7　P2-handoff 每一節都要有狀態** —— docs/handoff/P2-handoff.md 還有幾節沒有狀態：§二〈.asp-fact-check.md 待新增列〉、§三〈Review 指出但仍需你裁定〉表（ps1 供應鏈與 e2e 誤連 3000 已修，settings.json 與 ADR〈查不到〉第 6 項仍開著）、〈覆蓋缺口〉與〈小決定〉兩表、§四〈P4 必須 POC 實測的四項〉。兩條路擇一：逐條補狀態並改指向新的追蹤處；或整份退役 —— 退役前要先把 §二〈.asp-fact-check.md 待新增列〉的四列併進「散落-3」，並更正檔頭「只剩兩件」的說法。
 - **散落-2　「src/core 零修改」與「dedup forget 已作廢」已過期** —— src/core/ 已不是「273 行、零修改」：dedup.ts 在「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」加了 forget()，在「fix(panel): 會讓面板永久靜音的三條路徑…」加了 setWindow()，現在 335 行。要改的有：README.md 的 src/core 列；docs/ARCHITECTURE.md 的 src/core 列、〈關鍵設計〉兩處「零修改」，以及過期的 tools 列；P2-handoff §四的「dedup forget 已作廢」改成「已因真實 bug 實作」。之後別再寫死行數。
-- **散落-3　`.asp-fact-check.md` 補列** —— .asp-fact-check.md（本機、gitignore）在 2026-09-18 之後沒有新增任何列。以下幾件只寫在版控文件裡：CSP 結論（A0-5）、rules 端點四種失敗形狀（docs/measurements.md M-1）、pending 實測（M-3）、Grafana 12.3.0 到 13.2.2 的相容實測，以及 alertState 欄位在 12.4.0 改名（commit「fix(panel): Grafana 12.3.x 上靜默降級…」）。依 ASP 鐵則四補列，每列要有結論、一級來源與日期。 另補 P2-handoff §二〈待新增列〉的四列，以及 A2-3 更正後的 M-1 結論。新列用五欄格式（事實點／聲稱值／驗證來源／驗證結果／日期）。
+- **散落-3　`.asp-fact-check.md` 補列** —— .asp-fact-check.md（本機、gitignore）2026-10-02 起已有新列，但以下幾件仍只寫在版控文件裡：CSP 結論（A0-5）、rules 端點四種失敗形狀（docs/measurements.md M-1）、pending 實測（M-3）、Grafana 12.3.0 到 13.2.2 的相容實測，以及 alertState 欄位在 12.4.0 改名（commit「fix(panel): Grafana 12.3.x 上靜默降級…」）。依 ASP 鐵則四補列，每列要有結論、一級來源與日期。 另補 P2-handoff §二〈待新增列〉的四列，以及 A2-3 更正後的 M-1 結論。新列用五欄格式（事實點／聲稱值／驗證來源／驗證結果／日期）。
 - **asset　`docs/asset-provenance.md` 殘句與壞表格** —— 〈A1 出處調查〉末段仍寫「待專案主人回想服務」「在確認之前 A1 維持現狀（已在版控中）」，與同檔〈A1 已退出版控〉矛盾，標「2026-09-21 已被退出版控取代」。〈進版控的資產〉表的分隔列與資料列之間多一行空行，nami 與 logo.svg 兩列不會被渲染成表格。
 - **B7-4-附　e2e-testing.md 教的 GRAFANA_VERSION 在本 repo 無效** —— .config/AGENTS/e2e-testing.md 教人用 GRAFANA_VERSION / GRAFANA_IMAGE 跑 npm run server，以驗最低或最新版本。但本 repo 的 npm run server 指向 monitoring/docker-compose.yml，tag 寫死；那兩個變數只對刻意閒置的 .config/docker-compose-base.yaml 有效。照做會靜默跑在 13.2.2 上，得到一個假通過。.config/ 不能改，所以在根 README 或 tests/ 的註解寫明正確作法（12.3.x 那次的隔離 compose 實跑見 commit「fix(panel): Grafana 12.3.x 上靜默降級…」）。
-- **A4-3　plugin.json metadata** —— D2 已裁定**先不上架**（2026-10-02），`info.links` 不再是必要項。仍可做：description 寫的「2D sprite mascot」在素材交付前是診斷點陣，與 `src/README.md` Status 段對齊。改 plugin.json 要重啟 Grafana。
+- ~~**A4-3　plugin.json metadata**~~ **2026-10-14 併入 P11**：素材已交付，「診斷點陣」的說法過期；metadata 與 logo 一起在 1.0 準備時處理。原文 —— D2 已裁定**先不上架**（2026-10-02），`info.links` 不再是必要項。仍可做：description 寫的「2D sprite mascot」在素材交付前是診斷點陣，與 `src/README.md` Status 段對齊。改 plugin.json 要重啟 Grafana。
 
 **量測**
 - **A2-1　POC dashboard 的非預設選項** —— monitoring/grafana/provisioning/dashboards/augur-poc.json 的 panel 3 仍是 repeatFiringMin: 0，live 環境沒有任何 panel 走 repeatFiringMin 的重播路徑；這個路徑目前只有單元測試覆蓋。設成 1，並確認不干擾 docs/measurements.md M-3 的觀察方式與 tests/panel-speaks.spec.ts；若決定不設，就把理由寫下來。 原計畫也要求 panel 1 至少一欄刻意非預設（用來分辨換選項成功與否），現在 panel 1 六欄全是預設值；要嘛補，要嘛寫明由 panel 5 承擔。
@@ -202,7 +219,7 @@ P7 判準: 〈未完成項目〉每一條都有處置（完成、作廢附理由
 曾出現在容器環境變數與 provisioning 檔裡。**那應該由人輪換**，不論上面選哪一條。
 AI 不編輯 `.env`。
 
-## 未解決：`measureStrokeWidths` 的重寫，卡在「沒有有效的測試台」
+## `measureStrokeWidths` 的重寫（2026-09-29 已解：描邊電池 20/20；真素材的偏差重量見 B2-4）
 
 **現況**：`tools/lib/spriteChecks.mjs` 的 `measureStrokeWidths` 仍是「描邊帶面積 ÷ 剪影周長」。
 2026-09-22 的對抗性複審對它提出三條實質指控（都附了量測）：
@@ -386,6 +403,9 @@ selftest 126 / 126 零回歸，完整閘門全綠，9 格 172 ms，**沒有動�
 | 文件 | 內容 |
 |---|---|
 | `docs/adr/ADR-004-grafana-panel-plugin-mascot.md` | 決策權威。與本檔衝突時**以 ADR 為準**。 |
+| `docs/adr/ADR-005-*.md` | 選填外部語音（Accepted 2026-10-06） |
+| `docs/adr/ADR-006-*.md` | 播報紀錄（Accepted 2026-10-14） |
+| `docs/measurements.md` | live Grafana 實測 M-1～M-3（告警來源失敗形狀、跨格滲色、pending 轉換） |
 | `docs/handoff/remaining-plan.md` | **已退役（2026-10-02）**。仍有效的項目已遷入本檔〈未完成項目〉；保留為歷史 |
 | `docs/sprite/sprite-sheet-spec.md` | 精靈圖規格。發包給畫師時給這份 + `production-sop.md` + `sprite-manifest.example.json`。 |
 | `docs/asset-provenance.md` | 美術資產的出處與授權；含 A1 退出版控的完整記錄 |
