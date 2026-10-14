@@ -1691,9 +1691,19 @@ console.log('\n[3f] ownershipMask 只有一份（#33）');
   // 本檔（或本註解）若把那串字原樣寫出來，自己就會變成第二筆，
   // 讓驗收指令與這條斷言雙雙對著一個不存在的重複報警。
   const DEF = ['function', 'ownershipMask'].join(' ');
-  const defs = sources.filter((f) => fs.readFileSync(f, 'utf8').includes(DEF));
-  ok('tools/ 底下只有一份 ownershipMask 實作', defs.length === 1 && defs[0].endsWith('lib/spriteChecks.mjs'),
-    defs.map((f) => path.relative(ROOT, f)).join(', ') || '一份都沒有');
+  // ⚠️ 數的是**行**而不是檔。只數檔的話，第二份實作如果就放在 `lib/spriteChecks.mjs`
+  // 自己裡面（換個名字就行，needle 是前綴比對），命中檔數仍是 1 且仍指向這個檔，
+  // 這條就綠著放行 —— 而 AC-1 那條 grep 會回兩筆。實測過：同檔補一份就是這個結果。
+  const defs = sources.flatMap((f) => {
+    const rel = path.relative(ROOT, f);
+    return fs
+      .readFileSync(f, 'utf8')
+      .split('\n')
+      .flatMap((line, i) => (line.includes(DEF) ? [`${rel}:${i + 1}`] : []));
+  });
+  ok('tools/ 底下只有一份 ownershipMask 實作（逐行計數，同檔第二份也要抓到）',
+    defs.length === 1 && defs[0].startsWith('tools/lib/spriteChecks.mjs:'),
+    defs.join(', ') || '一份都沒有');
   const cliSrc = fs.readFileSync(path.join(ROOT, 'tools/check-sprite-sheets.mjs'), 'utf8');
   ok('check-sprite-sheets.mjs 匯入它而不是自己重建一份',
     /^\s*ownershipMask,$/m.test(cliSrc) && /from '\.\/lib\/spriteChecks\.mjs'/.test(cliSrc) && !/ownershipMaskFor/.test(cliSrc));
