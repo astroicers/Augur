@@ -38,6 +38,8 @@ jest.mock('../../sources/historyFetcher', () => ({
 /** createSpeaker 的攔截器：記下 enqueue 進來的 plan，並把 events 留給測試觸發。 */
 const spoken: BroadcastPlan[] = [];
 let capturedEvents: SpeakerEvents | undefined;
+/** 語音開關的測試要看 unlock／stop 有沒有被呼叫。 */
+const speakerCalls = { unlock: 0, stop: 0 };
 
 jest.mock('../../speech/speaker', () => ({
   ...jest.requireActual('../../speech/speaker'),
@@ -46,8 +48,12 @@ jest.mock('../../speech/speaker', () => ({
     return {
       enqueue: (plan: BroadcastPlan) => spoken.push(plan),
       pending: () => 0,
-      unlock: () => {},
-      stop: () => {},
+      unlock: () => {
+        speakerCalls.unlock++;
+      },
+      stop: () => {
+        speakerCalls.stop++;
+      },
       dispose: () => {},
     };
   }),
@@ -98,6 +104,13 @@ const OK = { state: 'ok', panelId: 7, dashboardUID: 'dash-1' };
 beforeEach(() => {
   spoken.length = 0;
   capturedEvents = undefined;
+  speakerCalls.unlock = 0;
+  speakerCalls.stop = 0;
+  try {
+    window.localStorage.clear();
+  } catch {
+    /* jsdom 一定有 localStorage；保險起見 */
+  }
   mockedFetch.mockReset();
   mockedHistory.mockReset();
   mockedHistory.mockRejectedValue(new Error('history not mocked in this test'));
@@ -1023,4 +1036,122 @@ test('紀錄模式下新的在上（依狀態變化的時間）', async () => {
 
   const t = view.container.textContent ?? '';
   expect(t.indexOf('newer')).toBeLessThan(t.indexOf('older'));
+});
+
+// ─── 語音開關（每個瀏覽器各自的靜音，存在本機） ───────────────────────────────────
+
+const MUTE_KEY = 'augur-mascot-panel.muted';
+
+test('語音開關：預設「語音開」；按下變「靜音中」，靜音時告警照樣進清單但不念', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '很吵的告警' }]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  // 等第一次（OK）的評估跑完：還在跑時導播 effect 會跳過下一輪（既有的 busy 守門）。
+  await settle();
+
+  const toggle = view.getByTestId('voice-toggle');
+  expect(toggle.textContent).toContain('語音開');
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(toggle);
+  expect(view.getByTestId('voice-toggle').textContent).toContain('靜音中');
+  expect(view.getByTestId('voice-toggle').getAttribute('aria-pressed')).toBe('true');
+
+  view.rerender(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(view.container.textContent).toContain('很吵的告警'));
+  await settle();
+  expect(spoken).toEqual([]);
+});
+
+test('語音開關：靜音記在本機，重新整理（重新掛載）後還是靜音', async () => {
+  window.localStorage.setItem(MUTE_KEY, '1');
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  expect(view.getByTestId('voice-toggle').textContent).toContain('靜音中');
+  await settle();
+});
+
+test('語音開關：切回「語音開」時叫醒語音引擎，之後的告警照念', async () => {
+  window.localStorage.setItem(MUTE_KEY, '1');
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '要念的告警' }]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('語音開');
+  expect(speakerCalls.unlock).toBeGreaterThanOrEqual(1);
+  expect(window.localStorage.getItem(MUTE_KEY)).toBe('0');
+
+  view.rerender(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.map((p) => p.text).join()).toContain('要念的告警'));
+});
+
+test('語音開關：切到靜音時，正在念的那句立刻停掉', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  const before = speakerCalls.stop;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(speakerCalls.stop).toBeGreaterThan(before);
+});
+
+test('語音開關：本機儲存讀寫丟例外時照樣能用（預設語音開，切換仍生效）', async () => {
+  const get = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new Error('blocked');
+  });
+  const set = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('blocked');
+  });
+  try {
+    mockedFetch.mockResolvedValue([]);
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    expect(view.getByTestId('voice-toggle').textContent).toContain('語音開');
+    fireEvent.click(view.getByTestId('voice-toggle'));
+    expect(view.getByTestId('voice-toggle').textContent).toContain('靜音中');
+    await settle();
+  } finally {
+    get.mockRestore();
+    set.mockRestore();
+  }
+});
+
+test('語音開關：panel 設定把語音關掉時不顯示開關', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK, options: { enableTTS: false } })} />);
+  expect(view.queryByTestId('voice-toggle')).toBeNull();
+  await settle();
+});
+
+/**
+ * EKS 實測（2026-10-14）：頁面打開時告警已在燒，吉祥物馬上念，但使用者還沒在頁面上點過 ——
+ * 瀏覽器回 `not-allowed`，那一句就此作廢（dedup 已記為念過），之後按什麼都救不回來。
+ * 這時按鈕若只是「開／靜音」二態，使用者按下去反而變成靜音。
+ */
+test('瀏覽器擋下發聲（not-allowed）：按鈕寫「點一下啟用語音」，按下重念被擋的句子，且不會變成靜音', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '被擋掉的告警' }]);
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.map((p) => p.text).join()).toContain('被擋掉的告警'));
+  const blockedPlan = spoken[spoken.length - 1]!;
+
+  act(() => capturedEvents?.onError?.('not-allowed', blockedPlan));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+
+  const before = spoken.length;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(spoken.length).toBe(before + 1);
+  expect(spoken[spoken.length - 1]!.text).toBe(blockedPlan.text);
+  expect(speakerCalls.unlock).toBeGreaterThanOrEqual(1);
+  expect(view.getByTestId('voice-toggle').getAttribute('aria-pressed')).toBe('false');
+  expect(window.localStorage.getItem(MUTE_KEY)).not.toBe('1');
+});
+
+test('被擋下的「試聽」不重念 —— 那只是測試聲音，不是告警', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  fireEvent.click(view.getByTestId('tts-preview'));
+  const previewPlan = spoken[spoken.length - 1]!;
+  act(() => capturedEvents?.onError?.('not-allowed', previewPlan));
+
+  const before = spoken.length;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(spoken.length).toBe(before);
 });

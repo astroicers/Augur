@@ -106,6 +106,9 @@ ADR-002 有兩個抽象被 ADR-004 明文繼承，不隨 supersede 作廢：
      改成 loki 或 prometheus 時，panel 會寫明讀不到，並只列本分頁念過的句子；設成 `multiple` 時，要 annotations 是其中之一才完整。
    - Viewer 就讀得到，不需要額外權限。保存多久由 Grafana 決定（`[unified_alerting.state_history.annotations] max_age` 與 `max_annotations_to_keep`，預設都是永久）。
    - 舊紀錄的摘要是用規則**現在的**樣板填的：規則事後改過措辭，舊紀錄會顯示新的措辭。
+8. **語音開關**：panel 標題列的「🔊 語音開／🔇 靜音中」只影響**自己這台瀏覽器**，重新整理後仍記得；
+   靜音時表情與紀錄照常更新，只是不念。瀏覽器在你點過頁面之前不准發聲，被擋下時按鈕會寫「🔊 點一下啟用語音」，
+   按下會把剛才被擋掉的句子補念，不會變成靜音。panel 設定的「開啟語音」關掉時，按鈕不顯示。
 
 ## 開發
 

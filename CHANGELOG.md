@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 — Unreleased
+
+### A voice button you can actually switch
+
+- The **Enable speech** button is replaced by a voice switch for the person watching:
+  **🔊 語音開** / **🔇 靜音中**. It mutes only this browser, is remembered after a reload, and
+  leaves the expressions and the record running. The old button only woke the speech engine and
+  never changed, so it looked like a switch that did nothing.
+- If the browser refused to speak because nobody had clicked the page yet (it shows
+  `not-allowed`), the button reads **🔊 點一下啟用語音**. Clicking it speaks the sentences that
+  were refused. Before, an alert that was already firing when the page opened was never spoken
+  in that tab, even after clicking.
+
 ## 0.2.0 — 2026-10-13
 
 ### The mascot keeps a record of what it said (ADR-006)

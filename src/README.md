@@ -168,8 +168,21 @@ shows **自訂圖，對齊未驗證** ("custom sheet, alignment not verified"). 
 fails to load or does not match, the character keeps tracking the cursor without
 expressions; if the directions sheet fails, the panel falls back to the dot grid.
 
-Browsers may require a user gesture before they will speak. The panel shows an
-**Enable speech** button when it has room for one; clicking it once per tab is enough.
+The header has a **voice button** that belongs to the person watching, not to the
+dashboard:
+
+- **🔊 語音開** (voice on) / **🔇 靜音中** (muted): click to mute or unmute *this
+  browser*. It is remembered across reloads (stored locally) and applies to every
+  mascot panel in that browser. While muted the mascot still changes expression and the
+  record still updates; it just does not speak. A wall display can stay on while a
+  person at their desk stays quiet.
+- **🔊 點一下啟用語音** (click to enable voice): browsers refuse to speak until someone
+  has interacted with the page. If an alert was already firing when the page opened,
+  its sentence was refused. The button says so, and clicking it speaks the refused
+  sentences instead of muting.
+
+The panel option *Enable speech* still turns speech off for everyone viewing the
+dashboard; when it is off the voice button is hidden.
 
 ## License
 
