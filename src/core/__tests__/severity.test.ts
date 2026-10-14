@@ -1,4 +1,4 @@
-import { meetsMin, rankOf, isKnownSeverity } from '../severity';
+import { meetsMin, rankOf, isKnownSeverity, normalize } from '../severity';
 
 test('meetsMin: 空門檻不過濾（全部放行）', () => {
   expect(meetsMin('info', '')).toBe(true);
@@ -97,4 +97,17 @@ test('isKnownSeverity: 非字串回 false,不拋', () => {
   expect(isKnownSeverity('__proto__')).toBe(false);
   // 既有行為照舊:前後空白與大小寫都容忍。
   expect(isKnownSeverity('  Critical ')).toBe(true);
+});
+
+// ---- #30：normalize 已匯出（emotion.ts 共用同一套正規化規則）----
+
+test('normalize: 字串去空白轉小寫，非字串/缺值回 null', () => {
+  expect(normalize('critical')).toBe('critical');
+  expect(normalize(' CRITICAL ')).toBe('critical');
+  expect(normalize('\tWarning\n')).toBe('warning');
+  expect(normalize('')).toBe('');
+  expect(normalize('   ')).toBe('');
+  for (const v of [undefined, null, 0, 42, NaN, {}, [], true, Symbol('x'), () => 'x']) {
+    expect(normalize(v)).toBeNull();
+  }
 });

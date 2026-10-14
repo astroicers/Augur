@@ -28,8 +28,14 @@ const RANK = new Map<string, number>([
   ['unknown', 0],
 ])
 
-/** 正規化成查表鍵;非字串回 `null`(查不到 → 排名 0)。 */
-function normalize(severity: unknown): string | null {
+/**
+ * 正規化成查表鍵;非字串回 `null`(查不到 → 排名 0)。
+ *
+ * 匯出是為了讓 `core/emotion.ts` 的 `severityToEmotion` 共用同一套規則(#30 AC-4):
+ * 「怎麼算同一個嚴重度」只能有一份定義,否則兩邊會各自漂移
+ * (例如一邊 trim 一邊不 trim),同一筆告警就會出現排名與表情不一致。
+ */
+export function normalize(severity: unknown): string | null {
   return typeof severity === 'string' ? severity.trim().toLowerCase() : null
 }
 
