@@ -1,10 +1,10 @@
-<!-- ADR-006 | Status: FIRM -->
+<!-- ADR-006 | Status: Accepted -->
 # ADR-006：播報紀錄 —— 以 Grafana 告警狀態歷史當吉祥物的持久紀錄（唯讀、零後端）
 
 | 欄位 | 值 |
 |------|----|
-| **狀態** | `FIRM` |
-| **日期** | 2026-10-13（提出 2026-10-13）|
+| **狀態** | `Accepted` |
+| **日期** | 2026-10-14（提出 2026-10-13）|
 | **決策者** | astroicers |
 
 > **狀態說明**：`Draft`（**禁止實作生產代碼**）→ `FIRM`（POC 驗證）→ `Accepted`（人類審核放行）。**AI 不可自行升級狀態**（ASP 鐵則）。
@@ -18,6 +18,12 @@
 > 回覆逐字：**「升 FIRM，開始實作」**。
 > 升 FIRM 而非 Accepted：同 ADR-004／005 —— FIRM 解除「Draft 禁止實作」，POC gate 要等程式寫出來才跑得動，
 > 「POC 未跑」誠實留在檔上。**人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
+
+> ⬆️ **由 `FIRM` 升 `Accepted`（2026-10-14）**：astroicers 授權（`/asp:approve-adr` 流程，於對話中回覆）。
+> 看過的摘要項目：7 章、決策 7 條；Verification Evidence V-1～V-9；POC gate **G-ADR006-1～5 ✅**（本機 12.4.12、Viewer、`1988fc4` 的 build）
+> 與 **G-ADR006-6 ✅**（EKS 實機，見證據表）；獨立複審三輪後 PASS（19／0）；無 `roadmap-ref`（repo 既有慣例）；
+> 自 FIRM 以來 5 個 commit（實作、兩輪複審修正、證據重跑、文件修正）；升級後仍留檔的〈待驗風險〉6 條。
+> 回覆逐字：**「授權升 Accepted (Recommended)」**。**人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
 
 ## 痛點 / 需求
 
@@ -173,7 +179,7 @@ Grafana 預設**永久保存**（`[unified_alerting.state_history.annotations] m
 | G-ADR006-3 | ✅ | 載入時念出 5 句，**全部是當下正在燒的規則**的「偵測到」、沒有任何舊紀錄被念；admin 與 Viewer 同時看到 35 條、逐條相同；重新整理後 36 條（新增 1 條翻轉紀錄），**先前 35 條無一遺失** |
 | G-ADR006-4 | ✅ | 時間範圍 6 小時 35 條、2 分鐘 2 條；篩選「p2」剩 2 條且全部含 p2 |
 | G-ADR006-5 | ✅ | state history backend 設成 loki，以 Viewer 打開：「讀不到告警歷史：Grafana 的告警歷史存在 loki，不是 annotations。只顯示本分頁的播報。」 |
-| G-ADR006-6 | ⏳ | 待 EKS 上線；依使用者規則以 eks-infra issue 交辦 |
+| G-ADR006-6 | ✅ | **EKS 實機（2026-10-14，Grafana 12.4.12，0.2.0／0.2.1）**：使用者以瀏覽器確認試用 dashboard 進入紀錄模式（篩選框在、無降級提示）；SelfTest 經 eks-infra#1188 開啟後，「偵測到告警：AugurMascotSelfTest…」出現在紀錄（11:15:10，時間早於開頁，證明讀自 Grafana 而非分頁），經 #1192 改回暫停後「告警已恢復」亦進紀錄且與念的一致；重新整理後仍在；Discord 全程未收到（靜音路由有效）。結案：eks-infra#1184、#1190 |
 
 另：既有 e2e（G-ADR004-1／-2）在開發環境 13.2.2 上全過；13.2.2 上紀錄模式啟用（篩選框在、無降級提示）。
 
