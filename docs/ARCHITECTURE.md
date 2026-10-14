@@ -29,6 +29,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                                  │
                                  ▼  ParsedAlert[]
                       src/components/MascotPanel.tsx（導播）
+                        ├ core/severityAliases.ts  resolveSeverity 前置正規化（別名 → 標準嚴重度）
                         ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
                         ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
@@ -86,10 +87,17 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options（`src/panelOptions.ts`）：`minSeverity`、`repeatFiringMin`、
+Panel options（`src/panelOptions.ts`）：`minSeverity`、`severityAliases`、`repeatFiringMin`、
 `fallbackSeverity`、`alertLang`、`enableTTS`、`ttsVoice`（可只填名稱的一段）、`ttsPitch`、`ttsRate`、`directionsImgUrl`、`reactionsImgUrl`。
 後兩個預設空字串（= 內建素材，不得寫死路徑：production 檔名是 `[hash][ext]`）；
 填了外部 URL，panel 會標「自訂圖，對齊未驗證」（SP-7.16）。**沒有尺寸選項**，stage 邊長由 SP-1.8 自動算。
+
+`severityAliases`（#35）把自家的嚴重度 label 接到標準嚴重度上：`P1=critical, sev2=warning`。
+解析在 `core/severityAliases.ts`（純函式，格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報）。
+**不附內建別名表**，留空即與沒有這個選項時完全相同。別名以**前置正規化**的形式生效 ——
+導播層先 `resolveSeverity` 再餵給 `rankOf`/`meetsMin`/`severityToEmotion`，
+那三個純函式一律不收設定參數（`severityToEmotion` 的純函式語意是 2026-09-18 的人類裁定）。
+播報句與 `BroadcastPlan.severity` 保留原始 label。
 
 **Threshold 不在這裡** —— ADR-004 決策 2 要求走 standard field config
 （`fieldConfig.defaults.thresholds`），自訂 option 會失去 overrides 與原生編輯 UI。

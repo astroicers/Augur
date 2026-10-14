@@ -154,6 +154,7 @@ The panel's own options:
 | Option | Default | What it does |
 |---|---|---|
 | Minimum severity | all | Only speak alerts at or above this severity. Recovery messages ignore this — if it announced the problem, it announces the recovery. |
+| Severity aliases | empty (no aliases) | Map your own severity labels onto the standard ones (`critical`, `error`, `warning`, `info`, `unknown`) so that the threshold above and the expressions can read them: `P1=critical, sev2=warning, disaster=critical`. Case and surrounding spaces are ignored. There are **no built-in aliases** — left empty, nothing is mapped and behaviour is exactly as it was. Malformed entries (no `=`, unknown target, duplicate alias) are skipped and the rest still apply. The spoken sentence keeps the original label, so an alert labelled `P1` is still announced as `P1`. |
 | Repeat interval | 0 (never) | How often to re-announce an alert that is still firing. |
 | Fallback severity | `critical` | Severity to assume when the rules endpoint cannot be reached. That endpoint carries no stability guarantee, so failing to reach it is an expected outcome rather than an error. |
 | Language | Chinese | Language of the spoken text. |

@@ -2,6 +2,7 @@
  * ADR-006：播報紀錄。測資取自 2026-10-13 Grafana 12.4.12 實測回傳的形狀（ADR-006 V-2／V-4）。
  */
 import { buildBroadcastPlan } from '../../core/format';
+import { parseSeverityAliases } from '../../core/severityAliases';
 import { createPanelAlertSource } from '../panelAlerts';
 import {
   HISTORY_DISPLAY_LIMIT,
@@ -338,5 +339,27 @@ describe('parseRulerConditions', () => {
 
   test('形狀不對就回空表', () => {
     expect(parseRulerConditions(null, DASH, PANEL)).toEqual(new Map());
+  });
+});
+
+/**
+ * #35:紀錄清單與播報吃同一張別名表。兩邊判得不一樣的話,會出現
+ * 「念過但紀錄裡沒有」(或反之)——紀錄的門檻本來就刻意與播報同一個 `meetsMin`。
+ */
+describe('historyToEntries 的嚴重度別名', () => {
+  // severity 取自 annotation text 的 label（它贏過 template 的值），所以改那裡。
+  const p1Ann = () => ann({ text: MEM_TEXT.replace('severity=warning', 'severity=P1') });
+
+  test('沒給別名表時 P1 走 unknown,被 warning 門檻擋掉（與先前完全相同）', () => {
+    const out = historyToEntries([p1Ann()], templates(), { minSeverity: 'warning', lang: 'zh' });
+    expect(out.entries).toHaveLength(0);
+  });
+
+  test('給了別名表,P1 過得了門檻、表情是 critical,而句子裡還是原始 label', () => {
+    const aliases = parseSeverityAliases('p1 = CRITICAL').aliases;
+    const out = historyToEntries([p1Ann()], templates(), { minSeverity: 'warning', lang: 'zh', aliases });
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0]!.plan.emotion).toBe('critical');
+    expect(out.entries[0]!.text).toContain('嚴重度 P1');
   });
 });

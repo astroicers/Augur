@@ -5,6 +5,7 @@ import { useStyles2, useTheme2 } from '@grafana/ui';
 import type { MascotPanelOptions } from '../panelOptions';
 import type { BroadcastPlan, Emotion } from '../core/types';
 import { meetsMin } from '../core/severity';
+import { parseSeverityAliases, resolveSeverity } from '../core/severityAliases';
 import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
 import { createPanelAlertSource, type AlertStateLike, type PanelAlertSource } from '../sources/panelAlerts';
@@ -319,6 +320,13 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 舊 dashboard 存的選項沒有這兩欄；Grafana 會補預設值，但不靠它。
   const ttsEndpoint = (options.ttsEndpoint ?? '').trim();
   const ttsTimeoutSec = options.ttsTimeoutSec ?? 30;
+  // 嚴重度別名（#35）。舊 dashboard 的 JSON 沒有這個鍵 → 空字串 → 空表 → resolveSeverity
+  // 是恆等函式，整條導播與門檻的行為與沒有這個選項時完全相同。
+  // ⚠️ 相依陣列裡放的是**設定字串**，解析放在 effect 內 —— 解析結果是 `Map`，
+  // 每次 render 都是新的物件參考，進了 deps 就會讓導播與紀錄兩個 effect 每輪重跑
+  // （重新評估、重新打 history 端點）。D10 那條「一律 useRef 而非 useMemo」擋的是
+  // 有狀態的物件；這裡連 memo 都不需要，解析是幾次 split，一輪評估跑一次就好。
+  const severityAliasSpec = options.severityAliases ?? '';
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';
@@ -727,6 +735,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     }
     busyRef.current = true;
 
+    const severityAliases = parseSeverityAliases(severityAliasSpec).aliases;
     const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
     // ⚠️ **dashboard uid 不能只從 alertState 拿。** alertState 是 `@internal`，
     // 而它的形狀**真的在 minor 版之間變過**（2026-10-01 實測，Grafana 原始碼逐 tag 比對）：
@@ -744,13 +753,15 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         for (const a of alerts) {
           // 順序與舊 server.ts 相同：先過濾、再防洪、最後才組播報計畫。
           // resolved 不受嚴重度門檻影響 —— 播過 firing 就該播恢復。
-          if (a.status === 'firing' && !meetsMin(a.severity, minSeverity)) {
+          // 別名（#35）在過濾**之前**生效，且門檻與表情吃的是同一次解析結果 ——
+          // 兩邊各自套別名遲早會漂成「排名達標但表情不對」。
+          if (a.status === 'firing' && !meetsMin(resolveSeverity(a.severity, severityAliases), minSeverity)) {
             continue;
           }
           if (!dedup.shouldSpeak(a)) {
             continue;
           }
-          const plan = buildBroadcastPlan(a, alertLang);
+          const plan = buildBroadcastPlan(a, alertLang, severityAliases);
           plans.push({
             key: `${a.fingerprint}:${a.status}:${plans.length}:${Date.now()}`,
             when: new Date().toLocaleTimeString(),
@@ -783,7 +794,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       .finally(() => {
         busyRef.current = false;
       });
-  }, [data, minSeverity, alertLang]);
+  }, [data, minSeverity, alertLang, severityAliasSpec]);
 
   // ADR-006：每次 panel data 刷新就重讀一次這個 panel 的告警歷史。
   // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進 speakerRef / dedup**（決策 5）——
@@ -808,7 +819,13 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       : Promise.reject(new Error('不在已存檔的 dashboard 裡'));
     // 過期的回應（期間又發了新的讀取）一律丟掉，不論它比新的早到還是晚到。
     void job
-      .then((h) => historyToEntries(h.raw, h.templates, { minSeverity, lang: alertLang }))
+      .then((h) =>
+        historyToEntries(h.raw, h.templates, {
+          minSeverity,
+          lang: alertLang,
+          aliases: parseSeverityAliases(severityAliasSpec).aliases,
+        })
+      )
       .then(
         (result) => {
           if (!cancelled && seq === historySeqRef.current) {
@@ -829,7 +846,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => {
       cancelled = true;
     };
-  }, [data, id, minSeverity, alertLang]);
+  }, [data, id, minSeverity, alertLang, severityAliasSpec]);
 
   // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
   // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。

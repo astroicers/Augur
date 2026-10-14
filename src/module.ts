@@ -29,6 +29,15 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
           ],
         },
       })
+      .addTextInput({
+        // #35。刻意不附內建別名表：猜一張表會讓現有使用者升版後行為改變。
+        path: 'severityAliases',
+        name: '嚴重度別名',
+        description:
+          '把自家的嚴重度 label 對到標準嚴重度（critical/error/warning/info/unknown），讓門檻與表情判得出來。格式 `別名=標準嚴重度`，用逗號分隔，例如 P1=critical, sev2=warning, disaster=critical。大小寫與空白不計。留空 = 不做任何對應。格式錯誤的項目會被略過，其餘照常生效。',
+        defaultValue: DEFAULT_OPTIONS.severityAliases ?? '',
+        settings: { placeholder: 'P1=critical, sev2=warning' },
+      })
       .addNumberInput({
         path: 'repeatFiringMin',
         name: '重播間隔（分鐘）',

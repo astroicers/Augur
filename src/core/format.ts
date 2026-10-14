@@ -6,6 +6,7 @@
  */
 import type { AlertLang, BroadcastPlan, ParsedAlert } from './types'
 import { severityToEmotion } from './emotion'
+import { resolveSeverity, type SeverityAliasMap } from './severityAliases'
 
 export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
   return lang === 'en' ? formatEn(a) : formatZh(a)
@@ -15,12 +16,22 @@ export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
  * ParsedAlert → BroadcastPlan（ADR-002 §1 的事件契約，由 ADR-004 決策 5 明文繼承）。
  * text 重用 formatAlert，emotion 由 severityToEmotion 映射。
  * instance/value 只在有值時帶上（配合 strict / noUncheckedIndexedAccess）。
+ *
+ * `aliases`（#35，選填）是嚴重度別名表。它**只影響 emotion**：導播層在這裡先把
+ * `P1` 這類 label 正規化成標準嚴重度，再餵給 `severityToEmotion` —— 那個函式本身
+ * 不收設定參數（2026-09-18 的裁定要它維持「只是 severity 的純函式」）。
+ * `text` 與 `severity` 照舊帶**原始** label：告警上寫的是 `P1`，念成 `critical`
+ * 會讓聽到的人對不上 Grafana 裡看到的那一則。省略或空表 → 與先前完全相同。
  */
-export function buildBroadcastPlan(a: ParsedAlert, lang: AlertLang = 'zh'): BroadcastPlan {
+export function buildBroadcastPlan(
+  a: ParsedAlert,
+  lang: AlertLang = 'zh',
+  aliases?: SeverityAliasMap
+): BroadcastPlan {
   return {
     text: formatAlert(a, lang),
     severity: a.severity,
-    emotion: severityToEmotion(a.severity, a.status),
+    emotion: severityToEmotion(resolveSeverity(a.severity, aliases), a.status),
     name: a.name,
     status: a.status,
     ...(a.instance !== undefined ? { instance: a.instance } : {}),

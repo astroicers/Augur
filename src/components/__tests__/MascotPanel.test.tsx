@@ -1288,3 +1288,30 @@ test('N1：外部語音被擋，按一下後變回「語音開」，再按一下
   act(() => capturedEvents?.onVoice?.(blockedLabel));
   expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
 });
+
+// ---------------------------------------------------------------------------
+// #35：嚴重度別名的接線。這支檔案是導播管線唯一的匯流處 ——
+// 別名若只進了 core/ 而沒接上 effect，core 的測試照樣全綠而面板行為毫無變化。
+// ---------------------------------------------------------------------------
+
+test('#35：選項留空時 P1 這類 label 照舊被門檻擋掉（AC-1 的接線面）', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'Pager', severity: 'P1', summary: '值班被叫起來' }]);
+  render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await settle();
+  // OPTIONS.minSeverity = 'warning'；P1 查不到 → 排名 0 → 不放行。
+  expect(spoken).toHaveLength(0);
+});
+
+test('#35：設了 severityAliases，P1 過得了門檻、表情吃別名，句子保留原始 label', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'Pager', severity: 'P1', summary: '值班被叫起來' }]);
+  render(
+    <MascotPanel {...props({ alertState: ALERTING, options: { severityAliases: ' p1 = CRITICAL , 亂寫 ' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken).toHaveLength(1);
+  // 門檻與表情都以 critical 判斷；格式錯誤的那一項被略過而不影響合法的那一項。
+  expect(spoken[0]!.emotion).toBe('critical');
+  expect(spoken[0]!.severity).toBe('P1');
+  expect(spoken[0]!.text).toContain('嚴重度 P1');
+});
+
