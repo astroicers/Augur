@@ -152,6 +152,7 @@ Panel options 共 **12 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 | **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
 | ADR-005 | 選填的外部語音服務（OpenAI 相容 TTS，參考服務為 Qwen3-TTS 年輕男聲），Web Speech 保留為預設與降級；修訂 ADR-004 決策 4 | **Accepted**（2026-10-06） |
 | ADR-006 | 播報紀錄：以 Grafana 告警狀態歷史當吉祥物的持久紀錄（唯讀、零後端）；修訂 ADR-004 決策 2 | **Accepted**（2026-10-14） |
+| ADR-007 | 語音開關：每個瀏覽器各自靜音（localStorage），被 autoplay 擋下的句子 10 分鐘內可補念、同一則只補最後狀態；修訂 ADR-004 決策 4 | **Retrospective**（2026-10-14，v0.2.1 的回溯紀錄）|
 | ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
 | ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded（**§1／§2 被 ADR-004 決策 5 明文繼承**） |
 | ADR-003 | 前端 visual-web-stack | Superseded |
@@ -159,6 +160,9 @@ Panel options 共 **12 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 ADR-004 的 5 個 POC gate 全數 PASS，機械證據回填在該檔的 Verification Evidence。
 ADR-006 的 6 個 POC gate 全數 PASS（G-ADR006-6 於 EKS 實機）。
 ADR-001／002 引用的 `broadcaster-spikes/` 在 repo 中已不存在，那兩份的 POC 證據無法複驗。
+
+ADR-007 標 `Retrospective`：記的是 v0.2.1 **已上線**的決策（當時只寫進 CHANGELOG 與 README，沒有 ADR），
+屬回溯補寫，不在 `Draft` → `FIRM` → `Accepted` 這條審核線上。是否轉 `Accepted` 由專案主人裁定。
 
 ## 技術棧
 
