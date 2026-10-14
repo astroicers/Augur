@@ -66,9 +66,30 @@ describe('panelRulesOf（Prometheus rules 端點形狀）', () => {
     expect([...panelRulesOf(mixed, DASH, PANEL)]).toHaveLength(1);
   });
 
-  test('是惰性走訪：只取第一條時不會先把整份攤平', () => {
-    const it = panelRulesOf<{ name?: string }>(raw(), DASH, PANEL);
+  test('是惰性走訪：只取第一條時不會碰到後面的 group', () => {
+    // 第二個 group 的 rules 做成 getter —— 被讀到才算「攤平到那裡了」。
+    let touchedSecondGroup = false;
+    const lazyRaw = {
+      data: {
+        groups: [
+          { rules: [{ name: 'Mine', annotations: BOUND }] },
+          {
+            get rules() {
+              touchedSecondGroup = true;
+              return [{ name: 'MineToo', annotations: BOUND }];
+            },
+          },
+        ],
+      },
+    };
+
+    const it = panelRulesOf<{ name?: string }>(lazyRaw, DASH, PANEL);
     expect(it.next().value).toMatchObject({ rule: { name: 'Mine' } });
+    expect(touchedSecondGroup).toBe(false);
+
+    // 繼續走才碰到後面 —— 證明上面的 false 不是「永遠不走第二個 group」。
+    expect(it.next().value).toMatchObject({ rule: { name: 'MineToo' } });
+    expect(touchedSecondGroup).toBe(true);
   });
 });
 
