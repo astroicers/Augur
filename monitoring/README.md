@@ -179,8 +179,9 @@ compose 的 `env_file: ./.env` 會把檔內每一個變數都注入 Grafana 容�
 
 1. 開 `Augur POC — alertState 探測` dashboard。
 2. 第一個 Mascot panel 的抬頭應該顯示 `alertState: alerting`。
-3. 點一次「啟用語音」按鈕（瀏覽器要求一次使用者手勢），應該聽到它念出
-   `PocAlwaysFiring` 的 summary。
+3. 瀏覽器要求先有一次使用者手勢才准發聲。頁面打開時 `PocAlwaysFiring` 已在燒、吉祥物一載入就念，
+   通常會被擋下（panel 顯示 `not-allowed`），標題列按鈕會寫「🔊 點一下啟用語音」——按一下，
+   應該聽到它補念 `PocAlwaysFiring` 的 summary。按鈕若寫「🔊 語音開」，按下去是**靜音**。
 4. 等幾個 refresh interval，**它不該再念第二次** —— 那是 dedup 在生效。
 
 `PocFlapping` 那條配 `for: 20s` 且每分鐘翻轉，用來觀察 pending / alerting / normal
@@ -238,7 +239,7 @@ docker exec augur-prometheus wget -qO- 'http://localhost:9090/api/v1/targets' | 
 | Loki 查無 `{job="windows-eventlog"}` | Alloy 服務沒起 / 設定沒套；看 Alloy UI http://localhost:12345 |
 | Add panel 裡沒有 Mascot | `../dist` 沒建置（先 `npm run build`），或 unsigned 白名單沒生效，或殘留 `MANIFEST.txt` |
 | panel 顯示 `alertState: —` | Grafana 根本沒送 alert state。四個硬前提見 `../src/README.md`；先確認有沒有整頁重新載入過 |
-| panel 有表情但不出聲 | 點一次「啟用語音」；或 OS 沒裝中文語音（panel 會降級到可用的聲線） |
+| panel 有表情但不出聲 | 按鈕寫「🔇 靜音中」＝這個瀏覽器被設成靜音，按一下恢復；寫「🔊 點一下啟用語音」＝瀏覽器擋著，按一下會補念；或 OS 沒裝中文語音（panel 會降級到可用的聲線） |
 | chip 顯示「限本 panel」 | Frontend Sandbox 開著。那是**預期的降級**不是壞掉 |
 | 安全片語對不上 | 在 Loki Explore 看真實 log 行，回頭改 rules-security.yml 的 `\|=` 片語 |
 

@@ -35,6 +35,46 @@ import {
  */
 const SESSION_MATCH_WINDOW_MS = 10 * 60 * 1000;
 
+/**
+ * 每個瀏覽器自己的靜音開關（存在本機）。值班牆要出聲、座位上的人可能想安靜 —— 這不是 dashboard 的設定，
+ * 是「我這台」的偏好，所以不放 panel 選項。同一個瀏覽器裡所有吉祥物 panel 共用。
+ * 本機儲存可能被封鎖（無痕、清除網站資料），讀寫都包 try/catch，失敗就當作沒靜音、只在這次分頁內記得。
+ */
+const MUTE_STORAGE_KEY = 'augur-mascot-panel.muted';
+/** 試聽句的 plan.name（只用來組 plan；判斷「是不是試聽」改看物件身分，見 PREVIEW_PLANS）。 */
+const PREVIEW_NAME = 'preview';
+/**
+ * 試聽送出的 plan 物件。被擋下時不補念試聽 —— 用**物件身分**判斷，不用名字：
+ * plan.name 就是告警名稱，一條真的叫 `preview` 的告警不該因此永遠不補念（複審 F7）。
+ * 外部語音降級時回呼帶的也是同一個 plan 物件（remoteSpeaker 以物件身分轉交）。
+ */
+const PREVIEW_PLANS = new WeakSet<BroadcastPlan>();
+/**
+ * 補念的時間上限：被擋超過這麼久的句子不補。牆面螢幕可能好幾小時沒人點，
+ * 第一次有人點下去不該補念幾十句過時的話（複審 F2）。
+ */
+const BLOCKED_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+/** 同一頁其他吉祥物 panel 的靜音同步事件（同分頁）；跨分頁靠瀏覽器的 storage 事件（複審 F4）。 */
+const MUTE_EVENT = 'augur-mascot-panel:muted';
+/** 外部語音被自動播放政策擋下時，remoteSpeaker 寫在聲線標籤裡的原因字串。 */
+const AUTOPLAY_BLOCKED = 'autoplay-blocked';
+
+function readMuted(): boolean {
+  try {
+    return window.localStorage.getItem(MUTE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeMuted(muted: boolean): void {
+  try {
+    window.localStorage.setItem(MUTE_STORAGE_KEY, muted ? '1' : '0');
+  } catch {
+    /* 存不了就只在這次分頁內有效 */
+  }
+}
+
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
 
@@ -201,6 +241,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const flapRef = useRef<FlapDriver | null>(null);
 
   const [feed, setFeed] = useState<FeedLine[]>([]);
+  // 靜音：state 給畫面，ref 給播報 effect 讀（不讓開關變動去重跑那個 effect）。
+  const [muted, setMuted] = useState<boolean>(readMuted);
+  const mutedRef = useRef(muted);
+  // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。dedup 已把它們記為念過，
+  // 不留下來的話就永遠不會再念；使用者按「點一下啟用語音」時重送。試聽句不收（那不是告警）。
+  const blockedRef = useRef<Array<{ plan: BroadcastPlan; at: number }>>([]);
   // ADR-006：播報紀錄。history 有值＝紀錄模式；historyError 有值＝降級回本分頁 feed（決策 7）。
   const [history, setHistory] = useState<HistoryResult | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -229,6 +275,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
   /** 播報器挑到的聲線名稱（onVoice 回報）；null = 引擎預設。 */
   const [voiceName, setVoiceName] = useState<string | null>(null);
+  // 使用者已經為「外部語音被擋」按過一次的那個聲線標籤。標籤要等下一次外部語音成功才會改回，
+  // 不記下來的話按鈕會一直停在「點一下啟用語音」、按不到靜音（第二輪複審 N1）。標籤一旦不再是被擋，就清掉。
+  const [autoplayAck, setAutoplayAck] = useState<string | null>(null);
   /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
   const reactionRef = useRef<'click' | 'pending' | null>(null);
   /**
@@ -572,7 +621,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       return;
     }
     const events: SpeakerEvents & { onMouth?: (open: number) => void } = {
-      onVoice: (name) => setVoiceName(name),
+      onVoice: (name) => {
+        setVoiceName(name);
+        if (!(name ?? '').includes(AUTOPLAY_BLOCKED)) {
+          setAutoplayAck(null);
+        }
+      },
       // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
       // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
       // 一則約 14 秒）—— 表情該跟著**正在念的那一則**走，不是跟著整批的第一則。
@@ -600,7 +654,16 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           flapRef.current?.boundary(charLength);
         }
       },
-      onError: (e) => {
+      onError: (e, plan) => {
+        if (e === 'not-allowed' && plan && !PREVIEW_PLANS.has(plan)) {
+          // 寫入時就修剪（第二輪複審 N2）：丟掉超出補念時限的、同一則告警只留最新一筆。
+          // 沒人點的牆面螢幕配上重播間隔時，清單才不會一直長。
+          const now = Date.now();
+          blockedRef.current = [
+            ...blockedRef.current.filter((b) => b.at >= now - BLOCKED_REPLAY_WINDOW_MS && b.plan.name !== plan.name),
+            { plan, at: now },
+          ];
+        }
         setSpeechErr(e);
         flapRef.current?.stop();
         avatarRef.current?.setSpeaking(false);
@@ -709,7 +772,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         setEmotion(plans[0]!.plan.emotion);
         avatarRef.current?.setEmotion(plans[0]!.plan.emotion);
         const sp = speakerRef.current;
-        if (sp) {
+        // 靜音時照樣更新清單與表情，只是不送進語音佇列。
+        if (sp && !mutedRef.current) {
           for (const p of plans) {
             sp.enqueue(p.plan);
           }
@@ -736,6 +800,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     const toMs = Number.isFinite(to) ? to : Date.now();
     const fromMs = Number.isFinite(from) ? from : toMs - 60 * 60 * 1000;
     const seq = ++historySeqRef.current;
+    let cancelled = false;
     // 沒有 dashboard uid（例如還沒存檔的 dashboard）也走同一條非同步鏈，當成一次讀取失敗：
     // 在 effect 裡同步 setState 會觸發連鎖重繪（react-hooks lint）。
     const job = dashboardUid
@@ -746,31 +811,109 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       .then((h) => historyToEntries(h.raw, h.templates, { minSeverity, lang: alertLang }))
       .then(
         (result) => {
-          if (seq === historySeqRef.current) {
+          if (!cancelled && seq === historySeqRef.current) {
             setHistory(result);
             setHistoryError(null);
           }
         },
         (e: unknown) => {
-          if (seq === historySeqRef.current) {
+          if (!cancelled && seq === historySeqRef.current) {
             setHistory(null);
             setHistoryError(errorText(e));
           }
         }
       );
+    // unmount（或下一次讀取）時作廢這一次：晚到的結果不得再 setState。
+    // 取捨（複審 F8）：data 轉成 Loading／Error 時這次讀取也會被作廢、且不發新讀取；
+    // 查詢持續 Error 時紀錄停在上一次的結果，等下一次 Done 再讀。
+    return () => {
+      cancelled = true;
+    };
   }, [data, id, minSeverity, alertLang]);
 
-  const unlock = useCallback(() => speakerRef.current?.unlock(), []);
+  // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
+  // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。
+  // 切回開：叫醒引擎。同頁同步是在同一個 click 事件裡同步派送，仍算使用者手勢。
+  const applyMuted = useCallback((next: boolean) => {
+    if (mutedRef.current === next) {
+      return;
+    }
+    mutedRef.current = next;
+    setMuted(next);
+    const sp = speakerRef.current;
+    if (next) {
+      blockedRef.current = [];
+      sp?.stop();
+      flapRef.current?.stop();
+      avatarRef.current?.setMouthOpen?.(0);
+      avatarRef.current?.setSpeaking(false);
+      speakingRef.current = false;
+      setSpeaking(false);
+      setPending(sp?.pending() ?? 0);
+    } else {
+      sp?.unlock();
+    }
+  }, []);
+
+  const toggleVoice = useCallback(
+    (blocked: boolean) => {
+      const sp = speakerRef.current;
+      if (blocked) {
+        // 瀏覽器擋著：這一下是使用者手勢，叫醒引擎、補念被擋的句子，狀態維持「開」（不是切成靜音）。
+        // 補念只取最近 10 分鐘內的；同一則告警只留最後的狀態（被擋期間已恢復的就只念恢復句）（複審 F2）。
+        sp?.unlock();
+        if ((voiceName ?? '').includes(AUTOPLAY_BLOCKED)) {
+          setAutoplayAck(voiceName);
+        }
+        const cutoff = Date.now() - BLOCKED_REPLAY_WINDOW_MS;
+        const recent = blockedRef.current.filter((b) => b.at >= cutoff);
+        blockedRef.current = [];
+        const lastIndex = new Map<string, number>();
+        recent.forEach((b, i) => lastIndex.set(b.plan.name, i));
+        setSpeechErr(null);
+        recent.forEach((b, i) => {
+          if (lastIndex.get(b.plan.name) === i) {
+            sp?.enqueue(b.plan);
+          }
+        });
+        setPending(sp?.pending() ?? 0);
+        return;
+      }
+      const next = !mutedRef.current;
+      applyMuted(next);
+      writeMuted(next);
+      window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: next }));
+    },
+    [applyMuted, voiceName]
+  );
+
+  // 同頁其他吉祥物 panel 按了開關（MUTE_EVENT），或另一個分頁改了本機儲存（storage 事件）：跟著同步。
+  useEffect(() => {
+    const onMute = (e: Event) => applyMuted(Boolean((e as CustomEvent<boolean>).detail));
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === MUTE_STORAGE_KEY) {
+        applyMuted(e.newValue === '1');
+      }
+    };
+    window.addEventListener(MUTE_EVENT, onMute);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(MUTE_EVENT, onMute);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [applyMuted]);
   // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
   const preview = useCallback(() => {
     speakerRef.current?.unlock();
-    speakerRef.current?.enqueue({
+    const plan: BroadcastPlan = {
       text: alertLang === 'en' ? 'Hi, I will read your alerts out loud.' : '嗨，我會幫你把告警念出來。',
       severity: 'info',
       emotion: 'calm',
-      name: 'preview',
+      name: PREVIEW_NAME,
       status: 'firing',
-    });
+    };
+    PREVIEW_PLANS.add(plan);
+    speakerRef.current?.enqueue(plan);
   }, [alertLang]);
 
   // 紀錄模式顯示告警歷史（ADR-006）；讀不到時退回本分頁念過的句子（決策 7）。
@@ -830,6 +973,12 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const customSprite = useSprite && (directionsImgUrl.trim() !== '' || reactionsImgUrl.trim() !== '');
   // 「啟用語音」鈕的門檻與 stage 的門檻各自獨立、不共用（SP-1.8 末段明文）。
   const roomy = width >= 320 && height >= 180;
+  // 開著但瀏覽器擋著（使用者還沒在頁面上互動）：按鈕要邀請「啟用」，不能讓人一按就變靜音。
+  // 外部語音（ADR-005）被自動播放政策擋下時不會丟錯誤，而是降級並把原因寫進聲線標籤；
+  // 喚醒 AudioContext 需要在使用者手勢裡呼叫 unlock，所以也算「被擋」（複審 F3）。
+  const voiceBlocked =
+    !muted &&
+    (speechErr === 'not-allowed' || ((voiceName ?? '').includes(AUTOPLAY_BLOCKED) && voiceName !== autoplayAck));
   // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
   const sideBySide = width >= 320;
 
@@ -851,9 +1000,22 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           alertState: {rawAlertState ?? '—'}
           {stateSeenAt ? ` @${stateSeenAt}` : ''}
         </span>
-        {roomy && (
-          <button className={styles.btn} onClick={unlock} type="button">
-            啟用語音
+        {roomy && enableTTS && (
+          <button
+            className={styles.btn}
+            onClick={() => toggleVoice(voiceBlocked)}
+            type="button"
+            aria-pressed={muted}
+            data-testid="voice-toggle"
+            title={
+              muted
+                ? '這個瀏覽器目前靜音；按一下恢復語音'
+                : voiceBlocked
+                  ? '瀏覽器在你點過頁面之前不准發聲；按一下啟用，剛才被擋掉的會補念'
+                  : '按一下讓這個瀏覽器靜音（只影響你自己，重新整理後仍記得）'
+            }
+          >
+            {muted ? '🔇 靜音中' : voiceBlocked ? '🔊 點一下啟用語音' : '🔊 語音開'}
           </button>
         )}
         {roomy && enableTTS && (
