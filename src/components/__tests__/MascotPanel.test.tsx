@@ -25,6 +25,7 @@ import { fetchPanelRules } from '../../sources/rulesFetcher';
 import { fetchPanelHistory } from '../../sources/historyFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
+import { DOM_PROBE_RETRY_INTERVAL_MS, DOM_PROBE_RETRY_LIMIT } from '../../dom/dashboardPanels';
 
 jest.mock('../../sources/rulesFetcher', () => ({
   RULES_ENDPOINT: '/api/prometheus/grafana/api/v1/rules',
@@ -1287,4 +1288,156 @@ test('N1：外部語音被擋，按一下後變回「語音開」，再按一下
   act(() => capturedEvents?.onVoice?.('外部語音（tts.local:8765）'));
   act(() => capturedEvents?.onVoice?.(blockedLabel));
   expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+});
+
+// ---------------------------------------------------------------------------
+// ROADMAP 附錄-7：跨 panel 偵測降級後可恢復
+//
+// 這一組是全檔唯一把 panel render 在**真的 `[data-viz-panel-key]` 容器裡**的測試。
+// 其餘測試都 render 在 RTL 預設的裸 div 上，所以 `probeDashboardDom` 永遠降級 ——
+// 那正是它們要的（降級路徑），但也表示升回這條路在這組之前一行都沒被跑過。
+// ---------------------------------------------------------------------------
+
+/** 造一個 Grafana 的 panel 容器（屬性名與實測值一致，見 dashboardPanels.ts 檔頭）。 */
+function panelContainer(key: string, pluginId?: string): HTMLElement {
+  const el = document.createElement('div');
+  el.setAttribute('data-viz-panel-key', key);
+  if (pluginId) {
+    el.setAttribute('data-plugin-id', pluginId);
+  }
+  document.body.appendChild(el);
+  return el;
+}
+
+const STAGE_RECT = {
+  left: 0,
+  top: 0,
+  width: 252,
+  height: 252,
+  right: 252,
+  bottom: 252,
+  x: 0,
+  y: 0,
+  toJSON: () => ({}),
+} as DOMRect;
+
+test('附錄-7：mount 時只看到自己 → 降級；之後出現別的 panel → 升回，別的 panel 座標上的 pointermove 也改視線', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const spriteGaze = jest.spyOn(SpriteController.prototype, 'setGaze');
+  const mine = panelContainer('panel-7', 'augur-mascot-panel');
+  let other: HTMLElement | null = null;
+  try {
+    const view = render(<MascotPanel {...props({})} />, { container: mine });
+    await settle();
+    // dashboard 上只有自己 → 看得到的 panel < 2 → 降級。
+    expect(view.getByText('限本 panel')).toBeInTheDocument();
+
+    const stage = view.getByTestId('mascot-stage');
+    jest.spyOn(stage, 'getBoundingClientRect').mockReturnValue(STAGE_RECT);
+
+    // 降級期間：listener 只在自己的容器上，派發在 document 上的 pointermove 收不到
+    // → 視線不動。（這條同時是「升回後那條斷言」的對照組：兩條差別只有升回。）
+    spriteGaze.mockClear();
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 900 }));
+      jest.advanceTimersByTime(32); // 跑掉 rAF（fake timers 下 rAF 也是假的）
+    });
+    expect(spriteGaze).not.toHaveBeenCalled();
+
+    // dashboard 上長出第二個 panel（延後 render、或使用者展開收起來的 row）。
+    other = panelContainer('panel-9', 'timeseries');
+    await act(async () => {
+      jest.advanceTimersByTime(DOM_PROBE_RETRY_INTERVAL_MS);
+    });
+    expect(view.getByText('全頁追蹤')).toBeInTheDocument();
+
+    // AC-2 的核心：chip 說全頁追蹤，事件就真的要來自 document。
+    // 座標 (900, 900) 落在別的 panel 上、完全不在自己的容器內。
+    spriteGaze.mockClear();
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 900 }));
+      jest.advanceTimersByTime(32);
+    });
+    expect(spriteGaze).toHaveBeenLastCalledWith(8);
+
+    // 點擊也要用升回後那份能力（onClick 讀 domRef 而不是 mount 當下的閉包）。
+    // jsdom 沒有 elementFromPoint，自己裝一個（dashboardPanels.test.ts 有同樣的註解）。
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      writable: true,
+      value: () => other,
+    });
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 900, clientY: 900 }));
+    });
+    expect(view.getByText(/最後點擊：panel-9 · timeseries/)).toBeInTheDocument();
+  } finally {
+    delete (document as unknown as Record<string, unknown>).elementFromPoint;
+    other?.remove();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
+});
+
+test('附錄-7：升回後卸載 —— listener 是從 document（實際綁著的那個）拿掉，host 上的在升回時就拿掉了', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const mine = panelContainer('panel-7');
+  let other: HTMLElement | null = null;
+  try {
+    const view = render(<MascotPanel {...props({})} />, { container: mine });
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    const hostRemove = jest.spyOn(stage, 'removeEventListener');
+    const docAdd = jest.spyOn(document, 'addEventListener');
+    const docRemove = jest.spyOn(document, 'removeEventListener');
+
+    other = panelContainer('panel-9');
+    await act(async () => {
+      jest.advanceTimersByTime(DOM_PROBE_RETRY_INTERVAL_MS);
+    });
+    // 升回 = 舊 target 解綁 + 新 target 綁上。少了前半段，host 上會留一份殭屍 listener。
+    expect(hostRemove.mock.calls.map((c) => c[0])).toEqual(['pointermove', 'click']);
+    expect(docAdd.mock.calls.map((c) => c[0]).filter((t) => t === 'pointermove' || t === 'click')).toEqual([
+      'pointermove',
+      'click',
+    ]);
+
+    docRemove.mockClear();
+    view.unmount();
+    expect(docRemove.mock.calls.map((c) => c[0]).filter((t) => t === 'pointermove' || t === 'click')).toEqual([
+      'pointermove',
+      'click',
+    ]);
+  } finally {
+    other?.remove();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
+});
+
+test('附錄-7：降級中卸載 —— 重試的計時器也清掉，之後不再碰 DOM', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const mine = panelContainer('panel-7');
+  let other: HTMLElement | null = null;
+  try {
+    const view = render(<MascotPanel {...props({})} />, { container: mine });
+    await settle();
+    expect(view.getByText('限本 panel')).toBeInTheDocument();
+
+    view.unmount();
+    // 卸載後才出現第二個 panel：計時器若沒清掉，它會探到 DOM 並對已卸載的元件 setState。
+    other = panelContainer('panel-9');
+    const probes = jest.spyOn(document, 'querySelectorAll');
+    await act(async () => {
+      jest.advanceTimersByTime((DOM_PROBE_RETRY_LIMIT + 2) * DOM_PROBE_RETRY_INTERVAL_MS);
+    });
+    expect(probes).not.toHaveBeenCalled();
+  } finally {
+    other?.remove();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
 });
