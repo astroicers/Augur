@@ -25,7 +25,11 @@ import { fetchPanelRules } from '../../sources/rulesFetcher';
 import { fetchPanelHistory } from '../../sources/historyFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
-import { DOM_PROBE_RETRY_INTERVAL_MS, DOM_PROBE_RETRY_LIMIT } from '../../dom/dashboardPanels';
+import {
+  DOM_PROBE_RECHECK_MIN_INTERVAL_MS,
+  DOM_PROBE_RETRY_INTERVAL_MS,
+  DOM_PROBE_RETRY_LIMIT,
+} from '../../dom/dashboardPanels';
 
 jest.mock('../../sources/rulesFetcher', () => ({
   RULES_ENDPOINT: '/api/prometheus/grafana/api/v1/rules',
@@ -1435,6 +1439,57 @@ test('附錄-7：降級中卸載 —— 重試的計時器也清掉，之後不�
       jest.advanceTimersByTime((DOM_PROBE_RETRY_LIMIT + 2) * DOM_PROBE_RETRY_INTERVAL_MS);
     });
     expect(probes).not.toHaveBeenCalled();
+  } finally {
+    other?.remove();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
+});
+
+test('附錄-7：計時器的重試窗用完之後，面板自己的 pointermove 仍會帶著升回（節流窗內的那次不帶）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  jest.useFakeTimers();
+  const spriteGaze = jest.spyOn(SpriteController.prototype, 'setGaze');
+  const mine = panelContainer('panel-7', 'augur-mascot-panel');
+  let other: HTMLElement | null = null;
+  try {
+    const view = render(<MascotPanel {...props({})} />, { container: mine });
+    await settle();
+    const stage = view.getByTestId('mascot-stage');
+    jest.spyOn(stage, 'getBoundingClientRect').mockReturnValue(STAGE_RECT);
+
+    // 把有界的計時器重試整個燒完 —— 之後 watcher 不會再自己探了，
+    // 「動一下游標就升回」是唯一剩下的途徑（也是這條票要修的症狀本體）。
+    await act(async () => {
+      jest.advanceTimersByTime(DOM_PROBE_RETRY_LIMIT * DOM_PROBE_RETRY_INTERVAL_MS);
+    });
+    expect(view.getByText('限本 panel')).toBeInTheDocument();
+
+    other = panelContainer('panel-9', 'timeseries');
+
+    // 緊接最後一次重試之後動游標：還在節流窗內 → 不探，所以仍然降級。
+    // （若面板端把 recheck 接錯成「每個 raf 都探」，這條會先紅。）
+    await act(async () => {
+      stage.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
+      jest.advanceTimersByTime(32);
+    });
+    expect(view.getByText('限本 panel')).toBeInTheDocument();
+
+    // 節流窗過了之後再動一次游標：這一下才真的重探並升回。
+    await act(async () => {
+      jest.advanceTimersByTime(DOM_PROBE_RECHECK_MIN_INTERVAL_MS);
+      stage.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
+      jest.advanceTimersByTime(32);
+    });
+    expect(view.getByText('全頁追蹤')).toBeInTheDocument();
+
+    // 而且 target 真的跟著換了（AC-2）：事件來源改成 document，別的 panel 座標也算。
+    spriteGaze.mockClear();
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 900 }));
+      jest.advanceTimersByTime(32);
+    });
+    expect(spriteGaze).toHaveBeenLastCalledWith(8);
   } finally {
     other?.remove();
     jest.restoreAllMocks();
