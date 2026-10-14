@@ -1,11 +1,14 @@
 # Mascot — a Grafana panel that reads your alerts out loud
 
-Puts a small 2D sprite mascot on your dashboard. It watches the cursor, reacts when
-you click, changes expression with alert severity, and speaks the panel's alert state
-using the browser's built-in Web Speech API.
+Puts a small 2D sprite mascot on your dashboard. He reacts when you click, changes
+expression with alert severity, moves his mouth and blinks while talking, and speaks the
+panel's alert state using the browser's built-in Web Speech API. Next to him is a
+**record** of what he said, read from Grafana's own alert state history.
 
-No backend, no external service, no API key. Everything runs in the browser tab that
-has the dashboard open.
+No backend, no API key, and nothing to install besides the plugin. Everything runs in the
+browser tab that has the dashboard open. An external speech service is optional — see
+*External speech service URL* below — and the panel works exactly as before when it is
+left empty.
 
 ## Requirements
 
@@ -30,7 +33,8 @@ has the dashboard open.
 
 ## Status
 
-Working, but **the mascot does not look like a mascot yet**.
+Working, and the mascot has its artwork: a tired boy in a blue-whale onesie, final since
+2026-10-05. He opens his mouth while speaking, blinks, and his face changes with the alert.
 
 Implemented and in use:
 
@@ -42,7 +46,12 @@ Implemented and in use:
 - **Flood control.** A firing alert is spoken once, not once per refresh. Recovery is
   spoken only for alerts that were actually announced.
 - **Cursor tracking and click detection** across the whole dashboard, with automatic
-  fallback to this panel alone when the surrounding DOM is not reachable.
+  fallback to this panel alone when the surrounding DOM is not reachable. Clicking startles
+  him; the gaze part is computed but not visible with the current sheets (see below).
+- **An optional external voice.** Point *External speech service URL* at an
+  OpenAI-compatible speech service and he speaks in that voice instead of the browser's.
+  A phrase that fails or times out falls back to the browser voice for the rest of that
+  alert, and the panel's voice label says so.
 - **A record of what it said.** The list next to the mascot reads Grafana's own alert
   state history for this panel, so it survives a reload and everyone sees the same list.
   Each line is the sentence the mascot speaks. Change the dashboard time range to look
@@ -50,14 +59,15 @@ Implemented and in use:
 
 Not implemented:
 
-- **The final sprite artwork.** The sprite renderer is in place — four stacked layers
-  for gaze, expression, mouth and blinking — but the character sheets are still being
-  produced. When the panel is too small for the sprite (under 128 px) or a sheet fails
-  to load, it falls back to a `DiagnosticAvatar`: a plain 3×3 grid of dots that shows
-  which direction the character *would* be looking, and says on the panel why it fell back.
-
-Install it if you want the speech and the alert reactions today, and do not mind that
-the artwork is not final.
+- **Eyes that follow the cursor.** The renderer has four stacked layers — gaze,
+  expression, mouth, blinking — and the gaze cell is computed from the cursor, but the
+  current sheets declare `"features": { "gaze": false }`: his eyes are half closed, which
+  leaves too little iris to show a direction at the size the panel renders. Sheets with
+  gaze are planned, and a custom pair can supply it today.
+- When the panel is too small for the sprite (under 128 px) or a sheet fails to load, it
+  falls back to a `DiagnosticAvatar`: a plain 3×3 grid of dots that shows which direction
+  the character *would* be looking, and says on the panel why it fell back. That fallback
+  is deliberate, not a missing feature.
 
 ## Installing
 
@@ -158,7 +168,11 @@ The panel's own options:
 | Fallback severity | `critical` | Severity to assume when the rules endpoint cannot be reached. That endpoint carries no stability guarantee, so failing to reach it is an expected outcome rather than an error. |
 | Language | Chinese | Language of the spoken text. |
 | Enable speech | on | Turn off to keep the visual reactions without any sound. |
-| Voice | auto | Name a specific system voice. Left empty, it prefers a local Chinese voice. |
+| Voice | auto | Name a specific system voice — part of the name is enough, such as `Zhiwei`. Left empty, it prefers a local Chinese voice. The panel shows which voice it ended up using. |
+| Pitch | 1 | Speaking pitch, 0–2. To make him sound like a little boy, pick a male voice and raise this to about 1.4–1.7. Some browsers (reportedly Edge) ignore it. |
+| Rate | 1 | Speaking rate, 0.5–2. It is sent to an external speech service too, but the reference service ignores it — its rate comes from its voice sample. |
+| External speech service URL | empty (browser voices) | An OpenAI-compatible `/v1/audio/speech` service to speak with instead of the browser's voices. Empty means nothing changes. **There is no field for an API key**: panel options are stored in the dashboard, so anyone who can see the dashboard can read them. With an external voice the mouth follows the loudness of the audio rather than a fixed rhythm. *Voice* and *Pitch* then apply only to the fallback. |
+| External speech timeout | 30 s | How long to wait for one phrase's audio, counted from when that phrase is due to be spoken (time it spent queued on the service during prefetch does not count). On timeout the browser voice reads the rest of that alert. The next alert tries the service again. |
 | Directions sprite URL | empty (built-in) | A 3×3 sheet of gaze directions. Must be square with a side divisible by 3. |
 | Reactions sprite URL | empty (built-in) | A 3×3 sheet of expression, mouth and blink overlays. Must be the same size as the directions sheet. |
 

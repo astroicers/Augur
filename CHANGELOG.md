@@ -39,9 +39,11 @@
 
 ## 0.1.0 — 2026-10-08
 
-First release as a Grafana panel plugin. The version stays at 0.x until the sprite
-artwork exists — the panel works today, but shipping a mascot panel whose mascot is a
-grid of dots as 1.0 would be claiming something it is not.
+First release as a Grafana panel plugin, with the final sprite artwork in it (see *The
+mascot, final art* below). The version stays at 0.x because of what is still open rather
+than what is missing from the panel: the character cannot look at the cursor with these
+sheets, the plugin is unsigned and not in Grafana's catalogue, and its logo and
+`plugin.json` metadata are still the scaffold's.
 
 This project previously shipped as `airi-ops-bridge`: a push pipeline that took Grafana
 webhooks through a Node director and Edge TTS to a 3D VRM avatar on a separate web page.
@@ -182,9 +184,12 @@ commit log of PR #4 carries the full account with measurements.
 
 ### What it does not do yet
 
-- **The sprite artwork does not exist.** The panel renders a deliberately abstract 3×3
-  grid of dots that shows what the character would be doing. The rendering contract is
-  the one the sprite version will use, so swapping it in changes no wiring.
+- **He cannot look at you.** The artwork that shipped declares no gaze: his eyes are half
+  closed, which leaves too little iris to show a direction at the size the panel renders.
+  The cursor is still tracked and the gaze cell still computed; nothing on screen shows it.
+- **The abstract dot grid is still there as a fallback**, for a panel too small for the
+  sprite (under 128 px) or a sheet that fails to load. It shows what the character would
+  be doing and says on the panel why it fell back.
 
 ### Known limitations
 

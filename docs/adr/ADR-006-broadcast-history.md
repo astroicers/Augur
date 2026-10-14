@@ -14,7 +14,8 @@
 > 看過的摘要項目：決策 7 條（紀錄來源、事件紀錄的語意、同一套組句與樣板填值、介面、歷史只顯示不播報、保存期、可見降級）；
 > 限制 3 項（是「發生過」不是「念過」的紀錄、摘要用規則現在的樣板、讀不到時退回本分頁模式）；
 > Verification Evidence 在（本機 12.4.12 實測 V-1～V-6）；**6 個 POC gate（G-ADR006-1～6）全數未跑**；
-> 無 `roadmap-ref`（repo 既有慣例）；本 repo 無 `docs/adr/README.md` 索引，ADR 清單在根 README。
+> 無 `roadmap-ref`（repo 既有慣例）；本 repo 無 `docs/adr/README.md` 索引，ADR 清單在 `docs/ARCHITECTURE.md`〈ADR 索引〉
+> （【2026-10-14 訂正，#31】原文寫「在根 README」—— 兩處各有一份清單，現已統一只在 `docs/ARCHITECTURE.md` 維護，根 README 連過去）。
 > 回覆逐字：**「升 FIRM，開始實作」**。
 > 升 FIRM 而非 Accepted：同 ADR-004／005 —— FIRM 解除「Draft 禁止實作」，POC gate 要等程式寫出來才跑得動，
 > 「POC 未跑」誠實留在檔上。**人類顯式授權，非 AI 自行升級**（ASP 鐵則）。
