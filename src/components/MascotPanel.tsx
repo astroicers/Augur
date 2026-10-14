@@ -41,8 +41,23 @@ const SESSION_MATCH_WINDOW_MS = 10 * 60 * 1000;
  * 本機儲存可能被封鎖（無痕、清除網站資料），讀寫都包 try/catch，失敗就當作沒靜音、只在這次分頁內記得。
  */
 const MUTE_STORAGE_KEY = 'augur-mascot-panel.muted';
-/** 試聽句的 plan.name；被擋下時不重送。 */
+/** 試聽句的 plan.name（只用來組 plan；判斷「是不是試聽」改看物件身分，見 PREVIEW_PLANS）。 */
 const PREVIEW_NAME = 'preview';
+/**
+ * 試聽送出的 plan 物件。被擋下時不補念試聽 —— 用**物件身分**判斷，不用名字：
+ * plan.name 就是告警名稱，一條真的叫 `preview` 的告警不該因此永遠不補念（複審 F7）。
+ * 外部語音降級時回呼帶的也是同一個 plan 物件（remoteSpeaker 以物件身分轉交）。
+ */
+const PREVIEW_PLANS = new WeakSet<BroadcastPlan>();
+/**
+ * 補念的時間上限：被擋超過這麼久的句子不補。牆面螢幕可能好幾小時沒人點，
+ * 第一次有人點下去不該補念幾十句過時的話（複審 F2）。
+ */
+const BLOCKED_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+/** 同一頁其他吉祥物 panel 的靜音同步事件（同分頁）；跨分頁靠瀏覽器的 storage 事件（複審 F4）。 */
+const MUTE_EVENT = 'augur-mascot-panel:muted';
+/** 外部語音被自動播放政策擋下時，remoteSpeaker 寫在聲線標籤裡的原因字串。 */
+const AUTOPLAY_BLOCKED = 'autoplay-blocked';
 
 function readMuted(): boolean {
   try {
@@ -231,7 +246,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const mutedRef = useRef(muted);
   // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。dedup 已把它們記為念過，
   // 不留下來的話就永遠不會再念；使用者按「點一下啟用語音」時重送。試聽句不收（那不是告警）。
-  const blockedRef = useRef<BroadcastPlan[]>([]);
+  const blockedRef = useRef<Array<{ plan: BroadcastPlan; at: number }>>([]);
   // ADR-006：播報紀錄。history 有值＝紀錄模式；historyError 有值＝降級回本分頁 feed（決策 7）。
   const [history, setHistory] = useState<HistoryResult | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -632,8 +647,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         }
       },
       onError: (e, plan) => {
-        if (e === 'not-allowed' && plan && plan.name !== PREVIEW_NAME) {
-          blockedRef.current.push(plan);
+        if (e === 'not-allowed' && plan && !PREVIEW_PLANS.has(plan)) {
+          blockedRef.current.push({ plan, at: Date.now() });
         }
         setSpeechErr(e);
         flapRef.current?.stop();
@@ -795,35 +810,28 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         }
       );
     // unmount（或下一次讀取）時作廢這一次：晚到的結果不得再 setState。
+    // 取捨（複審 F8）：data 轉成 Loading／Error 時這次讀取也會被作廢、且不發新讀取；
+    // 查詢持續 Error 時紀錄停在上一次的結果，等下一次 Done 再讀。
     return () => {
       cancelled = true;
     };
   }, [data, id, minSeverity, alertLang]);
 
-  // 語音開關。切到「語音開」時順便叫醒語音引擎（原本「啟用語音」鈕做的事）；
-  // 切到靜音時把正在念的與排隊中的都停掉，嘴型也要收起來（stop 之後不會再有 onEnd）。
-  const toggleVoice = useCallback((blocked: boolean) => {
-    const sp0 = speakerRef.current;
-    if (blocked) {
-      // 瀏覽器擋著：這一下是使用者手勢，叫醒引擎、重送被擋的句子，狀態維持「開」（不是切成靜音）。
-      sp0?.unlock();
-      const replay = blockedRef.current;
-      blockedRef.current = [];
-      setSpeechErr(null);
-      for (const plan of replay) {
-        sp0?.enqueue(plan);
-      }
-      setPending(sp0?.pending() ?? 0);
+  // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
+  // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。
+  // 切回開：叫醒引擎。同頁同步是在同一個 click 事件裡同步派送，仍算使用者手勢。
+  const applyMuted = useCallback((next: boolean) => {
+    if (mutedRef.current === next) {
       return;
     }
-    const next = !mutedRef.current;
     mutedRef.current = next;
     setMuted(next);
-    writeMuted(next);
     const sp = speakerRef.current;
     if (next) {
       blockedRef.current = [];
       sp?.stop();
+      flapRef.current?.stop();
+      avatarRef.current?.setMouthOpen?.(0);
       avatarRef.current?.setSpeaking(false);
       speakingRef.current = false;
       setSpeaking(false);
@@ -832,16 +840,63 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       sp?.unlock();
     }
   }, []);
+
+  const toggleVoice = useCallback(
+    (blocked: boolean) => {
+      const sp = speakerRef.current;
+      if (blocked) {
+        // 瀏覽器擋著：這一下是使用者手勢，叫醒引擎、補念被擋的句子，狀態維持「開」（不是切成靜音）。
+        // 補念只取最近 10 分鐘內的；同一則告警只留最後的狀態（被擋期間已恢復的就只念恢復句）（複審 F2）。
+        sp?.unlock();
+        const cutoff = Date.now() - BLOCKED_REPLAY_WINDOW_MS;
+        const recent = blockedRef.current.filter((b) => b.at >= cutoff);
+        blockedRef.current = [];
+        const lastIndex = new Map<string, number>();
+        recent.forEach((b, i) => lastIndex.set(b.plan.name, i));
+        setSpeechErr(null);
+        recent.forEach((b, i) => {
+          if (lastIndex.get(b.plan.name) === i) {
+            sp?.enqueue(b.plan);
+          }
+        });
+        setPending(sp?.pending() ?? 0);
+        return;
+      }
+      const next = !mutedRef.current;
+      applyMuted(next);
+      writeMuted(next);
+      window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: next }));
+    },
+    [applyMuted]
+  );
+
+  // 同頁其他吉祥物 panel 按了開關（MUTE_EVENT），或另一個分頁改了本機儲存（storage 事件）：跟著同步。
+  useEffect(() => {
+    const onMute = (e: Event) => applyMuted(Boolean((e as CustomEvent<boolean>).detail));
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === MUTE_STORAGE_KEY) {
+        applyMuted(e.newValue === '1');
+      }
+    };
+    window.addEventListener(MUTE_EVENT, onMute);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(MUTE_EVENT, onMute);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [applyMuted]);
   // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
   const preview = useCallback(() => {
     speakerRef.current?.unlock();
-    speakerRef.current?.enqueue({
+    const plan: BroadcastPlan = {
       text: alertLang === 'en' ? 'Hi, I will read your alerts out loud.' : '嗨，我會幫你把告警念出來。',
       severity: 'info',
       emotion: 'calm',
       name: PREVIEW_NAME,
       status: 'firing',
-    });
+    };
+    PREVIEW_PLANS.add(plan);
+    speakerRef.current?.enqueue(plan);
   }, [alertLang]);
 
   // 紀錄模式顯示告警歷史（ADR-006）；讀不到時退回本分頁念過的句子（決策 7）。
@@ -902,7 +957,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 「啟用語音」鈕的門檻與 stage 的門檻各自獨立、不共用（SP-1.8 末段明文）。
   const roomy = width >= 320 && height >= 180;
   // 開著但瀏覽器擋著（使用者還沒在頁面上互動）：按鈕要邀請「啟用」，不能讓人一按就變靜音。
-  const voiceBlocked = !muted && speechErr === 'not-allowed';
+  // 外部語音（ADR-005）被自動播放政策擋下時不會丟錯誤，而是降級並把原因寫進聲線標籤；
+  // 喚醒 AudioContext 需要在使用者手勢裡呼叫 unlock，所以也算「被擋」（複審 F3）。
+  const voiceBlocked = !muted && (speechErr === 'not-allowed' || (voiceName ?? '').includes(AUTOPLAY_BLOCKED));
   // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
   const sideBySide = width >= 320;
 

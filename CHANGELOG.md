@@ -12,6 +12,9 @@
   `not-allowed`), the button reads **🔊 點一下啟用語音**. Clicking it speaks the sentences that
   were refused. Before, an alert that was already firing when the page opened was never spoken
   in that tab, even after clicking.
+- Only sentences refused in the last 10 minutes are replayed, and only the latest state of each
+  alert. Muting or unmuting one mascot panel updates the others on the same page right away.
+  The same button wakes an external speech service that the browser's autoplay policy blocked.
 
 ## 0.2.0 — 2026-10-13
 

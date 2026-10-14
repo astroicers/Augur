@@ -31,6 +31,25 @@ jest.mock('../../sources/rulesFetcher', () => ({
   fetchPanelRules: jest.fn(),
 }));
 
+/** F1：切到靜音時嘴型驅動要停 —— 包一層計數 stop()，其餘照實際行為跑。 */
+const flapCalls = { stop: 0 };
+jest.mock('../../avatar/flap', () => {
+  const actual = jest.requireActual('../../avatar/flap');
+  return {
+    ...actual,
+    createFlapDriver: (...args: unknown[]) => {
+      const d = actual.createFlapDriver(...args);
+      return {
+        ...d,
+        stop: () => {
+          flapCalls.stop++;
+          d.stop();
+        },
+      };
+    },
+  };
+});
+
 jest.mock('../../sources/historyFetcher', () => ({
   fetchPanelHistory: jest.fn(),
 }));
@@ -106,6 +125,7 @@ beforeEach(() => {
   capturedEvents = undefined;
   speakerCalls.unlock = 0;
   speakerCalls.stop = 0;
+  flapCalls.stop = 0;
   try {
     window.localStorage.clear();
   } catch {
@@ -1084,13 +1104,19 @@ test('語音開關：切回「語音開」時叫醒語音引擎，之後的告�
   await waitFor(() => expect(spoken.map((p) => p.text).join()).toContain('要念的告警'));
 });
 
-test('語音開關：切到靜音時，正在念的那句立刻停掉', async () => {
-  mockedFetch.mockResolvedValue([]);
-  const view = render(<MascotPanel {...props({ alertState: OK })} />);
-  await settle();
-  const before = speakerCalls.stop;
+test('語音開關：切到靜音時，正在念的那句立刻停掉，嘴型驅動也停（F1）', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '念到一半' }]);
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  act(() => capturedEvents?.onStart?.(spoken[0]!));
+  const stopBefore = speakerCalls.stop;
+  const flapBefore = flapCalls.stop;
+
   fireEvent.click(view.getByTestId('voice-toggle'));
-  expect(speakerCalls.stop).toBeGreaterThan(before);
+
+  expect(view.getByTestId('voice-toggle').textContent).toContain('靜音中');
+  expect(speakerCalls.stop).toBeGreaterThan(stopBefore);
+  expect(flapCalls.stop).toBeGreaterThan(flapBefore);
 });
 
 test('語音開關：本機儲存讀寫丟例外時照樣能用（預設語音開，切換仍生效）', async () => {
@@ -1150,8 +1176,91 @@ test('被擋下的「試聽」不重念 —— 那只是測試聲音，不是告
   fireEvent.click(view.getByTestId('tts-preview'));
   const previewPlan = spoken[spoken.length - 1]!;
   act(() => capturedEvents?.onError?.('not-allowed', previewPlan));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
 
   const before = spoken.length;
   fireEvent.click(view.getByTestId('voice-toggle'));
   expect(spoken.length).toBe(before);
+  expect(view.getByTestId('voice-toggle').getAttribute('aria-pressed')).toBe('false');
+});
+
+// ─── 語音開關：複審修正（F2／F3／F4／F7） ─────────────────────────────────────
+
+/** 製造一則被擋下的 plan（直接觸發 onError，不經過真的語音引擎）。 */
+function blockedPlan(name: string, status: 'firing' | 'resolved', text: string): BroadcastPlan {
+  return { text, severity: 'critical', emotion: status === 'firing' ? 'critical' : 'resolved', name, status };
+}
+
+test('F2：補念去重 —— 同一則告警只念最後的狀態；被擋時已恢復的，只念恢復句', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  act(() => {
+    capturedEvents?.onError?.('not-allowed', blockedPlan('A', 'firing', '偵測到告警：A。'));
+    capturedEvents?.onError?.('not-allowed', blockedPlan('B', 'firing', '偵測到告警：B。'));
+    capturedEvents?.onError?.('not-allowed', blockedPlan('B', 'firing', '偵測到告警：B。'));
+    capturedEvents?.onError?.('not-allowed', blockedPlan('A', 'resolved', '告警已恢復：A。'));
+  });
+  const before = spoken.length;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(spoken.slice(before).map((p) => p.text)).toEqual(['偵測到告警：B。', '告警已恢復：A。']);
+});
+
+test('F2：超過 10 分鐘的被擋句不補念（牆面螢幕沒人點、累積好幾小時的情形）', async () => {
+  const realNow = Date.now;
+  let now = 1_000_000_000_000;
+  Date.now = () => now;
+  try {
+    mockedFetch.mockResolvedValue([]);
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await settle();
+    act(() => capturedEvents?.onError?.('not-allowed', blockedPlan('Old', 'firing', '偵測到告警：Old。')));
+    now += 11 * 60 * 1000;
+    act(() => capturedEvents?.onError?.('not-allowed', blockedPlan('New', 'firing', '偵測到告警：New。')));
+    const before = spoken.length;
+    fireEvent.click(view.getByTestId('voice-toggle'));
+    expect(spoken.slice(before).map((p) => p.text)).toEqual(['偵測到告警：New。']);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('F7：名字剛好叫 preview 的真告警被擋，照樣補念（試聽是以物件身分辨識，不是名字）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  act(() => capturedEvents?.onError?.('not-allowed', blockedPlan('preview', 'firing', '偵測到告警：preview。')));
+  const before = spoken.length;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(spoken.slice(before).map((p) => p.text)).toEqual(['偵測到告警：preview。']);
+});
+
+test('F3：外部語音被自動播放政策擋下（聲線標籤含 autoplay-blocked）也算「被擋」，按下是叫醒而不是靜音', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await settle();
+  act(() => capturedEvents?.onVoice?.('引擎預設（外部語音失敗：autoplay-blocked，已降級）'));
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+  const unlockBefore = speakerCalls.unlock;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(speakerCalls.unlock).toBeGreaterThan(unlockBefore);
+  expect(view.getByTestId('voice-toggle').getAttribute('aria-pressed')).toBe('false');
+  expect(window.localStorage.getItem(MUTE_KEY)).not.toBe('1');
+});
+
+test('F4：同一頁兩個吉祥物 panel —— 一個按靜音，另一個立刻同步', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(
+    <>
+      <MascotPanel {...props({ alertState: OK })} />
+      <MascotPanel {...props({ alertState: OK })} />
+    </>
+  );
+  await settle();
+  const [a, b] = view.getAllByTestId('voice-toggle');
+  fireEvent.click(a!);
+  expect(a!.textContent).toContain('靜音中');
+  expect(b!.textContent).toContain('靜音中');
+  fireEvent.click(b!);
+  expect(a!.textContent).toContain('語音開');
 });

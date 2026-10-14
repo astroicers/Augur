@@ -134,7 +134,7 @@ AUGUR_TTS_SSL_CERTFILE=/path/cert.pem AUGUR_TTS_SSL_KEYFILE=/path/key.pem python
 | `HTTP 502` | 模型失控、已截斷（見〈念錯與失控〉）。偶爾發生是正常的 |
 | `HTTP 4xx／其他 5xx` | 服務端錯誤，看伺服器的輸出 |
 | `timeout` | 這一段超過逾時。第一次念某種告警時偶爾會發生 |
-| `autoplay-blocked` | 瀏覽器擋自動播放。點一下 panel 上的「啟用語音」 |
+| `autoplay-blocked` | 瀏覽器擋自動播放。panel 標題列的按鈕會顯示「🔊 點一下啟用語音」，按一下即可（不會變成靜音） |
 
 Grafana 若啟用了 CSP（`content_security_policy = true`，預設關閉），要在模板的 `connect-src`
 加上這個服務的網址，否則一律 `Failed to fetch`。
