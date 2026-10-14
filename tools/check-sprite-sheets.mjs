@@ -693,8 +693,13 @@ function writeDiffImages(sheets, manifest, findings, outDir) {
   return written;
 }
 
-/** 取某一格的產權允許遮罩。`spriteChecks` 的 `ownershipMask` 未 export，這裡用同一組規則重建。 */
-function ownershipMaskFor(manifest, cell) {
+/**
+ * 取某一格的產權允許遮罩。`spriteChecks` 的 `ownershipMask` 未 export，這裡用同一組規則重建。
+ *
+ * ⚠️ **暫時 export（#33）**：只為了讓 selftest 第 [3f] 節能把這一份與
+ * `spriteChecks.ownershipMask` 逐位元比對。等價證明一通過，這一份就會被刪掉。
+ */
+export function ownershipMaskFor(manifest, cell) {
   const { cellPx } = manifest.sheet;
   const code = manifest.reactionOwnership[cell] ?? '';
   const mask = new Uint8Array(cellPx * cellPx);

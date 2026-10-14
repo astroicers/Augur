@@ -46,7 +46,7 @@ import {
 } from './blind-test/scoring.mjs';
 import * as C from './lib/spriteChecks.mjs';
 const { CELL_COUNT } = C;
-import { runCheck, SENTINEL, ToolError } from './check-sprite-sheets.mjs';
+import { ownershipMaskFor, runCheck, SENTINEL, ToolError } from './check-sprite-sheets.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0;
@@ -1662,6 +1662,102 @@ console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外�
   const spreadBase = C.checkLuminanceAndStroke(clone(base).directions, manifest)
     .filter((f) => f.id === 'SP-7.7/描邊不一致');
   ok('基準九格同寬不得觸發描邊不一致', spreadBase.length === 0, `卻有 ${spreadBase.length} 筆`);
+}
+
+// ===========================================================================
+console.log('\n[3f] ownershipMask 等價證明（#33：重建版 vs 唯一的那一份）');
+// ---------------------------------------------------------------------------
+// ⚠️ 本節是**刪掉重建版之前的義務**。兩份產權規則（`spriteChecks.ownershipMask` 與
+// `check-sprite-sheets.ownershipMaskFor`）必須對每一組輸入回傳**逐位元相同**的遮罩，
+// 否則「收斂成一份」就只是在兩種行為裡偷偷挑一種，而產權檢查（報表）與洋紅 diff 圖
+// （給畫師看的那張）本來就是分別用這兩份算的 —— 不等價的話，報表說越界而圖上乾淨。
+//
+// 只比對實交付 manifest 的九格**不夠**：那只是一組樣本，差異完全可以正好落在樣本之外
+// （視窗凸出安全框、視窗被推出格外需要夾取、零面積視窗、奇數 cellPx 的四捨五入…）。
+// 所以掃的是「21 個產權碼 × 8 組刻意刁難的幾何」，再加實交付與合成 manifest 的逐格。
+{
+  const SUBSETS = [];
+  for (let bits = 0; bits < 16; bits++) {
+    SUBSETS.push(['E', 'B', 'M', 'K'].filter((_, i) => bits & (1 << i)).join(''));
+  }
+  // 大小寫、順序、重複與不認識的字母 —— `includes` 的語意要一起釘住，
+  // 不然「只有合法碼等價」這種半套證明會放過 `'ebmk'` 兩邊各走一條路的可能。
+  const OWNERSHIP_CODES = [...SUBSETS, 'KMBE', 'ebmk', 'X', 'EEE', 'E B M'];
+
+  const WIN = { E: { x0: 0.28, x1: 0.72, y0: 0.33, y1: 0.445 }, B: { x0: 0.28, x1: 0.72, y0: 0.255, y1: 0.33 }, M: { x0: 0.395, x1: 0.605, y0: 0.475, y1: 0.585 } };
+  const geom = (cellPx, windows, silhouetteBox) => ({ sheet: { cellPx }, windows, margins: { silhouetteBox } });
+
+  const GEOMETRIES = [
+    ['實交付比例（cellPx 64）', geom(64, WIN, [0.04, 0.96])],
+    ['安全框＝整格（K 吃到邊界像素）', geom(64, WIN, [0, 1])],
+    ['安全框小於視窗（E/B/M 凸出框外）', geom(64, WIN, [0.3, 0.5])],
+    ['視窗被推出格外（需要夾取）', geom(64, { E: { x0: -0.1, x1: 0.3, y0: -0.2, y1: 0.2 }, B: { x0: 0.8, x1: 1.4, y0: 0.1, y1: 0.3 }, M: WIN.M }, [0.04, 0.96])],
+    ['零面積視窗（x0 === x1）', geom(64, { E: { x0: 0.5, x1: 0.5, y0: 0.4, y1: 0.4 }, B: WIN.B, M: WIN.M }, [0.04, 0.96])],
+    ['視窗互相重疊（SP-2.11 被違反）', geom(64, { E: { x0: 0.2, x1: 0.8, y0: 0.2, y1: 0.6 }, B: { x0: 0.3, x1: 0.7, y0: 0.25, y1: 0.5 }, M: { x0: 0.4, x1: 0.6, y0: 0.3, y1: 0.55 } }, [0.04, 0.96])],
+    ['奇數 cellPx 65（四捨五入的邊界）', geom(65, WIN, [0.04, 0.96])],
+    ['極小 cellPx 7（視窗塌成一兩個像素）', geom(7, WIN, [0.04, 0.96])],
+  ];
+
+  const sameMask = (a, b) => {
+    if (a.length !== b.length) {
+      return `長度 ${a.length} ≠ ${b.length}`;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return `第 ${i} 個像素（x=${i % Math.sqrt(a.length)}）${a[i]} ≠ ${b[i]}`;
+      }
+    }
+    return null;
+  };
+
+  // 兩份的簽名不同（`(code, manifest)` 對 `(manifest, cell)`），所以比對時
+  // 把產權碼塞進 `reactionOwnership[0]` 餵給重建版，等價的是**合成後的行為**。
+  const bad = [];
+  let compared = 0;
+  for (const [label, g] of GEOMETRIES) {
+    for (const code of OWNERSHIP_CODES) {
+      const m = { ...g, reactionOwnership: [code, ...Array(8).fill('')] };
+      const diff = sameMask(C.ownershipMask(code, m), ownershipMaskFor(m, 0));
+      compared++;
+      if (diff) {
+        bad.push(`${label} / ${JSON.stringify(code)}：${diff}`);
+      }
+    }
+  }
+  ok(`21 個產權碼 × 8 組幾何（共 ${compared} 組）兩份實作逐位元相同`, bad.length === 0, bad.slice(0, 3).join(' | '));
+
+  // AC-2 逐字要求的那一組：實交付 manifest 的**每一格**。
+  const deliveredPath = path.join(ROOT, 'src/img/sprite/sprite-manifest.json');
+  const delivered = fs.existsSync(deliveredPath) ? JSON.parse(fs.readFileSync(deliveredPath, 'utf8')) : null;
+  const perCell = (m) => {
+    const out = [];
+    for (let c = 0; c < CELL_COUNT; c++) {
+      const diff = sameMask(C.ownershipMask(m.reactionOwnership[c], m), ownershipMaskFor(m, c));
+      if (diff) {
+        out.push(`格${c}（${m.reactionOwnership[c]}）：${diff}`);
+      }
+    }
+    return out;
+  };
+  // manifest 未交付時（SP-7.14 的關閘狀態）不能把斷言數掉下來 —— MIN_SELFTEST 是**下限**，
+  // 「素材還沒進版控」不該長得像「測試被刪了」。改拿合成 manifest 頂上並在名稱說清楚。
+  const deliveredCells = perCell(delivered ?? buildManifest());
+  ok(
+    delivered ? '實交付 manifest 的九格兩份實作相同' : '實交付 manifest 未交付，以合成 manifest 代替：九格相同',
+    deliveredCells.length === 0,
+    deliveredCells.join(' | ')
+  );
+  const syntheticCells = perCell(buildManifest());
+  ok('selftest 的合成 manifest 九格兩份實作相同', syntheticCells.length === 0, syntheticCells.join(' | '));
+  // 刻意違規的 fixture：遮罩只看 manifest 不看像素，所以「違規」要從 manifest 這一側來
+  // ——把九格的產權碼換成會讓現有 fixture 紅的組合，兩份仍必須同意該放行哪些像素。
+  const violating = buildManifest({ reactionOwnership: ['', 'E', 'K', 'EBMK', 'EB', 'BM', 'MK', 'EM', 'BK'] });
+  const violatingCells = perCell(violating);
+  ok('刻意違規的產權碼組合（含空碼）九格兩份實作相同', violatingCells.length === 0, violatingCells.join(' | '));
+  // 空碼的兩份行為必須都是「全不允許」而不是「全允許」—— 這兩者等價性測不出來
+  // （兩邊同錯就同綠），而弄反的後果是整格放行、SP-7.4 永不觸發。
+  const emptyMask = C.ownershipMask('', buildManifest());
+  ok('空產權碼 → 全不允許（不是全允許）', emptyMask.every((v) => v === 0), `有 ${emptyMask.reduce((n, v) => n + v, 0)} 個像素被放行`);
 }
 
 // ===========================================================================
