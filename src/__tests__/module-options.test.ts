@@ -15,7 +15,7 @@ import { PanelOptionsEditorBuilder, standardEditorsRegistry } from '@grafana/dat
 import { plugin } from '../module';
 import { DEFAULT_OPTIONS, type MascotPanelOptions } from '../panelOptions';
 import { parseSeverityAliases } from '../core/severityAliases';
-import { parseQuietHours } from '../director/BroadcastDirector';
+import { parseFlapping, parseQuietHours } from '../director/BroadcastDirector';
 
 /**
  * 編輯器元件本身由 Grafana 在執行期注入（`standardEditorsRegistry` 在 app 啟動時才填）。
@@ -110,4 +110,49 @@ test('#63：quietAllowCritical 只在設了時段且開著語音時顯示（沒�
   expect(showIf({ ...base, quietHours: '   ' })).toBeFalsy();
   expect(showIf({ ...base })).toBeFalsy();
   expect(showIf({ ...base, quietHours: '22:00-07:00', enableTTS: false })).toBeFalsy();
+});
+
+test('#64 AC-1：flappingThreshold／flappingWindowMin 註冊在編輯器上，預設是「關閉」', () => {
+  const threshold = registeredOptions().find((o) => o.path === 'flappingThreshold');
+  expect(threshold).toBeDefined();
+  expect(threshold!.defaultValue).toBe(0);
+  expect(DEFAULT_OPTIONS.flappingThreshold).toBe(0);
+
+  const minutes = registeredOptions().find((o) => o.path === 'flappingWindowMin');
+  expect(minutes).toBeDefined();
+  expect(minutes!.defaultValue).toBe(10);
+  expect(DEFAULT_OPTIONS.flappingWindowMin).toBe(10);
+});
+
+test('#64 AC-6：flappingThreshold 的說明有「關閉」的語意與一個解析得出來的範例', () => {
+  const description = registeredOptions().find((o) => o.path === 'flappingThreshold')?.description ?? '';
+  // 範例要是**解析得出來**的設定，不是看起來像範例的字。
+  const example = /門檻 (\d+)、窗長 (\d+)/.exec(description);
+  expect(example).not.toBeNull();
+  expect(parseFlapping(Number(example![1]), Number(example![2])).config).toEqual({
+    threshold: 4,
+    windowMs: 10 * 60_000,
+  });
+  // 票文 AC-6 那句例子的兩半：窗內翻幾次就不念、穩定多久就恢復。
+  expect(description).toContain('10 分鐘內翻 4 次就先不念');
+  expect(description).toContain('穩定 10 分鐘後恢復');
+  // AC-1 的使用者可見面，以及 AC-5 第一項（門檻擋下的不計數）。
+  expect(description).toContain('0 或留空 = 關閉');
+  expect(description).toContain('不計入翻轉次數');
+});
+
+test('#64 AC-6：flappingWindowMin 的說明寫明它同時是「穩定多久解除」，且 0 視同關閉', () => {
+  const description = registeredOptions().find((o) => o.path === 'flappingWindowMin')?.description ?? '';
+  expect(description).toContain('穩定多久就解除抑制');
+  expect(description).toContain('視同關閉');
+});
+
+test('#64：窗長只在開了語音且門檻大於 0 時顯示（門檻 0 時它無從生效）', () => {
+  const minutes = registeredOptions().find((o) => o.path === 'flappingWindowMin');
+  const showIf = minutes!.showIf!;
+  const base = { ...DEFAULT_OPTIONS };
+  expect(showIf({ ...base, flappingThreshold: 4 })).toBe(true);
+  expect(showIf({ ...base, flappingThreshold: 0 })).toBeFalsy();
+  expect(showIf({ ...base })).toBeFalsy();
+  expect(showIf({ ...base, flappingThreshold: 4, enableTTS: false })).toBeFalsy();
 });
