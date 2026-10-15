@@ -141,7 +141,7 @@ Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
-| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報。label 不存在、空字串或只有空白時，**那一個 instance** 退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報。label 不存在、空字串或只有空白時，**那一個 instance** 退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，正在燒的告警會全部重新播報一次，名字沒變的也一樣 |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
