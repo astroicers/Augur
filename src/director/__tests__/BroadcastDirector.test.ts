@@ -802,6 +802,32 @@ test('#64：被取代的 fingerprint 連抖動狀態一起忘掉 —— 解除�
   expect(h.spoken).toHaveLength(5);
 });
 
+test('#64：抑制中關掉抖動抑制，而當下狀態與最後念出去的相同 —— 不補念（不重複念使用者聽過的話）', async () => {
+  const h = harness();
+  await flipRounds(h, 7, FLAPPING); // 第 6、7 輪被抑制；第 7 輪 firing ＝ 抑制前最後念出去的 firing
+  expect(h.spoken).toHaveLength(5);
+  h.setClock(1_000_000 + 7 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], { ...FLAPPING, flappingThreshold: 0 });
+  expect(h.spoken).toHaveLength(5);
+});
+
+test('#64：抑制中（最後是 firing）被取代 —— 解除時不補念，之後同一個 fingerprint 再燒起來念得出來', async () => {
+  // 來源層正常只會取代「還在 episodes 裡」的那幾則，也就是最後吐的是 firing 的那幾則。
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  await flipRounds(h, 7, over); // 第 7 輪（firing）被抑制；抑制前最後念出去的是 resolved
+  expect(h.spoken).toHaveLength(6);
+  h.hooks().onSupersede('fp-flap');
+  h.setClock(1_000_000 + 16 * MINUTE);
+  await h.run([], over);
+  expect(h.spoken).toHaveLength(6); // 不補念一則已被取代的告警
+  // 沒有連抖動狀態一起忘的話，上一輪的補念會把 dedup 記回「播過 firing」，這一輪就被擋下。
+  h.setClock(1_000_000 + 17 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+});
+
 test('#64：抑制中關掉抖動抑制 —— 最後仍在燒而沒念過的那一則立刻補念，不會整段燒的過程都沒聲音', async () => {
   const h = harness();
   const over = { flappingThreshold: 5, flappingWindowMin: 10 };
