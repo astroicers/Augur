@@ -14,6 +14,7 @@
  */
 import type { BroadcastPlan } from '../core/types';
 import type { Speaker, SpeakerEvents } from './speaker';
+import { CLAUSE_SPLIT_POINT } from './splitRules';
 
 /**
  * ADR-005 決策 3。原為 15 秒（依 BreezyVoice：一般 3–8 秒）；2026-10-06 換成 Qwen3-TTS 後改 30 秒 ——
@@ -135,12 +136,14 @@ export function mouthEnvelope(buf: AudioBufferLike, hopSec = ENVELOPE_HOP_SEC): 
  * 數字最容易念錯 —— 2026-10-05 實測「目前數值 91.35。」單獨成段 4 次錯 3 次，整句合成 3 次全對。
  * 原本 8 字，改 16（伺服器端 `MIN_CLAUSE_CHARS` 同值，否則合好的段落到伺服器又被切開）。
  *
- * 半形的 `, : ; ? !` 後面接數字或 `/` 時不切：`192.168.1.20:9182`、`12:30:05`、`http://`、`1,234`
- * 切開會變成兩次請求、中間多一個停頓（複審 2026-10-05 指出）。全形標點一律切。
- * 不吃掉標點後的空白，英文句子送出去時字與字之間的空格還在。
+ * 切點規則集中在 `splitRules.ts`（#59）：全形 `，：；。！？` 一律切；
+ * 半形的 `, : ; ? !` 後面接數字或 `/` 時不切 —— `192.168.1.20:9182`、`12:30:05`、`http://`、`1,234`
+ * 切開會變成兩次請求、中間多一個停頓（複審 2026-10-05 指出）。
+ * 半形 `.` 不是切點；空白也不是，所以不吃掉標點後的空白，英文句子送出去時字與字之間的空格還在。
+ * 與 `splitForRemoteVoice`、伺服器端 `textsplit.py` 的差異逐條記在 `splitRules.ts` 的檔頭，共用語料釘住。
  */
 export function splitClauses(text: string, minChars = 16): string[] {
-  const raw = text.split(/(?<=[，：；。！？]|[,:;?!](?![\d/]))/).filter((s) => s.trim() !== '');
+  const raw = text.split(CLAUSE_SPLIT_POINT).filter((s) => s.trim() !== '');
   const out: string[] = [];
   let buf = '';
   for (const piece of raw) {
