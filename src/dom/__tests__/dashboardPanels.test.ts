@@ -6,7 +6,9 @@
  * crossPanel 必須是 false、reason 必須寫得出原因、`panels()` / `panelAt()` 必須回空值而不是丟錯。
  *
  * 另一半是重試（附錄-7）：降級不等於永久判決。這裡驗的是重試**有界**、升回**只升一次**、
- * 以及 `stop()` 之後不留計時器 —— 後者是 MascotPanel 卸載時不漏計時器的前提。
+ * `stop()` 之後既不留計時器也不再接受 `recheck()`（#47 AC-4）、
+ * 以及節流窗量的是單調時鐘而不是牆鐘（#47 AC-3）—— 後兩者是 MascotPanel 卸載時
+ * 不漏計時器、也不對著已卸載的樹 setState 的前提。
  */
 
 import {
@@ -277,5 +279,88 @@ describe('watchDashboardDom', () => {
     addPanel('panel-9');
     jest.advanceTimersByTime(100 * DOM_PROBE_RETRY_INTERVAL_MS);
     expect(onUpgrade).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #47 AC-4。上面那條只驗「計時器不再跑」——事件驅動的 `recheck()` 不經過計時器，
+   * 所以 `stop()` 沒有關掉它的話，卸載後殘留的那一拍 rAF（MascotPanel 的 `onMove`
+   * 先 `recheck()` 才檢查 `hostRef.current`）仍能升回，而升回會呼叫 `onUpgrade`
+   * ＝ 對著已卸載的 React 樹 setState ＋ 把 listener 重綁回 `document`。
+   */
+  test('stop() 之後 recheck() 一律回 false、不呼叫 onUpgrade（節流窗外、DOM 也真的變了）', () => {
+    const mine = addPanel('panel-7');
+    const onUpgrade = jest.fn();
+    const w = watchDashboardDom(inner(mine), onUpgrade, { limit: 0 });
+
+    w.stop();
+    // 節流窗過了、而且 DOM 真的長出第二個 panel —— 沒有 stop() 的話這次必定升回。
+    addPanel('panel-9');
+    jest.advanceTimersByTime(10 * DOM_PROBE_RECHECK_MIN_INTERVAL_MS);
+
+    expect(w.recheck()).toBe(false);
+    // 第二次也回 false：節流窗沒被「上一次探過」更新，而是這條路整個關了。
+    jest.advanceTimersByTime(10 * DOM_PROBE_RECHECK_MIN_INTERVAL_MS);
+    expect(w.recheck()).toBe(false);
+
+    expect(onUpgrade).not.toHaveBeenCalled();
+    expect(w.current().crossPanel).toBe(false);
+    expect(w.retriesLeft()).toBe(0);
+  });
+
+  test('stop() 在計時器重試窗還沒用完時呼叫：recheck() 也不得把它救回來', () => {
+    const mine = addPanel('panel-7');
+    const onUpgrade = jest.fn();
+    const w = watchDashboardDom(inner(mine), onUpgrade, { limit: 4, intervalMs: 100 });
+    expect(w.retriesLeft()).toBe(4);
+
+    addPanel('panel-9');
+    w.stop();
+    jest.advanceTimersByTime(10_000);
+
+    expect(w.recheck()).toBe(false);
+    expect(onUpgrade).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #47 AC-3。節流窗若用 `Date.now()` 量，牆鐘往回跳（NTP 校正、改系統時間、
+   * VM 從 snapshot 恢復）會讓 `now - lastProbeAt` 變成負數 —— 永遠小於節流窗，
+   * 於是 `recheck()` 一路回 false 直到牆鐘追回來。計時器的有界重試窗過後，
+   * 這條是唯一的升回途徑，卡住就等於永久降級。
+   *
+   * 測法：只把**牆鐘**往回撥（`jest.spyOn(Date, 'now')`），單調時鐘照 fake timer 前進
+   * ——實測 jest 的 fake timers 連 `performance.now()` 一起接管，而對 `Date.now` 的
+   * spy 不會跟著動它，兩個時鐘因此在這條測試裡真的分叉。
+   */
+  test('recheck 的節流用單調時鐘：牆鐘往回撥一小時也不會把它卡死', () => {
+    const mine = addPanel('panel-7');
+    const onUpgrade = jest.fn();
+    const w = watchDashboardDom(inner(mine), onUpgrade, { limit: 0 });
+
+    const wallClockNow = Date.now();
+    jest.spyOn(Date, 'now').mockReturnValue(wallClockNow - 3_600_000);
+
+    addPanel('panel-9');
+    jest.advanceTimersByTime(DOM_PROBE_RECHECK_MIN_INTERVAL_MS);
+
+    expect(w.recheck()).toBe(true);
+    expect(onUpgrade).toHaveBeenCalledTimes(1);
+    expect(w.current().crossPanel).toBe(true);
+  });
+
+  test('牆鐘往前跳也不會讓節流窗失效（單調時鐘兩個方向都不受牆鐘影響）', () => {
+    const mine = addPanel('panel-7');
+    const onUpgrade = jest.fn();
+    const w = watchDashboardDom(inner(mine), onUpgrade, { limit: 0 });
+
+    // 牆鐘往前跳一小時：用 Date.now() 的話差值遠大於節流窗，節流等於不存在。
+    const wallClockNow = Date.now();
+    jest.spyOn(Date, 'now').mockReturnValue(wallClockNow + 3_600_000);
+
+    addPanel('panel-9');
+    expect(w.recheck()).toBe(false); // 單調時鐘還在節流窗內
+    expect(onUpgrade).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(DOM_PROBE_RECHECK_MIN_INTERVAL_MS);
+    expect(w.recheck()).toBe(true);
   });
 });
