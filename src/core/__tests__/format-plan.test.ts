@@ -74,7 +74,7 @@ test('#39：severity 缺值/非字串時 plan.severity 是字串 unknown，不�
   }
 });
 
-test('#39：plan.severity 與 plan.text 念出的嚴重度一致（同一份正規化）', () => {
+test('#39：plan.severity 與 plan.text 念出的嚴重度一致', () => {
   for (const v of [...DIRTY_SEVERITIES, 'critical', ' CRITICAL ', '\tWarning\n', 'info', 'fatal']) {
     const plan = buildBroadcastPlan(withSeverity(v), 'en');
     expect(plan.text).toContain(`severity ${plan.severity}`);
@@ -95,7 +95,7 @@ test('#39：乾淨嚴重度的 plan.severity 一字未改；僅去空白轉小�
   expect(buildBroadcastPlan(mk({ severity: ' CRITICAL ' }), 'en').severity).toBe('critical');
 });
 
-test('#39：plan.severity 正規化不影響 emotion（emotion 仍收原始值）', () => {
+test('#39：plan.severity 正規化不改變 emotion 判定', () => {
   for (const v of [' CRITICAL ', 'Error', 'WARNING', undefined, null, {}]) {
     const plan = buildBroadcastPlan(withSeverity(v), 'en');
     expect(plan.emotion).toBe(severityToEmotion(v, 'firing'));
