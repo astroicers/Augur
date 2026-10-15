@@ -2,10 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-15（#63：新增 `quietHours`／`quietAllowCritical` 兩個選項——
+> 最後更新：2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
+> 去重單位，一條總規則底下的每則告警各自播報）。
+> 前一次是 2026-10-15（#63：新增 `quietHours`／`quietAllowCritical` 兩個選項——
 > dashboard 層級的值班靜音時段，判斷在導播的交付閘門上）。
-> 前一次是 2026-10-15（#58：導播管線收成 `src/director/BroadcastDirector.ts`——
-> 不依賴 React 的深模組，`MascotPanel.tsx` 只剩呈現與接線）。
 
 ## 一句話
 
@@ -27,6 +27,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
   │                              ▼
   │                      src/sources/panelAlerts.ts
   │                        ├ alerting → 打 rules 端點補細節，建立／沿用 episode
+  │                        │            （告警名＝`alertname`，或 `alertNameLabel`
+  │                        │              指定的 instance label；名字就是去重單位，#69）
   │                        ├ pending  → 不產生事件（見 ADR-004 決策 2）
   │                        └ ok       → 由記住的 episode 複製出 resolved
   │                              │
@@ -131,13 +133,15 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options 共 **15 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
-`src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改：
+Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
+`src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改。這個數字與下表的每一列
+由 `src/__tests__/module-options.test.ts` 對著註冊面機械比對（#69），漏改會紅：
 
 | option | 預設 | 作用 |
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報。label 不存在、空字串或只有空白時，**那一個 instance** 退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同 |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
@@ -159,6 +163,17 @@ Panel options 共 **15 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 （延續 2026-09-18 不擴 `Emotion` 那次裁定所依據的純函式語意）。
 播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`：去掉前後空白、
 轉小寫，缺值、空白與非字串一律收斂成 `unknown`，見 `src/core/format.ts`）。
+
+`alertNameLabel`（#69）動的是**名字**，而名字就是**去重單位**：來源層的 fingerprint 是
+`alert:${名字}`（不含 panelId 也不含規則名，所以同名的告警跨規則仍然只念一次）。
+Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`，所以「一條總規則查整面值班牆
+（`ALERTS{alertstate="firing"}`）」時每則告警的名字都一樣、只念得到第一則（eks-infra#1210 實測）；
+查詢端用 `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` 把原名保留成 instance
+label，這個選項再指定去讀它。取名是**逐 instance** 的（`sources/panelAlerts.ts` 的 `alertNameOf`，
+唯一一處），所以同一條規則裡帶與不帶那個 label 的 instance 可以並存，各自成為一個 episode、
+各自恢復。`MascotPanel.tsx` 與導播都只是把這個字串原樣往下帶，不解析也不判斷。
+改這一欄會讓既有 episode 的 fingerprint 失效，所以來源層把它們當**被取代**（`onSupersede`，
+不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
 
 `quietHours`（#63）的解析與「現在算不算時段內」是 `director/BroadcastDirector.ts` 裡的純函式
 （`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`；不碰 DOM、時刻由注入的時鐘帶進來），

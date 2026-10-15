@@ -63,6 +63,12 @@ export interface AlertSource {
  */
 export interface SourceHooks {
   fallbackSeverity: () => string;
+  /**
+   * 用哪個 instance label 當告警名（#69）。走函式的理由同 `fallbackSeverity`：
+   * 讀的時機是**來源層評估當下**，所以換這個選項不必重建 source（重建會清掉 `episodes`）。
+   * 空字串 = 用 `alertname`，行為與沒有這個選項時相同。
+   */
+  alertNameLabel: () => string;
   onSupersede: (fingerprint: string) => void;
 }
 
@@ -84,6 +90,17 @@ export interface DirectorSettings {
   repeatFiringMin: number;
   /** rules 端點取不到細節時的嚴重度。 */
   fallbackSeverity: string;
+  /**
+   * 用哪個 instance label 當告警名與去重單位（#69）；空字串／缺鍵 = 用 `alertname`，
+   * 行為與沒有這個選項時完全相同。
+   *
+   * 本檔**不解析也不判斷**，原樣轉給來源層（`panelAlerts.ts` 的 `alertNameOf`）——
+   * 名字與 fingerprint 是來源層的職責，導播只認 `ParsedAlert`。
+   *
+   * **選填（`?`）而非必填**，理由同 `quietHours`：既有的 `DirectorSettings` 字面值
+   * （含測試 fixture）不必補一行，而 #69 AC-1 要的正是「既有測試不改且全綠」。
+   */
+  alertNameLabel?: string;
   /** 組句語言。 */
   alertLang: AlertLang;
   /**
@@ -198,6 +215,7 @@ export function panelAlertSource(panelId: number, fetchRules: RulesFetcher): (ho
       panelId,
       fetchRules,
       fallbackSeverity: hooks.fallbackSeverity,
+      alertNameLabel: hooks.alertNameLabel,
       onSupersede: hooks.onSupersede,
     });
 }
@@ -415,6 +433,9 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
     // `applySettings` 必定在 `source.evaluate()` 之前跑完，所以來源層讀到的永遠是
     // 本輪的設定；`?? ''` 只是不寫 non-null 斷言（空字串在 `severity.ts` 等同 unknown）。
     fallbackSeverity: () => settings?.fallbackSeverity ?? '',
+    // 同上：`applySettings` 必定在 `source.evaluate()` 之前跑完，所以來源層讀到的
+    // 是本輪的選項值；缺鍵（舊 dashboard 的 panel JSON）等於空字串 = 照舊用 alertname。
+    alertNameLabel: () => settings?.alertNameLabel ?? '',
     onSupersede: (fingerprint) => dedup.forget(fingerprint),
   });
 
