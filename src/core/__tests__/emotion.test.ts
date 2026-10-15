@@ -26,7 +26,7 @@ const actualNormalize: typeof normalize = jest.requireActual('../severity').norm
  * ⚠️ 這裡是 `mockReset()` 而不是 `mockClear()`。
  *
  * `mockClear()` 只清呼叫紀錄，**`mockReturnValueOnce` 排進去的佇列會留著**。
- * 下面有兩條測試各排一筆 once 回傳值然後立刻消費掉 —— 只要其中任何一條在
+ * 下面那條結構護欄（`mockReturnValueOnce` 那條）排了兩筆 once 回傳值然後立刻消費掉 —— 只要它在
  * 消費之前就失敗（斷言翻紅會中斷該測試），那筆冒牌回傳就會留在佇列裡，
  * 由**下一條測試的第一次 normalize 呼叫**吃掉。症狀是一條真正的失敗後面
  * 跟著一串莫名其妙的連鎖失敗，而且哪一條被污染取決於檔案裡的順序。
@@ -153,7 +153,7 @@ test('結構護欄：resolved 的早退在 normalize 之前（完全不看 sever
 /**
  * 這兩條是**一對**，而且順序有意義（jest 在同一檔內依宣告順序跑）。
  *
- * 上面那兩條結構護欄都是「排一筆 once 回傳值 → 立刻消費掉」。只要其中任一條在
+ * 上面那條結構護欄是「排兩筆 once 回傳值 → 立刻消費掉」。只要它在
  * 消費之前就斷言失敗，那筆冒牌回傳值會留在佇列裡 —— `mockClear()` 不清佇列 ——
  * 由下一條測試的第一次 `normalize` 呼叫吃掉，於是一條真失敗後面跟著一串假失敗。
  *
@@ -161,7 +161,7 @@ test('結構護欄：resolved 的早退在 normalize 之前（完全不看 sever
  * 把 `beforeEach` 改回 `mockClear()` 的話，後一條會紅在
  * `severityToEmotion('info', 'firing')` 回 `'critical'`（實測）。
  */
-test('佇列外洩護欄（上）：刻意排一筆 mockReturnValueOnce 卻不消費', () => {
+test('佇列外洩護欄（上，夾具）：刻意排一筆 mockReturnValueOnce 卻不消費——本條不驗行為，只替下一條佈置情境', () => {
   normalizeSpy.mockReturnValueOnce('critical');
   expect(normalizeSpy).not.toHaveBeenCalled();
 });

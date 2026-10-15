@@ -283,9 +283,9 @@ describe('watchDashboardDom', () => {
 
   /**
    * #47 AC-4。上面那條只驗「計時器不再跑」——事件驅動的 `recheck()` 不經過計時器，
-   * 所以 `stop()` 沒有關掉它的話，卸載後殘留的那一拍 rAF（MascotPanel 的 `onMove`
-   * 先 `recheck()` 才檢查 `hostRef.current`）仍能升回，而升回會呼叫 `onUpgrade`
-   * ＝ 對著已卸載的 React 樹 setState ＋ 把 listener 重綁回 `document`。
+   * 所以 `stop()` 沒有關掉它的話，stop 之後仍呼叫 recheck 的呼叫端就能升回，而升回會呼叫
+   * `onUpgrade` ＝ 對著已卸載的 React 樹 setState ＋ 把 listener 重綁回 `document`。
+   * 目前的 MascotPanel 在清理時同步取消 rAF，走不到這條路；本條防禦的是未來的呼叫端。
    */
   test('stop() 之後 recheck() 一律回 false、不呼叫 onUpgrade（節流窗外、DOM 也真的變了）', () => {
     const mine = addPanel('panel-7');

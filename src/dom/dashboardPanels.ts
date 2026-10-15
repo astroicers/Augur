@@ -220,9 +220,10 @@ export function watchDashboardDom(
     current: () => dom,
     recheck: () => {
       // `stopped` 擺第一個：`stop()` 之後這個 watcher 就不該再有任何動作。
-      // 呼叫端通常是在 unmount 的清理裡 stop 的，而事件驅動的 recheck 來自
-      // 一個已經排好的 rAF／listener —— 那一拍若還能升回，`onUpgrade` 就會對著
-      // 已卸載的 React 樹 setState（MascotPanel 的 `apply()` 同時 setScope 與重綁 listener）。
+      // 這是防禦未來的呼叫端：目前 MascotPanel 的清理在同一個同步區塊裡依序
+      // `watcher.stop()`、`cancelAnimationFrame`、解綁 listener，殘留的那一拍不會執行。
+      // 但若有呼叫端 stop 之後仍有排好的 rAF／listener 呼叫 recheck，那一拍若還能升回，
+      // `onUpgrade` 就會對著已卸載的 React 樹 setState——這個旗標讓它不可能發生。
       if (stopped || dom.crossPanel || performance.now() - lastProbeAt < minRecheckIntervalMs) {
         return false;
       }
