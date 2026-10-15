@@ -105,7 +105,9 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 **唯一的抽象邊界是 `ParsedAlert`**（`src/core/types.ts`）。來源層把任何來源轉成它，
 `core/` 只認得它。這條線在 push → pull 的方向反轉中**完好無損** ——
 `src/core/` 整包繼承、介面一行沒改就承接了新架構。
-（**不是「零修改」**：之後為兩次真實的永久靜音缺陷加了 `dedup.forget()` 與 `setWindow()`，
+（**內部改過**：之後為兩次真實的永久靜音缺陷加了 `dedup.forget()`（commit
+「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」）與 `setWindow()`（commit
+「fix(panel): 會讓面板永久靜音的三條路徑，以及 speaker.ts 的第一份測試」），
 `severity` 也補了缺值收斂。改的是內部行為，`ParsedAlert` 這條邊界沒動。）
 
 **來源層的三個不變量**（`panelAlerts.ts` 檔頭有完整說明）：episode 用複製而非重算、
@@ -150,7 +152,8 @@ Panel options 共 **13 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 只認半形會讓整組設定靜默失效。別名以**前置正規化**的形式生效：導播層先 `resolveSeverity`
 再餵給 `rankOf`/`meetsMin`/`severityToEmotion`，那三個純函式一律不收設定參數
 （延續 2026-09-18 不擴 `Emotion` 那次裁定所依據的純函式語意）。
-播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`，只正規化大小寫）。
+播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`：去掉前後空白、
+轉小寫，缺值、空白與非字串一律收斂成 `unknown`，見 `src/core/format.ts`）。
 
 兩個 sprite URL 的預設**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的
 `[hash][ext]`，空字串時由 `SpriteController` 改用 `spriteAssets.ts` 的 import 值。

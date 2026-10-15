@@ -9,7 +9,6 @@
 
 | 路徑 | 內容 | 出處 | 授權 | 備註 |
 |---|---|---|---|---|
-
 | `live2d/_archive/nami/layout.json`<br>`live2d/_archive/nami/manifest.json` | 純座標與 z-order，**無美術資料** | 自產（拆層工具輸出） | 隨 repo Apache-2.0 | 對應的 34 張圖已移除，見下 |
 | `src/img/logo.svg` | plugin 圖示 | `@grafana/create-plugin` 7.11.0 腳手架 | Apache-2.0（隨腳手架） | 尚未替換成自有圖示 |
 | `src/img/sprite/directions.png`<br>`src/img/sprite/reactions.png`<br>`src/img/sprite/sprite-manifest.json` | 角色「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿，規格 SP-0.9）：兩張精靈圖與 manifest：說話動嘴、眨眼、表情 5 格；視線格同一張臉（SP-0.10，`features.gaze = false`） | **AI 生成＋後製**（SP-9.2 七項）：① 產品 **Google Gemini**；② 版本 **App 未公開版本**；③ 生成日期：不晚於 2026-10-05（專案主人提供當日；確切日期未保留）；④ 操作者：專案主人；⑤ 逐字 prompt：[`docs/sprite/SOURCE-PROMPTS.md`](sprite/SOURCE-PROMPTS.md)；⑥ 輸入參考圖：無（專案主人只給文字 prompt）；⑦ 後製（操作者：Claude，2026-10-05）：BiRefNet 去背（模型 MIT，經 ComfyUI-RMBG 節點於本機執行）＋噴水處以 OpenCV GrabCut 補回、`tools/sprite-gen/face-edits.py` 從原圖像素修改嘴與眼並疊上表情記號（汗滴、怒筋、腮紅、閃光，皆為程式繪製）、`tools/sprite-gen/assemble.mjs` 組裝。ComfyUI 局部重繪試過未採用 | **(a) 生成服務條款**：Google 服務條款（https://policies.google.com/terms ，生效日 2026-07-30，查證 2026-10-05）逐字：「Some of our services allow you to generate original content. Google won't claim ownership over that content.」；Generative AI Prohibited Use Policy（https://policies.google.com/terms/generative-ai/use-policy ，最後修改 2024-12-17）禁止侵權與謊稱人類創作 —— 本列即明示為 AI 生成。**(b) 專案主張**：專案自有，以專案實際持有之權利為限，隨 repo Apache-2.0 釋出。**否定聲明（SP-9.7，依實改寫，見規格 SP-9.7 的 2026-10-05 註）**：未以任何指名畫師風格或未授權的參考圖作為生成輸入；**prompt 以「有點像小埋的感覺」描述氛圍，點名了第三方角色作為風格參考**。生成圖背景另有 Gemini 自行加入的第三方作品海報（原神、SPY×FAMILY、疑似小埋），已於去背時全數去除；交付物只含原創造型的角色，不含小埋的造型元素（金色長髮、倉鼠斗篷）。純 AI 生成內容在部分法域不受著作權保護 | sha256：directions `97d7816d10d497519bf4f7024cd8cf42f657037a38d88cffe968f830a8d0df62`、reactions `00d976c691113c773bb02e065acf03c707afcf38afd61b4b72df95b218c373af`（與 manifest 同值，SP-9.8）。**原始檔（SP-9.11）**：Gemini 原圖、去背遮罩、四張來源圖與 `align.json` 存於專案主人本機 `assets/sprite-src/`（不進版控，負責人：專案主人）；**本 repo 無法單獨重建此素材**。前一版程式畫的暫定圖與其產生器 `whale-boy.mjs` 已刪除（見 git 歷史） |
@@ -101,6 +100,11 @@ nami 是可辨識的**第三方角色**，風險是著作權侵害；A1 是本�
 且只有專案主人知道用了哪個服務。在未知服務的情況下逕行改寫已推送的歷史，
 與風險不成比例。
 
+> **以下兩段 2026-09-21 已被退出版控取代**，留作當時的判斷紀錄：專案主人確認想不起來
+> 用的是哪個服務，於是「回想並確認」這條路走不通，直接走了裡面寫的 remedy —— A1 與其衍生
+> 分層退出版控（見上面〈A1 已退出版控（2026-09-21）〉），角色亦已於 2026-10-05 重新設計
+> （規格 SP-0.9）。**A1 不再「維持現狀（已在版控中）」。**
+
 **待專案主人做的一件事**：回想並確認當初用的服務，實讀其條款對「輸出歸屬」與
 「商業／再散布」的規定，把結論與一級來源 URL 逐字填進上表。
 **若條款不允許**，remedy 是比照 nami 處理 —— A1 移出版控、角色重新設計，
@@ -108,6 +112,8 @@ nami 是可辨識的**第三方角色**，風險是著作權侵害；A1 是本�
 
 **在確認之前**：A1 維持現狀（已在版控中），但**新的 sprite 素材必須在產生的當下就記錄出處**
 （見 `docs/sprite/production-sop.md` 階段 5）。這條規則對新素材沒有例外。
+
+（被取代的只有 A1 的處置；上一段**對新素材**的記錄規則不受影響，仍然有效。）
 
 ## 刻意不進版控的資產
 

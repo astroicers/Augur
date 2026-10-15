@@ -111,7 +111,7 @@ test('AC-2：髒嚴重度與字串 unknown 的播報句完全一致', () => {
   }
 });
 
-test('AC-2：髒嚴重度不改變句型——子句數與乾淨輸入相同', () => {
+test('AC-2：髒嚴重度時嚴重度子句不被省略——子句數與乾淨輸入相同', () => {
   const clean = formatAlert(mk()).split('，').length;
   for (const [, v] of DIRTY) {
     expect(formatAlert(withSeverity(v)).split('，').length).toBe(clean);
