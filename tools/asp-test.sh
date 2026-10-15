@@ -223,13 +223,14 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（2026-10-15 於 main e967e84 由 jest --ci --json 實數，不是手算）：
+# MIN_TESTS = 所有測試檔之和（2026-10-15 於 main 6dcd757 由 jest --ci --json 實數，不是手算）：
 #   core/dedup 13 + core/emotion 13 + core/severity 12 + core/severityAliases 17
 # + core/format-plan 12 + core/format 27 + sources/panelAlerts 18 + sources/history 34
 # + sources/historyFetcher 5 + sources/panelRules 9 + speech/speaker 30
-# + speech/remoteSpeaker 41 + components/MascotPanel 58 + dom/dashboardPanels 20
+# + speech/remoteSpeaker 41 + speech/splitCorpus 106 + components/MascotPanel 62
+# + director/BroadcastDirector 37 + director/quietHours 16 + dom/dashboardPanels 20
 # + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 + __tests__/module-options 3 = 363（20 個 suite）
+# + __tests__/implementation-contract 6 + __tests__/module-options 7 = 530（23 個 suite）
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # ⚠️ 2026-10-14 之前這裡寫 189（13 suites），而實際已是 258（15 suites）——
@@ -238,8 +239,9 @@ JEST_EXIT=$?
 # 2026-10-15 第一批（#33 #34 #36 #39，PR #41 #42 #44 #45）合併後由主管層統一校到 314；
 #    各票依票文不得自改本檔，避免並行的票改同一行而互相衝突。
 # 2026-10-15 第一批收尾（#46 #47 #51，PR #48 #49 #55）合併後再校到 363。
+# 2026-10-15 第二批（#58 #59 #60 #61 #63，PR #62 #65 #66 #67 #68）合併後再校到 530。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=363
+MIN_TESTS=530
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
