@@ -599,6 +599,19 @@ export interface FlappingTracker {
    * 而 AC-1 要的是「關著時與沒有這個選項時完全相同」。
    */
   reset(): void;
+  /**
+   * 關閉時用：回傳「抑制中、而且當下狀態與抑制前最後播報的狀態不同」的那幾則，然後忘掉所有狀態。
+   *
+   * 只 `reset()` 的話，抑制期間被吞掉的那一句就永遠不會出聲（審查 F3）：
+   * 最後仍在燒 → dedup 記著那個沒念出來的 firing，預設窗 `Infinity` 下整段燒的過程都沒聲音；
+   * 最後已恢復 → 恢復永遠不念。呼叫端拿回傳值走與 `release()` 相同的補念路徑。
+   */
+  drain(): readonly ParsedAlert[];
+  /**
+   * 忘掉一個 fingerprint 的抖動狀態。來源層取代 episode（`onSupersede`）時與 dedup 一起呼叫 ——
+   * 只 forget dedup 的話，解除抑制時會補念一則已經不存在的告警，並把 dedup 的時間戳記回去（審查 F2）。
+   */
+  forget(fingerprint: string): void;
 }
 
 export function createFlappingTracker(opts: { now: () => number }): FlappingTracker {
@@ -676,6 +689,21 @@ export function createFlappingTracker(opts: { now: () => number }): FlappingTrac
     reset() {
       states.clear();
     },
+
+    drain() {
+      const pending: ParsedAlert[] = [];
+      for (const state of states.values()) {
+        if (state.suppressed && state.announced !== state.status) {
+          pending.push(state.lastAlert);
+        }
+      }
+      states.clear();
+      return pending;
+    },
+
+    forget(fingerprint) {
+      states.delete(fingerprint);
+    },
   };
 }
 
@@ -722,7 +750,12 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
     // `applySettings` 必定在 `source.evaluate()` 之前跑完，所以來源層讀到的永遠是
     // 本輪的設定；`?? ''` 只是不寫 non-null 斷言（空字串在 `severity.ts` 等同 unknown）。
     fallbackSeverity: () => settings?.fallbackSeverity ?? '',
-    onSupersede: (fingerprint) => dedup.forget(fingerprint),
+    // 取代時 dedup 與抖動狀態一起忘（審查 F2）：留著抖動狀態的話，解除抑制時會補念一則
+    // 已不存在的告警，並把 dedup 的時間戳記回去 —— 正是 `forget()` 要防的那個永久靜音。
+    onSupersede: (fingerprint) => {
+      dedup.forget(fingerprint);
+      flapping.forget(fingerprint);
+    },
   });
 
   /** 靜音時段設定字串 → 解析結果的一格快取。同一個字串只解析一次。 */
@@ -781,10 +814,47 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // 抖動設定每一輪重新解析（解析是幾個數字判斷，沒有快取的必要）——
       // 「改門檻或窗長之後的下一輪讀到新設定」於是沒有別的可能（第 1 條不變量）。
       const flappingRound = parseFlapping(round.flappingThreshold, round.flappingWindowMin).config;
+      /** 解除抑制（滿窗或關閉）時補念一則：照樣過門檻，並把 dedup 對回實際狀態。 */
+      const deliverReleased = (pendingAlert: ParsedAlert): void => {
+        // 補念照樣過嚴重度門檻（`resolved` 不受門檻影響，與主迴圈同一條規則）：
+        // 抑制期間有人把門檻調高時，不該冒出一句低於門檻的告警。
+        //
+        // ⚠️ 不念的那一則**必須 `forget()`**，不能讓 dedup 留著抑制期間記下的
+        // 「播過 firing」。抑制期間的每一次翻轉都進了 dedup，所以它記著的是
+        // 「最後那個 firing 播過了」—— 而那一句其實被抖動抑制吞掉了，現在又被門檻擋下，
+        // 從頭到尾沒有出聲。留著那個時間戳的後果是：門檻之後調回來時，預設
+        // `repeatFiringMin: 0` → 窗是 `Infinity` → `t - last < Infinity` 恆真，
+        // 這一則**永久靜音**（症狀是告警真的在燒而面板一聲不吭，不留任何錯誤訊息）。
+        // 這與「被門檻擋下的告警不得進 dedup」是同一條不變量，見下方主迴圈那段註解。
+        if (
+          pendingAlert.status === 'firing' &&
+          !meetsMin(resolveSeverity(pendingAlert.severity, aliases), round.minSeverity)
+        ) {
+          dedup.forget(pendingAlert.fingerprint);
+          return;
+        }
+        dedup.forget(pendingAlert.fingerprint);
+        if (pendingAlert.status === 'firing') {
+          void dedup.shouldSpeak(pendingAlert);
+        }
+        const released: BroadcastItem = {
+          alert: pendingAlert,
+          plan: buildBroadcastPlan(pendingAlert, round.alertLang, aliases),
+          at: now(),
+        };
+        items.push(released);
+        candidates.push(released);
+      };
       if (flappingRound === null) {
         // 關著（門檻 0／留空／設定無效）：忘掉所有抖動狀態。留著半套的話，
         // 「關掉再開」會讀到舊的翻轉次數，而 AC-1 要的是「關著時與沒有這個選項時完全相同」。
-        flapping.reset();
+        //
+        // ⚠️ 但抑制中的那幾則要先**當成解除**處理（審查 F3）：只清狀態的話，抑制期間被吞掉的
+        // 那一句永遠不出聲 —— 最後仍在燒就整段燒的過程都沒聲音，最後已恢復就永遠不念「已恢復」。
+        // 從來沒開過的話 `drain()` 回空陣列，與沒有這個選項時完全相同（AC-1）。
+        for (const pendingAlert of flapping.drain()) {
+          deliverReleased(pendingAlert);
+        }
       } else {
         // ⚠️ **解除抑制的補念排在這一輪的最前面，而且刻意不走 `dedup.shouldSpeak()`。**
         //
@@ -800,34 +870,7 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         // 回傳值必定是 `true`，不看它）。resolved 的對應狀態就是「什麼都不記」，
         // 所以 `forget()` 之後不必再做什麼 —— 它之後若再燒起來，照常念得出來。
         for (const pendingAlert of flapping.release(flappingRound)) {
-          // 補念照樣過嚴重度門檻（`resolved` 不受門檻影響，與主迴圈同一條規則）：
-          // 抑制期間有人把門檻調高時，不該冒出一句低於門檻的告警。
-          //
-          // ⚠️ 不念的那一則**必須 `forget()`**，不能讓 dedup 留著抑制期間記下的
-          // 「播過 firing」。抑制期間的每一次翻轉都進了 dedup，所以它記著的是
-          // 「最後那個 firing 播過了」—— 而那一句其實被抖動抑制吞掉了，現在又被門檻擋下，
-          // 從頭到尾沒有出聲。留著那個時間戳的後果是：門檻之後調回來時，預設
-          // `repeatFiringMin: 0` → 窗是 `Infinity` → `t - last < Infinity` 恆真，
-          // 這一則**永久靜音**（症狀是告警真的在燒而面板一聲不吭，不留任何錯誤訊息）。
-          // 這與「被門檻擋下的告警不得進 dedup」是同一條不變量，見下方主迴圈那段註解。
-          if (
-            pendingAlert.status === 'firing' &&
-            !meetsMin(resolveSeverity(pendingAlert.severity, aliases), round.minSeverity)
-          ) {
-            dedup.forget(pendingAlert.fingerprint);
-            continue;
-          }
-          dedup.forget(pendingAlert.fingerprint);
-          if (pendingAlert.status === 'firing') {
-            void dedup.shouldSpeak(pendingAlert);
-          }
-          const released: BroadcastItem = {
-            alert: pendingAlert,
-            plan: buildBroadcastPlan(pendingAlert, round.alertLang, aliases),
-            at: now(),
-          };
-          items.push(released);
-          candidates.push(released);
+          deliverReleased(pendingAlert);
         }
       }
       for (const alert of alerts) {

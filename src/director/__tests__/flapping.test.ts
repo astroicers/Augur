@@ -238,13 +238,14 @@ test('AC-1：reset() 之後翻轉次數從零開始（抑制關掉再開讀不�
   expect(h.release()).toEqual([]);
 });
 
-test('沒有任何 fingerprint 在抑制中時 release() 什麼都不回，掃過之後行為也不變', () => {
+test('沒有任何 fingerprint 在抑制中時 release() 什麼都不回；過了回收期限之後行為也不變', () => {
   const h = harness();
   h.at(0);
   expect(h.see('firing')).toBe(false);
   h.at(min(30));
   expect(h.release()).toEqual([]);
-  // 掃到 13 小時後（久未再出現的狀態會在這一步被回收）—— 行為不變：下一則照常交付。
+  // 掃到 13 小時後 —— 行為不變：下一則照常交付。
+  // （回收本身沒有被這裡驗到：回收與否，下面這一則都不構成抑制。回收是記憶體面的保證，見 `release()`。）
   h.at(min(60 * 13));
   expect(h.release()).toEqual([]);
   expect(h.see('resolved')).toBe(false);

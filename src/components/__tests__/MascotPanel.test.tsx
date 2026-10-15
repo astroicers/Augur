@@ -1669,8 +1669,9 @@ test('#64：門檻與窗長真的帶進導播 —— 門檻 1 時第三次狀態
 
   // firing（第 1 輪）與 resolved（第 1 次翻轉、達標那一次）念得出來，第 2 次翻轉不念。
   expect(spoken.map((p) => p.status)).toEqual(['firing', 'resolved']);
-  // 清單照常更新：被抑制的那一則也進了 feed。
-  expect(view.container.textContent).toContain('一直在翻');
+  // 清單照常更新：被抑制的那一則也進了 feed —— 三輪各一列（只念了兩句）。
+  // 用列數而不是 toContain：feed 會累積，第 1 輪之後 toContain 就恆真了。
+  expect((view.container.textContent ?? '').match(/一直在翻/g)).toHaveLength(3);
 });
 
 test('#64 AC-1：門檻 0（預設）時同一段翻轉一句都不少 —— 上一條的對照組', async () => {
