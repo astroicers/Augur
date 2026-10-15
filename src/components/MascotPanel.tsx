@@ -329,6 +329,15 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 相依陣列刻意不含這兩個（理由同 `repeatFiringMin`，見下方 effect）。
   const quietHours = options.quietHours ?? '';
   const quietAllowCritical = options.quietAllowCritical ?? false;
+  // 抖動抑制（#64）。同樣是**純接線**：翻轉次數、窗長的解析與「現在算不算抖動」
+  // 全在導播裡（`parseFlapping`／`createFlappingTracker`，以注入的時鐘），本檔只把這兩個
+  // 選項原樣帶進每一輪的設定。計數狀態必須跨輪累積，放在元件裡就得自己管一份 ref ——
+  // 那正是 #58 把管線搬進導播時要除掉的東西。相依陣列刻意不含這兩個（理由同 `repeatFiringMin`）。
+  // 兩個鍵缺席時都取「關閉」那一側（門檻 0、窗長 0 都等於關閉）：Grafana 會替缺席的鍵補上
+  // `module.ts` 註冊的預設值（0 與 10），所以真的缺鍵只會發生在手改過的 dashboard JSON 上，
+  // 而那時候寧可什麼都不抑制 —— 抑制會讓告警不出聲，那是比「多念一句」嚴重得多的失敗。
+  const flappingThreshold = options.flappingThreshold ?? 0;
+  const flappingWindowMin = options.flappingWindowMin ?? 0;
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';
@@ -769,8 +778,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
     // 設定**隨呼叫帶進去**，不經任何 ref 或另一個 effect 同步：這一輪讀到的
     // 一定是本次 commit 的選項值。相依陣列刻意不含 `repeatFiringMin`、
-    // `fallbackSeverity` 與 #63 的 `quietHours`／`quietAllowCritical`
-    // （下方 eslint-disable 指的就是這四個）—— 它們只在這個
+    // `fallbackSeverity`、#63 的 `quietHours`／`quietAllowCritical` 與
+    // #64 的 `flappingThreshold`／`flappingWindowMin`
+    // （下方 eslint-disable 指的就是這六個）—— 它們只在這個
     // effect 真的跑的時候才被讀，而那一刻讀的是最新一輪 render 的閉包；
     // 放進 deps 只會讓「在編輯面板裡改那幾個選項」各多打一次 rules 端點。
     // 代價是改了它們要等下一輪 refresh 才生效，而靜音時段的邊界本來就只在
@@ -783,6 +793,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       severityAliasSpec,
       quietHours,
       quietAllowCritical,
+      flappingThreshold,
+      flappingWindowMin,
     };
 
     void directorFor(id)
