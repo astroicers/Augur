@@ -4,11 +4,14 @@ import { css } from '@emotion/css';
 import { useStyles2, useTheme2 } from '@grafana/ui';
 import type { MascotPanelOptions } from '../panelOptions';
 import type { BroadcastPlan, Emotion } from '../core/types';
-import { meetsMin } from '../core/severity';
-import { parseSeverityAliases, resolveSeverity } from '../core/severityAliases';
-import { createDedup, type Dedup } from '../core/dedup';
-import { buildBroadcastPlan } from '../core/format';
-import { createPanelAlertSource, type AlertStateLike, type PanelAlertSource } from '../sources/panelAlerts';
+import { parseSeverityAliases } from '../core/severityAliases';
+import {
+  createBroadcastDirector,
+  panelAlertSource,
+  type BroadcastDirector,
+  type DirectorSettings,
+} from '../director/BroadcastDirector';
+import type { AlertStateLike } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
 import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
 import { fetchPanelHistory } from '../sources/historyFetcher';
@@ -82,9 +85,9 @@ const EMOTION_DECAY_MS = 3 * 60 * 1000;
 interface Props extends PanelProps<MascotPanelOptions> {}
 
 /**
- * 導播 + 呈現。這是舊架構 `src/server.ts:68-77` 那段處理迴圈的搬家：
- * 來源 → severity 過濾 → dedup 防洪 → BroadcastPlan → sink。
- * seam 相同、方向相反（push 變 pull），sink 從 WebSocket 變成瀏覽器語音合成器。
+ * 呈現 + 接線。導播那條管線（來源 → severity 過濾 → 防洪 → BroadcastPlan → sink）
+ * 自 #58 起住在 `src/director/BroadcastDirector.ts`，不依賴 React；本檔只負責
+ * 把 panel 的 props 與瀏覽器側的東西（播報器、avatar、靜音、DOM）接上去。
  *
  * 互動層（ADR-004 決策 6）採**漸進降級**：能看到別的 panel 就追全頁滑鼠、
  * 認得出點到哪一個 panel；看不到就把兩者限縮在自己的容器內。
@@ -220,24 +223,16 @@ interface FeedLine {
   plan: BroadcastPlan;
 }
 
-/** `repeatFiringMin = 0` → 永不重播 → 防洪窗是 Infinity。source 與 dedup 共用這個換算。 */
-function windowSecFor(repeatFiringMin: number): number {
-  return repeatFiringMin > 0 ? repeatFiringMin * 60 : Number.POSITIVE_INFINITY;
-}
-
 export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height }) => {
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
 
   // D10：一律 useRef 而非 useMemo —— React 18 StrictMode 會重跑 useMemo，
-  // 重建 dedup 等於清空它的 Map，下一個 refresh 就會重念一次。
-  const sourceRef = useRef<PanelAlertSource | null>(null);
-  const dedupRef = useRef<Dedup | null>(null);
+  // 而導播裡那張「誰播過了」的 Map 被重建就等於清空，下一個 refresh 會重念一次。
   const speakerRef = useRef<Speaker | null>(null);
   const avatarRef = useRef<AvatarController | null>(null);
   const domRef = useRef<DashboardDom | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const busyRef = useRef(false);
   const gazeRef = useRef(CENTER_CELL);
   const flapRef = useRef<FlapDriver | null>(null);
 
@@ -245,7 +240,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 靜音：state 給畫面，ref 給播報 effect 讀（不讓開關變動去重跑那個 effect）。
   const [muted, setMuted] = useState<boolean>(readMuted);
   const mutedRef = useRef(muted);
-  // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。dedup 已把它們記為念過，
+  // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。導播已把它們記為念過，
   // 不留下來的話就永遠不會再念；使用者按「點一下啟用語音」時重送。試聽句不收（那不是告警）。
   const blockedRef = useRef<Array<{ plan: BroadcastPlan; at: number }>>([]);
   // ADR-006：播報紀錄。history 有值＝紀錄模式；historyError 有值＝降級回本分頁 feed（決策 7）。
@@ -603,56 +598,49 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     };
   }, []);
 
-  // ---- 導播管線 ----
+  // ---- 導播（接線）----
   //
-  // ⚠️ **source 與 dedup 的 deps 必須一致。** 它們共用一個不變量:
-  // `episodes`(誰正在燒)與 `lastFiring`(誰播過)講的是同一件事的兩半。
-  // 先前 source 是 `[id, fallbackSeverity]` 而 dedup 是 `[repeatFiringMin]`,
-  // 於是改「取不到細節時的嚴重度」會**只**重建 source:
-  // episodes 空了、lastFiring 還記得 → 告警恢復時 resolved 不播、key 不刪
-  // → 預設窗是 Infinity → 那個 fingerprint **從此再也不出聲**,而且不留任何錯誤。
-  // 兩個選項現在都不重建任何東西:fallbackSeverity 走 ref(source 在 evaluate 當下才讀),
-  // repeatFiringMin 走 dedup.setWindow(換窗但不清狀態)。
-  // ref 的同步放在 effect 裡而不是 render 中 —— render 期間寫 ref 會被
-  // `react-hooks/refs` 擋下，而那條規則是對的：render 可能被丟棄或重跑。
-  // **宣告順序有意義**：這個 effect 要排在下面的導播管線之前，
-  // 讓 evaluate 讀到的是本次 commit 的值。
-  const fallbackSeverityRef = useRef(fallbackSeverity);
-  useEffect(() => {
-    fallbackSeverityRef.current = fallbackSeverity;
-  }, [fallbackSeverity]);
-
-  useEffect(() => {
-    sourceRef.current = createPanelAlertSource({
-      panelId: id,
-      fetchRules: fetchPanelRules,
-      fallbackSeverity: () => fallbackSeverityRef.current,
-      // 泛用 episode 被具名規則取代時，dedup 也要忘掉它，否則降級路徑永久靜音。
-      // 讀 ref 而非閉包捕捉：兩個 effect 的建立先後無所謂。
-      onSupersede: (fp) => dedupRef.current?.forget(fp),
+  // 管線本體與它的四條不變量住在 `director/BroadcastDirector.ts`（#58）；
+  // 本檔這一段只剩兩件事：把導播建起來（它自己持有 source 與 dedup），
+  // 以及每輪 panel data 餵一次。先前這裡是四個 effect，而其中三條不變量靠
+  // **宣告順序**維持（同步設定的 effect 要排在 evaluate 之前、source 與 dedup 的
+  // deps 必須一致、換窗不得重建 dedup）—— 那三條現在由導播的呼叫順序與狀態保證，
+  // 本檔不再有任何一條導播不變量依賴 effect 的先後。
+  //
+  // ⚠️ **導播刻意不在 effect 裡建立。** 在 effect 裡建就得排在下面那個 effect 之前，
+  // 否則第一次 commit 時 `directorRef.current` 還是 null、那一輪被整個跳過 ——
+  // 也就是把剛拆掉的宣告順序依賴原封不動搬回來。改成「用的時候才取」之後，
+  // 下面那個 effect 第一件事就是呼叫 `directorFor(id)`，拿到的一定是活的導播。
+  const directorRef = useRef<BroadcastDirector | null>(null);
+  /** 手上那個導播是為哪一個 panel id 建的（`id` 變了要換一個新的，連 source 與 dedup 一起）。 */
+  const directorPanelRef = useRef<number | null>(null);
+  const directorFor = useCallback((panelId: number): BroadcastDirector => {
+    const held = directorRef.current;
+    if (held && directorPanelRef.current === panelId) {
+      return held;
+    }
+    held?.dispose();
+    const next = createBroadcastDirector({
+      createSource: panelAlertSource(panelId, fetchPanelRules),
+      // 播報器與靜音都是**交付當下才讀**：換語音選項（重建播報器）或按靜音，
+      // 都不該動到導播手上的 source／dedup。
+      speaker: () => speakerRef.current,
+      muted: () => mutedRef.current,
     });
-    return () => {
-      sourceRef.current = null;
-    };
-  }, [id]);
+    directorRef.current = next;
+    directorPanelRef.current = panelId;
+    return next;
+  }, []);
 
-  useEffect(() => {
-    // repeatFiringMin = 0 → 永不重播。createDedup 的窗就是 Infinity。
-    // 只在掛載（與 id 變動）時建立一次。repeatFiringMin 之後由下面的 setWindow
-    // effect 同步 —— 放進 deps 會讓改選項重建 dedup，而那正是要避免的事。
-    const d = createDedup(windowSecFor(repeatFiringMin), { startCleanup: false });
-    dedupRef.current = d;
-    return () => {
-      d.close();
-      dedupRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  // 換窗而不重建 —— 重建會清掉 lastFiring,正在燒的告警於是被重播一次。
-  useEffect(() => {
-    dedupRef.current?.setWindow(windowSecFor(repeatFiringMin));
-  }, [repeatFiringMin]);
+  // 卸載時收掉導播。只有 cleanup、沒有 mount 行為，所以與其他 effect 的宣告順序無關。
+  useEffect(
+    () => () => {
+      directorRef.current?.dispose();
+      directorRef.current = null;
+      directorPanelRef.current = null;
+    },
+    []
+  );
 
   useEffect(() => {
     const hasSynth = typeof window !== 'undefined' && !!window.speechSynthesis;
@@ -758,17 +746,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // D10：載入中或查詢失敗時 data.series 可能是空的。在 threshold 路徑上
     // 那會被讀成「全部回到 base step」→ 對每個 episode 送 resolved
     // → 資料庫連不上竟然播「告警已恢復」。這是 pull 模型最容易踩的誤報。
+    // 守門留在這裡而不是導播裡：只有本檔看得到 `data.state`。
     if (data.state !== LoadingState.Done) {
       return;
     }
-    const source = sourceRef.current;
-    const dedup = dedupRef.current;
-    if (!source || !dedup || busyRef.current) {
-      return;
-    }
-    busyRef.current = true;
-
-    const severityAliases = parseSeverityAliases(severityAliasSpec).aliases;
     const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
     // ⚠️ **dashboard uid 不能只從 alertState 拿。** alertState 是 `@internal`，
     // 而它的形狀**真的在 minor 版之間變過**（2026-10-01 實測，Grafana 原始碼逐 tag 比對）：
@@ -779,58 +760,51 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // 這正是 ADR-004 標過的 @internal 風險實際發生了一次，不要只靠那一個欄位。
     const dashboardUid = alertState?.dashboardUID ?? data.request?.dashboardUID;
 
-    void source
-      .evaluate(alertState, dashboardUid)
-      .then((alerts) => {
-        const plans: FeedLine[] = [];
-        for (const a of alerts) {
-          // 順序與舊 server.ts 相同：先過濾、再防洪、最後才組播報計畫。
-          // resolved 不受嚴重度門檻影響 —— 播過 firing 就該播恢復。
-          // 別名（#51）在過濾**之前**生效，且門檻與表情吃的是同一次解析結果 ——
-          // 兩邊各自套別名遲早會漂成「排名達標但表情不對」。
-          if (a.status === 'firing' && !meetsMin(resolveSeverity(a.severity, severityAliases), minSeverity)) {
-            continue;
-          }
-          if (!dedup.shouldSpeak(a)) {
-            continue;
-          }
-          const plan = buildBroadcastPlan(a, alertLang, severityAliases);
-          plans.push({
-            key: `${a.fingerprint}:${a.status}:${plans.length}:${Date.now()}`,
-            when: new Date().toLocaleTimeString(),
-            at: Date.now(),
-            plan,
-          });
-        }
-        if (!plans.length) {
+    // 設定**隨呼叫帶進去**，不經任何 ref 或另一個 effect 同步：這一輪讀到的
+    // 一定是本次 commit 的選項值。相依陣列刻意不含 `repeatFiringMin` 與
+    // `fallbackSeverity`（下方 eslint-disable 指的就是這兩個）—— 它們只在這個
+    // effect 真的跑的時候才被讀，而那一刻讀的是最新一輪 render 的閉包；
+    // 放進 deps 只會讓「在編輯面板裡改那兩個選項」各多打一次 rules 端點。
+    const settings: DirectorSettings = {
+      minSeverity,
+      repeatFiringMin,
+      fallbackSeverity,
+      alertLang,
+      severityAliasSpec,
+    };
+
+    void directorFor(id)
+      .evaluate({ alertState, dashboardUid }, settings)
+      .then((round) => {
+        if (round.items.length === 0) {
           return;
         }
-        // ⚠️ **不要 `plans.reverse()`** —— 它就地改動陣列，而後面兩處都讀 `plans`：
-        //  1. `setEmotion(plans[0])` 會拿到**最後**一則的情緒而不是第一則；
-        //  2. `sp.enqueue()` 的迴圈會照**反序**播報。
+        // ⚠️ **不要就地 `reverse()`** —— `round.items` 後面還有兩處要讀：
+        //  1. `setEmotion(items[0])` 會拿到**最後**一則的情緒而不是第一則；
+        //  2. 導播已經照時間順序交付給播報器了，順序對不上就查不出哪邊反了。
         // 另外它在 setState 的 updater 裡，StrictMode 的雙呼叫會反轉兩次而抵銷，
         // 於是開發模式與正式模式的 feed 順序不一樣 —— 最難查的那種。
-        // feed 要新的在上，所以用一份複本反轉；播報與情緒維持時間順序。
-        const newestFirst = [...plans].reverse();
+        // feed 要新的在上，所以用一份複本反轉；情緒維持時間順序。
+        const lines: FeedLine[] = round.items.map((item, i) => ({
+          key: `${item.alert.fingerprint}:${item.alert.status}:${i}:${item.at}`,
+          when: new Date(item.at).toLocaleTimeString(),
+          at: item.at,
+          plan: item.plan,
+        }));
+        const newestFirst = [...lines].reverse();
         setFeed((prev) => [...newestFirst, ...prev].slice(0, 20));
-        setEmotion(plans[0]!.plan.emotion);
-        avatarRef.current?.setEmotion(plans[0]!.plan.emotion);
-        const sp = speakerRef.current;
-        // 靜音時照樣更新清單與表情，只是不送進語音佇列。
-        if (sp && !mutedRef.current) {
-          for (const p of plans) {
-            sp.enqueue(p.plan);
-          }
-          setPending(sp.pending());
+        setEmotion(round.items[0]!.plan.emotion);
+        avatarRef.current?.setEmotion(round.items[0]!.plan.emotion);
+        // 靜音或沒有播報器時導播不交付，`pending` 是 null —— 清單與表情照樣更新。
+        if (round.pending !== null) {
+          setPending(round.pending);
         }
-      })
-      .finally(() => {
-        busyRef.current = false;
       });
-  }, [data, minSeverity, alertLang, severityAliasSpec]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, id, minSeverity, alertLang, severityAliasSpec, directorFor]);
 
   // ADR-006：每次 panel data 刷新就重讀一次這個 panel 的告警歷史。
-  // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進 speakerRef / dedup**（決策 5）——
+  // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進播報器、也不經導播**（決策 5）——
   // 否則每次重新整理，吉祥物都會把範圍內的舊告警重念一遍。
   useEffect(() => {
     if (data.state !== LoadingState.Done) {
