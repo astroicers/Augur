@@ -129,13 +129,14 @@ describe('語料釘住的三份差異（AC-5 的機械證據）', () => {
     return c;
   };
 
-  it('差異 1：五個全形與四個半形的共用切點，三份都切', () => {
+  it('差異 1：五個全形切點三份都切；半形 , ; ? ! 在 splitClauses 與 Python 都是切點', () => {
     const fw = get('fullwidth-punct-sweep');
     for (const out of [fw.splitForRemoteVoice, fw.splitClauses, fw.pythonClauses]) {
       expect(out).toEqual(['警告；', '磁碟快滿了！', '要清嗎？', '請處理，', '謝謝。']);
     }
     // 半形：空白是 splitForRemoteVoice 專屬的切點、Python 另外 strip，所以三份的段落邊界不同；
-    // 這裡要釘的是「, ; ? ! 四個都是切點」—— 去掉空白後三份的切法一致。
+    // 半形那句每個標點後面都接空白，而空白本身是 splitForRemoteVoice 的切點，
+    // 所以這裡驗不到「, ; ? ! 是 splitForRemoteVoice 的切點」——那由其他 golden 句子釘住。
     const ascii = get('ascii-punct-sweep');
     for (const out of [ascii.splitForRemoteVoice, ascii.splitClauses, ascii.pythonClauses]) {
       expect(out.map((s) => s.trim()).filter((s) => s !== '')).toEqual(
@@ -169,13 +170,20 @@ describe('語料釘住的三份差異（AC-5 的機械證據）', () => {
     expect(c.pythonClauses).toEqual([c.text]);
   });
 
-  it('差異 5：半形標點後面接數字或 / 時三份都不切', () => {
-    const c = get('digit-and-slash-after-punct');
-    for (const out of [c.splitForRemoteVoice, c.splitClauses, c.pythonClauses]) {
-      expect(out.some((s) => s.includes('91.35'))).toBe(true);
-      expect(out.some((s) => s.includes('0.9'))).toBe(true);
-      expect(out.some((s) => s.includes('1/2'))).toBe(true);
-    }
+  it('差異 5：半形標點後面接數字或 / 時三份都不切（這句拿掉守衛時三份的輸出都會變）', () => {
+    // 上限 6、下限 1：正規式真的會跑，`x,` 與 `y,` 若被當成切點會自成一段。
+    // 舊的 `digit-and-slash-after-punct` 那句短於上限、且 `.` 本來就不是後兩份的切點，驗不到守衛。
+    const c = get('guard-digit-slash-observable');
+    expect(c.splitForRemoteVoice).toEqual(['x,1234', '5。', 'y,/234', '5']);
+    expect(c.splitClauses).toEqual(['x,12345。', 'y,/2345']);
+    expect(c.pythonClauses).toEqual(['x,12345。', 'y,/2345']);
+  });
+
+  it('差異 5b：全形數字前，兩份 TS 會切、Python 不切（\\d 的範圍不同）', () => {
+    const c = get('fullwidth-digit-after-ascii-comma');
+    expect(c.splitForRemoteVoice).toEqual(['數量,', '１２３。']);
+    expect(c.splitClauses).toEqual(['數量,', '１２３。']);
+    expect(c.pythonClauses).toEqual([c.text]);
   });
 
   it('差異 6：半形冒號只有 splitClauses 與 Python 當切點 —— IPv6 與 C:\\ 在它們身上被切開', () => {

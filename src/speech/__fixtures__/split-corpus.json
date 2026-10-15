@@ -34,7 +34,7 @@
     },
     {
       "id": "whitespace-only",
-      "covers": ["空字串", "全形與半形標點"],
+      "covers": ["空字串"],
       "note": "只有空白。",
       "text": "   ",
       "maxChars": 56,
@@ -158,7 +158,7 @@
     },
     {
       "id": "ipv4-port-time-thousands",
-      "covers": ["IPv4", "時間", "小數"],
+      "covers": ["IPv4", "時間"],
       "note": "IP:埠、時間、千分位：半形 , : 後面接數字不切。",
       "text": "受影響對象 192.168.1.20:9182，時間 12:30:05，數量 1,234。",
       "maxChars": 24,
@@ -206,7 +206,7 @@
       "pythonClauses": ["對象 fe80::1ff:", "fe23:4567:890a 異常"],
       "suspect": {
         "severity": "高",
-        "why": "splitClauses 與 Python 在 `fe80::1ff:` 的第二個冒號後切開（冒號後面是 `1`／`f`，`f` 不是數字也不是 /），IPv6 位址被拆成兩次請求、中間多一個停頓。speaker.ts 的 splitForRemoteVoice 不切 —— 那正是 4c8c5fd（第二輪複審 R2）為 IPv6 與 C:\\ 做的修正，但同一條理由從未被套用到另外兩份。",
+        "why": "splitClauses 與 Python 在冒號後面不接數字或 `/` 的位置切開：`fe80:` 之後（後接 `:`）與 `1ff:` 之後（後接 `f`）各是一個切點；`::` 的第二個冒號後接 `1`，不切。下限 8 時第一個切點被合併抹平，下限更小時會切成三段，IPv6 位址被拆成兩次請求、中間多一個停頓。speaker.ts 的 splitForRemoteVoice 不切 —— 那正是 4c8c5fd（第二輪複審 R2）為 IPv6 與 C:\\ 做的修正，但同一條理由從未被套用到另外兩份。",
         "whyNotFixedHere": "#59 票文明寫「行為一律不變」，本票只負責釘住現狀。要改的話請另開票，改語料與三份實作。"
       }
     },
@@ -520,7 +520,7 @@
     },
     {
       "id": "digit-and-slash-after-punct",
-      "covers": ["小數", "URL"],
+      "covers": ["小數"],
       "note": "半形標點後面接數字或 / 的三種寫法。",
       "text": "數值 91.35，門檻 0.9，比例 1/2。",
       "maxChars": 56,
@@ -539,6 +539,33 @@
       "splitForRemoteVoice": ["主機 CPU 使用率過高"],
       "splitClauses": ["主機 CPU 使用率過高"],
       "pythonClauses": ["主機 CPU 使用率過高"]
+    },
+    {
+      "id": "guard-digit-slash-observable",
+      "covers": ["全形與半形標點"],
+      "note": "讓「半形標點後面接數字或 / 不切」的守衛真的看得到：上限 6、下限 1，正規式會跑，拿掉守衛時三份的輸出都會變（`x,` 與 `y,` 會自成一段）。",
+      "text": "x,12345。y,/2345",
+      "maxChars": 6,
+      "minChars": 1,
+      "splitForRemoteVoice": ["x,1234", "5。", "y,/234", "5"],
+      "splitClauses": ["x,12345。", "y,/2345"],
+      "pythonClauses": ["x,12345。", "y,/2345"]
+    },
+    {
+      "id": "fullwidth-digit-after-ascii-comma",
+      "covers": ["全形與半形標點"],
+      "note": "半形逗號後面接**全形**數字：JS 的 `\\d`（沒有 u 旗標）只認 0-9，兩份 TS 都在逗號後切；Python 的 `\\d` 認所有 Unicode 數字，不切。",
+      "text": "數量,１２３。",
+      "maxChars": 4,
+      "minChars": 1,
+      "splitForRemoteVoice": ["數量,", "１２３。"],
+      "splitClauses": ["數量,", "１２３。"],
+      "pythonClauses": ["數量,１２３。"],
+      "suspect": {
+        "severity": "低",
+        "why": "同一個守衛在 JS 與 Python 的 `\\d` 範圍不同，全形數字前兩邊靜默分岔。現行面板的數值由 formatNumber 輸出半形數字，告警名稱或摘要裡才可能出現全形數字。",
+        "whyNotFixedHere": "#59 票文明寫「行為一律不變」；這裡只把分岔釘住。"
+      }
     }
   ]
 }
