@@ -147,7 +147,7 @@ test('不變量1：改門檻後的下一次 evaluate 讀到新門檻', async () 
   expect(h.spoken).toHaveLength(1);
 });
 
-test('不變量1：改別名後的下一次 evaluate 讀到新別名（門檻與表情吃同一份）', async () => {
+test('不變量1：改別名後的下一次 evaluate，門檻與表情都套到新別名', async () => {
   const h = harness();
   await h.run([alert({ severity: 'P1', fingerprint: 'fp-p1' })]);
   expect(h.spoken).toHaveLength(0); // 沒有別名 → 排名 0 → 被 warning 門檻擋下
@@ -168,7 +168,7 @@ test('不變量1：改語言後的下一次 evaluate 用新語言組句', async 
   expect(h.spoken[1]!.text).toContain('severity');
 });
 
-test('不變量1：fallbackSeverity 在評估當下才被來源層讀到，不是建構當下', async () => {
+test('不變量1：來源層讀到的 fallbackSeverity 是最近一次套用的設定', async () => {
   const h = harness();
   await h.run([], { fallbackSeverity: 'critical' });
   await h.run([], { fallbackSeverity: 'warning' });
@@ -263,11 +263,32 @@ test('不變量4：前一輪還沒結束時，第二次 evaluate 被擋下且不
   // 被擋下的那一輪連來源層都沒碰到，更不可能把設定換掉。
   expect(h.sourceCalls).toHaveLength(1);
   expect(h.fallbackSeen).toEqual(['critical']);
+  // 「不改設定」要在來源層**之後**讀到才算數：真實的 source 在 await rules() 之後才讀
+  // fallbackSeverity，被擋下的那一輪若先套了設定，這裡會讀到 warning。
+  expect(h.hooks().fallbackSeverity()).toBe('critical');
 
   release();
   const round = await first;
   expect(round.evaluated).toBe(true);
   expect(h.spoken).toHaveLength(1);
+});
+
+test('不變量4：dispose 時正在 await 的那一輪，放行後不交付、回 evaluated:false', async () => {
+  // React StrictMode 會 mount → unmount → mount；panel id 改變時也會換掉導播。
+  // 舊導播被 dispose 時若正停在 await，放行後不得再把結果交給（已換成新的）播報器 ——
+  // 否則同一則告警會被新舊兩個導播各交付一次。
+  const h = harness();
+  const release = h.stall();
+  const inflight = h.run([alert()]);
+  await Promise.resolve();
+
+  h.dispose();
+  release();
+  const round = await inflight;
+
+  expect(round.evaluated).toBe(false);
+  expect(round.items).toHaveLength(0);
+  expect(h.spoken).toHaveLength(0);
 });
 
 test('不變量4：dispose 之後不再評估', async () => {
@@ -326,7 +347,7 @@ test('次序：resolved 只念一次', async () => {
   expect(texts(h.spoken)).not.toMatch(/恢復.*恢復/s);
 });
 
-test('次序：組句在最後 —— 交出去的是 BroadcastPlan 而不是 ParsedAlert', async () => {
+test('次序：交出去的項目帶著組好的 BroadcastPlan 與原始 ParsedAlert', async () => {
   const h = harness();
   const round = await h.run([alert({ severity: 'warning', fingerprint: 'fp-w' })]);
   expect(round.items).toHaveLength(1);

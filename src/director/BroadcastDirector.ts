@@ -247,6 +247,11 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       const round = applySettings(next);
       const aliases = aliasesFor(round.severityAliasSpec);
       const alerts = await source.evaluate(input.alertState, input.dashboardUid);
+      // await 期間可能被 dispose（StrictMode 的 mount → unmount → mount、panel id 改變）。
+      // 舊導播此時若照常交付，會與接手的新導播各念一次同一則告警。
+      if (disposed) {
+        return BLOCKED_ROUND;
+      }
 
       const items: BroadcastItem[] = [];
       for (const alert of alerts) {
