@@ -86,7 +86,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
 | `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報 |
-| `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後只為真實 bug 加過 `dedup.forget()`／`setWindow()` 與 `severity` 的缺值收斂（別再寫死行數，見 ROADMAP 散落-2） |
+| `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
 | `src/speech/remoteSpeaker.ts` | 外部語音服務的播報器（ADR-005）。同一個 `Speaker` 介面；逐句取音訊、Web Audio 播放（CSP 的 `media-src 'none'` 會擋 `<audio>`）、音量包絡驅動嘴型；任何一則失敗或逾時就把**那一則**交回 Web Speech |
 | `src/avatar/AvatarController.ts` | avatar-agnostic 契約（繼承 ADR-002 §2） |
@@ -108,7 +108,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 （**內部改過**：之後為兩次真實的永久靜音缺陷加了 `dedup.forget()`（commit
 「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」）與 `setWindow()`（commit
 「fix(panel): 會讓面板永久靜音的三條路徑，以及 speaker.ts 的第一份測試」），
-`severity` 也補了缺值收斂。改的是內部行為，`ParsedAlert` 這條邊界沒動。）
+`severity` 也補了缺值收斂，`format.ts` 改過髒值處理與別名參數（#39、#46、#51）等。改的是內部行為，`ParsedAlert` 這條邊界沒動。）
 
 **來源層的三個不變量**（`panelAlerts.ts` 檔頭有完整說明）：episode 用複製而非重算、
 `startsAt` 釘死、每次評估都無條件 emit 而把抑制交給 dedup。
