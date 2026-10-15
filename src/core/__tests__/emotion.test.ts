@@ -19,9 +19,24 @@ import { severityToEmotion } from '../emotion';
 import { normalize, rankOf } from '../severity';
 
 const normalizeSpy = normalize as jest.MockedFunction<typeof normalize>;
+/** 真實實作。`beforeEach` 重設時要拿它裝回去 —— `mockReset()` 會把實作一起清掉。 */
+const actualNormalize: typeof normalize = jest.requireActual('../severity').normalize;
 
+/**
+ * ⚠️ 這裡是 `mockReset()` 而不是 `mockClear()`。
+ *
+ * `mockClear()` 只清呼叫紀錄，**`mockReturnValueOnce` 排進去的佇列會留著**。
+ * 下面有兩條測試各排一筆 once 回傳值然後立刻消費掉 —— 只要其中任何一條在
+ * 消費之前就失敗（斷言翻紅會中斷該測試），那筆冒牌回傳就會留在佇列裡，
+ * 由**下一條測試的第一次 normalize 呼叫**吃掉。症狀是一條真正的失敗後面
+ * 跟著一串莫名其妙的連鎖失敗，而且哪一條被污染取決於檔案裡的順序。
+ *
+ * `mockReset()` 連佇列與實作一起清掉，所以要把委派真實實作的那層裝回去 ——
+ * 本檔的前提是「包裝與真實實作一字不差」（見檔頭），少了這行每條測試都會改成在量 undefined。
+ */
 beforeEach(() => {
-  normalizeSpy.mockClear();
+  normalizeSpy.mockReset();
+  normalizeSpy.mockImplementation(actualNormalize);
 });
 
 test('resolved 狀態一律映射 resolved（不看 severity）', () => {
@@ -131,4 +146,28 @@ test('結構護欄：emotion 的判定由 normalize 的回傳值驅動（副本�
 test('結構護欄：resolved 的早退在 normalize 之前（完全不看 severity）', () => {
   expect(severityToEmotion(' CRITICAL ', 'resolved')).toBe('resolved');
   expect(normalizeSpy).not.toHaveBeenCalled();
+});
+
+// ---- #47 AC-5：`mockReturnValueOnce` 佇列不得跨測試外洩 ----
+
+/**
+ * 這兩條是**一對**，而且順序有意義（jest 在同一檔內依宣告順序跑）。
+ *
+ * 上面那兩條結構護欄都是「排一筆 once 回傳值 → 立刻消費掉」。只要其中任一條在
+ * 消費之前就斷言失敗，那筆冒牌回傳值會留在佇列裡 —— `mockClear()` 不清佇列 ——
+ * 由下一條測試的第一次 `normalize` 呼叫吃掉，於是一條真失敗後面跟著一串假失敗。
+ *
+ * 這裡把那個情境做成常駐護欄：前一條刻意排一筆卻不消費，後一條驗真實行為。
+ * 把 `beforeEach` 改回 `mockClear()` 的話，後一條會紅在
+ * `severityToEmotion('info', 'firing')` 回 `'critical'`（實測）。
+ */
+test('佇列外洩護欄（上）：刻意排一筆 mockReturnValueOnce 卻不消費', () => {
+  normalizeSpy.mockReturnValueOnce('critical');
+  expect(normalizeSpy).not.toHaveBeenCalled();
+});
+
+test('佇列外洩護欄（下）：上一條留在佇列裡的冒牌回傳值不得流到這裡', () => {
+  expect(severityToEmotion('info', 'firing')).toBe('calm');
+  expect(normalizeSpy).toHaveBeenCalledTimes(1);
+  expect(normalizeSpy).toHaveReturnedWith('info');
 });
