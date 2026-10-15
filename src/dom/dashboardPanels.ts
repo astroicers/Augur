@@ -126,6 +126,13 @@ export function probeDashboardDom(self: Element | null): DashboardDom {
  * 只升不降：升回之後 watcher 就停了。偵測到別人之後又「看不到」只可能是 panel 被移除，
  * 而那種情況下 `panelAt` 自己會回 null，不需要把能力再降一級（降級會牽動 listener 的
  * target 重綁，為一個不會發生的狀態付複雜度）。
+ *
+ * ⚠️ **節流窗量的是 `performance.now()` 而不是 `Date.now()`。** 牆鐘會往回跳
+ * （NTP 校正、使用者改系統時間、VM 從 snapshot 恢復），而 `recheck()` 的條件是
+ * 「距離上次重探不足一個窗就不探」—— 牆鐘往回撥一小時，差值就變成 −3600000，
+ * 永遠小於節流窗，於是 `recheck()` 一路回 false **直到牆鐘追回來**。
+ * 這條路徑在計時器的有界重試窗過後是唯一的升回途徑，卡住就等於永久降級。
+ * `performance.now()` 是單調的（同一個 time origin 起算，不受系統時鐘調整影響），差值不可能為負。
  */
 export const DOM_PROBE_RETRY_LIMIT = 4;
 export const DOM_PROBE_RETRY_INTERVAL_MS = 1500;
@@ -138,7 +145,10 @@ export interface DashboardDomWatcher {
   recheck(): boolean;
   /** 還剩幾次計時器重試（診斷與測試用）。 */
   retriesLeft(): number;
-  /** 清掉計時器。呼叫端的 unmount 一定要叫。 */
+  /**
+   * 清掉計時器並**永久停用這個 watcher**：之後 `recheck()` 一律回 false、不呼叫 `onUpgrade`。
+   * 呼叫端的 unmount 一定要叫。
+   */
   stop(): void;
 }
 
@@ -161,9 +171,11 @@ export function watchDashboardDom(
   let dom = probeDashboardDom(self);
   let timer = 0;
   let left = dom.crossPanel ? 0 : limit;
-  let lastProbeAt = Date.now();
+  let lastProbeAt = performance.now();
+  let stopped = false;
 
-  const stop = () => {
+  /** 只收計時器，不動 `stopped` —— 升回時走這條（watcher 功成身退，不是被呼叫端停掉）。 */
+  const cancelRetries = () => {
     left = 0;
     if (timer) {
       window.clearTimeout(timer);
@@ -171,15 +183,20 @@ export function watchDashboardDom(
     }
   };
 
+  const stop = () => {
+    stopped = true;
+    cancelRetries();
+  };
+
   /** 重探一次。只有升回才改狀態 —— 還是降級時連 reason 都不換，省掉一次沒有意義的 re-render。 */
   const probe = (): boolean => {
-    lastProbeAt = Date.now();
+    lastProbeAt = performance.now();
     const next = probeDashboardDom(self);
     if (!next.crossPanel) {
       return false;
     }
     dom = next;
-    stop();
+    cancelRetries();
     onUpgrade(next);
     return true;
   };
@@ -202,7 +219,12 @@ export function watchDashboardDom(
   return {
     current: () => dom,
     recheck: () => {
-      if (dom.crossPanel || Date.now() - lastProbeAt < minRecheckIntervalMs) {
+      // `stopped` 擺第一個：`stop()` 之後這個 watcher 就不該再有任何動作。
+      // 這是防禦未來的呼叫端：目前 MascotPanel 的清理在同一個同步區塊裡依序
+      // `watcher.stop()`、`cancelAnimationFrame`、解綁 listener，殘留的那一拍不會執行。
+      // 但若有呼叫端 stop 之後仍有排好的 rAF／listener 呼叫 recheck，那一拍若還能升回，
+      // `onUpgrade` 就會對著已卸載的 React 樹 setState——這個旗標讓它不可能發生。
+      if (stopped || dom.crossPanel || performance.now() - lastProbeAt < minRecheckIntervalMs) {
         return false;
       }
       return probe();
