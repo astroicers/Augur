@@ -322,6 +322,13 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // （重新評估、重新打 history 端點）。D10 那條「一律 useRef 而非 useMemo」擋的是
   // 有狀態的物件；這裡連 memo 都不需要，解析是幾次 split，一輪評估跑一次就好。
   const severityAliasSpec = options.severityAliases ?? '';
+  // 值班靜音時段（#63）。**判斷不在這裡** —— 時段的解析與「現在算不算時段內」都在導播裡
+  // （`parseQuietHours` / `isQuietAt`，以注入的時鐘判斷），本檔只負責把這兩個選項原樣帶進
+  // 每一輪的設定。放進 effect 裡自己算的話，同一條交付閘門就會有兩個住處：
+  // 每瀏覽器靜音（ADR-007）已經是導播的 `muted()`，排程靜音再留在元件就必然漂開。
+  // 相依陣列刻意不含這兩個（理由同 `repeatFiringMin`，見下方 effect）。
+  const quietHours = options.quietHours ?? '';
+  const quietAllowCritical = options.quietAllowCritical ?? false;
   // 舊版存下來的 panel JSON 沒有這兩個鍵 —— 預設值補不到時當成空字串（= 內建素材）。
   const directionsImgUrl = options.directionsImgUrl ?? '';
   const reactionsImgUrl = options.reactionsImgUrl ?? '';
@@ -761,16 +768,21 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     const dashboardUid = alertState?.dashboardUID ?? data.request?.dashboardUID;
 
     // 設定**隨呼叫帶進去**，不經任何 ref 或另一個 effect 同步：這一輪讀到的
-    // 一定是本次 commit 的選項值。相依陣列刻意不含 `repeatFiringMin` 與
-    // `fallbackSeverity`（下方 eslint-disable 指的就是這兩個）—— 它們只在這個
+    // 一定是本次 commit 的選項值。相依陣列刻意不含 `repeatFiringMin`、
+    // `fallbackSeverity` 與 #63 的 `quietHours`／`quietAllowCritical`
+    // （下方 eslint-disable 指的就是這四個）—— 它們只在這個
     // effect 真的跑的時候才被讀，而那一刻讀的是最新一輪 render 的閉包；
-    // 放進 deps 只會讓「在編輯面板裡改那兩個選項」各多打一次 rules 端點。
+    // 放進 deps 只會讓「在編輯面板裡改那幾個選項」各多打一次 rules 端點。
+    // 代價是改了它們要等下一輪 refresh 才生效，而靜音時段的邊界本來就只在
+    // refresh 當下才被看一眼（時段結束不補念，所以沒有「錯過一輪」這回事）。
     const settings: DirectorSettings = {
       minSeverity,
       repeatFiringMin,
       fallbackSeverity,
       alertLang,
       severityAliasSpec,
+      quietHours,
+      quietAllowCritical,
     };
 
     void directorFor(id)

@@ -1573,3 +1573,70 @@ test('#51：留空時那則 P1 紀錄照舊被門檻擋掉（上一條的對照�
   await waitFor(() => expect(view.container.textContent).toContain('db-0 磁碟滿了'));
   expect(view.container.textContent).not.toContain('api-7f9c 記憶體過高');
 });
+
+// ---------------------------------------------------------------------------
+// #63：值班靜音時段的接線。時段的判斷在導播裡（`BroadcastDirector.test.ts` 以注入的
+// 時鐘涵蓋時段內／外／跨午夜／quietAllowCritical）；這一段看的是**選項有沒有真的到導播**。
+// 兩個選項若只進了 panelOptions 而沒帶進 evaluate 的設定，上面那些測試照樣全綠而面板行為毫無變化。
+// ---------------------------------------------------------------------------
+
+/**
+ * 以**現在的本地時間**為基準組一個 `HH:MM-HH:MM`（offset 以分鐘計）。
+ * 不寫死時刻、也不動系統時間 —— 元件這一側用的是真的 `Date.now()`（導播的預設時鐘），
+ * 而 ±60 分鐘的偏移讓這幾條測試在一天裡的任何一刻跑都成立（含跨午夜）。
+ */
+function rangeAround(startOffsetMin: number, endOffsetMin: number): string {
+  const stamp = (offsetMin: number) => {
+    const t = new Date(Date.now() + offsetMin * 60_000);
+    return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  };
+  return `${stamp(startOffsetMin)}-${stamp(endOffsetMin)}`;
+}
+
+test('#63：現在落在 quietHours 內 —— 告警照樣進清單，但一句都不念', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '半夜的告警' }]);
+  const view = render(
+    <MascotPanel {...props({ alertState: ALERTING, options: { quietHours: rangeAround(-60, 60) } })} />
+  );
+  // 先等它出現在清單上 —— 這一輪評估真的跑完了（與語音開關那條測試同一招）。
+  await waitFor(() => expect(view.container.textContent).toContain('半夜的告警'));
+  await settle();
+  expect(spoken).toEqual([]);
+});
+
+test('#63：現在不在 quietHours 內 —— 照常念（上一條的對照組）', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '白天的告警' }]);
+  render(<MascotPanel {...props({ alertState: ALERTING, options: { quietHours: rangeAround(60, 120) } })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken).toHaveLength(1);
+  expect(spoken[0]!.text).toContain('白天的告警');
+});
+
+test('#63 AC-3：quietAllowCritical 開著時，時段內只有 critical 念得出來', async () => {
+  mockedFetch.mockResolvedValue([
+    { alertname: 'Disk', severity: 'warning', summary: '磁碟快滿' },
+    { alertname: 'CPU', severity: 'critical', summary: '要人起來處理' },
+  ]);
+  const view = render(
+    <MascotPanel
+      {...props({
+        alertState: ALERTING,
+        options: { quietHours: rangeAround(-60, 60), quietAllowCritical: true },
+      })}
+    />
+  );
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  await settle();
+  // 清單兩則都有（畫面照常更新），念出來的只有 critical 那則。
+  expect(view.container.textContent).toContain('磁碟快滿');
+  expect(view.container.textContent).toContain('要人起來處理');
+  expect(spoken).toHaveLength(1);
+  expect(spoken[0]!.emotion).toBe('critical');
+});
+
+test('#63 AC-1：quietHours 留空時照常念出', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '照念' }]);
+  render(<MascotPanel {...props({ alertState: ALERTING, options: { quietHours: '' } })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken).toHaveLength(1);
+});

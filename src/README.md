@@ -169,6 +169,8 @@ The panel's own options:
 | Fallback severity | `critical` | Severity to assume when the rules endpoint cannot be reached. That endpoint carries no stability guarantee, so failing to reach it is an expected outcome rather than an error. |
 | Language | Chinese | Language of the spoken text. |
 | Enable speech | on | Turn off to keep the visual reactions without any sound. |
+| Quiet hours | empty (no schedule) | A `HH:MM-HH:MM` window in which the panel keeps updating but says nothing, such as `22:00-07:00` (across midnight) or `12:00-13:00`. **The start is included, the end is not** — it goes quiet at 22:00 sharp and speaks again at 07:00 sharp. Alerts that arrive during the window are *not* read out afterwards: the display and the record update as usual, the sentences are simply dropped. This is a **dashboard-level** setting shared by every viewer, but it is evaluated against **each viewer's own browser-local time**, so viewers in different time zones go quiet at different absolute moments (and the behaviour on a daylight-saving transition day is whatever the browser's local clock does — an hour that does not exist is never inside the window). It is a different switch from the per-browser voice button below; when both apply, **either one is enough to stay silent**. Left empty — or set to something malformed (no `-`, an impossible time, identical endpoints) — nothing is scheduled and behaviour is exactly as it was. Full-width colons and hyphens are accepted. |
+| Still speak critical in quiet hours | off | While inside the quiet-hours window, let a **firing** `critical` alert through anyway; everything else stays silent. The severity is read through *Severity aliases* first, so it is the same resolved value the minimum-severity threshold uses. The matching *recovery* is not spoken — at 3 a.m. only something that needs a person out of bed should make a sound. This applies to the scheduled window only: it never overrides the per-browser voice button. |
 | Voice | auto | Name a specific system voice — part of the name is enough, such as `Zhiwei`. Left empty, it prefers a local Chinese voice. The panel shows which voice it ended up using. |
 | Pitch | 1 | Speaking pitch, 0–2. To make him sound like a little boy, pick a male voice and raise this to about 1.4–1.7. Some browsers (reportedly Edge) ignore it. |
 | Rate | 1 | Speaking rate, 0.5–2. It is sent to an external speech service too, but the reference service ignores it — its rate comes from its voice sample. |
@@ -192,6 +194,9 @@ dashboard. It is shown when the panel has room for it (at least 320×180 px):
   Alerts that fire while muted are not spoken later when you unmute. While muted the mascot still changes expression and the
   record still updates; it just does not speak. A wall display can stay on while a
   person at their desk stays quiet.
+  This button and the *Quiet hours* option above are two different switches — one
+  belongs to the person watching, the other to the dashboard — and either one being
+  active is enough to stay silent.
 - **🔊 點一下啟用語音** (click to enable voice): browsers refuse to speak until someone
   has interacted with the page. If an alert was already firing when the page opened,
   its sentence was refused. The button says so, and clicking it speaks the refused

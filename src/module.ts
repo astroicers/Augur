@@ -74,6 +74,24 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         defaultValue: DEFAULT_OPTIONS.enableTTS,
       })
       .addTextInput({
+        // #63。**dashboard 層級**的靜音：與標題列那顆每瀏覽器的靜音鈕（ADR-007）是兩回事。
+        path: 'quietHours',
+        name: '值班靜音時段',
+        description:
+          '這段時間內畫面照常更新，但不念。格式 `HH:MM-HH:MM`，例如 22:00-07:00（跨午夜）或 12:00-13:00。起點算在內、終點不算（22:00 整開始安靜，07:00 整恢復出聲）。時段結束時不會把時段內的告警補念出來。這是 dashboard 的設定、所有觀看者共用，但判斷用的是**每個觀看者自己瀏覽器的本地時間**，所以跨時區的人各自落在不同的絕對時刻（日光節約轉換當天不保證）。與標題列那顆「我這台瀏覽器」的靜音鈕兩者並存，任一個成立就不念。留空 = 沒有排程靜音。格式錯誤（缺 `-`、時間不合法、起訖相同）視同留空。全形的冒號與減號照樣認得。',
+        defaultValue: DEFAULT_OPTIONS.quietHours ?? '',
+        settings: { placeholder: '22:00-07:00' },
+        showIf: (c) => c.enableTTS,
+      })
+      .addBooleanSwitch({
+        path: 'quietAllowCritical',
+        name: '靜音時段內仍念 critical',
+        description:
+          '開了之後，靜音時段內 critical 的告警照常念（其餘照舊只更新畫面）。嚴重度經「嚴重度別名」對映後判斷，與最低播報嚴重度吃同一份設定。恢復句不會念 —— 半夜只有需要有人起來處理的事才出聲。只對上面這個時段生效：標題列那顆靜音鈕按下去時，critical 也不會念。',
+        defaultValue: DEFAULT_OPTIONS.quietAllowCritical ?? false,
+        showIf: (c) => c.enableTTS && (c.quietHours ?? '').trim() !== '',
+      })
+      .addTextInput({
         path: 'ttsVoice',
         name: '指定聲線',
         description:

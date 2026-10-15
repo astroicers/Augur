@@ -15,6 +15,7 @@ import { PanelOptionsEditorBuilder, standardEditorsRegistry } from '@grafana/dat
 import { plugin } from '../module';
 import { DEFAULT_OPTIONS, type MascotPanelOptions } from '../panelOptions';
 import { parseSeverityAliases } from '../core/severityAliases';
+import { parseQuietHours } from '../director/BroadcastDirector';
 
 /**
  * 編輯器元件本身由 Grafana 在執行期注入（`standardEditorsRegistry` 在 app 啟動時才填）。
@@ -65,4 +66,48 @@ test('#51 AC-4：severityAliases 的說明有一句說明與一個範例', () =>
   expect(description).toContain('留空');
   // LOW-4：講的是「前後空白」不計 —— 中間的空白有作用，說成「空白不計」會誤導。
   expect(description).toContain('大小寫與前後空白不計');
+});
+
+test('#63 AC-1：quietHours／quietAllowCritical 註冊在編輯器上，預設是「沒有排程靜音」', () => {
+  const quiet = registeredOptions().find((o) => o.path === 'quietHours');
+  expect(quiet).toBeDefined();
+  expect(quiet!.defaultValue).toBe('');
+  expect(DEFAULT_OPTIONS.quietHours).toBe('');
+
+  const allow = registeredOptions().find((o) => o.path === 'quietAllowCritical');
+  expect(allow).toBeDefined();
+  expect(allow!.defaultValue).toBe(false);
+  expect(DEFAULT_OPTIONS.quietAllowCritical).toBe(false);
+});
+
+test('#63 AC-6：quietHours 的說明寫明 dashboard 層級、端點規則、與 ADR-007 的關係，且範例解析得出來', () => {
+  const description = registeredOptions().find((o) => o.path === 'quietHours')?.description ?? '';
+  // 範例要是**解析得出來**的格式，不是看起來像範例的字。
+  const example = /(\d{1,2}:\d{2}-\d{1,2}:\d{2})/.exec(description)?.[1];
+  expect(example).toBeDefined();
+  expect(parseQuietHours(example).range).not.toBeNull();
+  // 兩種靜音是不同層級的開關（AC-6），說明裡要講清楚，否則使用者會以為它取代了靜音鈕。
+  expect(description).toContain('dashboard');
+  expect(description).toContain('任一個成立就不念');
+  // 端點規則不能只寫在程式裡（AC-2 要求「寫明」）。
+  expect(description).toContain('起點算在內、終點不算');
+  // 本地時間的代價（跨時區、日光節約）要說，不然「所有觀看者共用」會被讀成同一個絕對時段。
+  expect(description).toContain('本地時間');
+  expect(description).toContain('留空');
+});
+
+test('#63 AC-3：quietAllowCritical 的說明寫明只對排程靜音生效、且經別名判斷', () => {
+  const description = registeredOptions().find((o) => o.path === 'quietAllowCritical')?.description ?? '';
+  expect(description).toContain('別名');
+  expect(description).toContain('只對上面這個時段生效');
+});
+
+test('#63：quietAllowCritical 只在設了時段且開著語音時顯示（沒設時段時它無從生效）', () => {
+  const allow = registeredOptions().find((o) => o.path === 'quietAllowCritical');
+  const showIf = allow!.showIf!;
+  const base = { ...DEFAULT_OPTIONS };
+  expect(showIf({ ...base, quietHours: '22:00-07:00' })).toBe(true);
+  expect(showIf({ ...base, quietHours: '   ' })).toBeFalsy();
+  expect(showIf({ ...base })).toBeFalsy();
+  expect(showIf({ ...base, quietHours: '22:00-07:00', enableTTS: false })).toBeFalsy();
 });

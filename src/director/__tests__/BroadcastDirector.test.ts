@@ -437,3 +437,177 @@ test('AC-5：導播的測試不 render React', () => {
   const sources = [...code.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1]!);
   expect(sources.filter((s) => /react|testing-library/i.test(s))).toEqual([]);
 });
+
+// ---------------------------------------------------------------------------
+// 值班靜音時段（#63）—— 全部以**注入的時鐘**驅動，不必等到真的半夜。
+// 時段的解析與端點規則由 `quietHours.test.ts` 單獨釘住；這一段看的是導播的交付閘門。
+// ---------------------------------------------------------------------------
+
+/** 本地時間的建構式 → 不論 jest 的 `TZ` 設成什麼，這些時刻都落在預期的那一分鐘。 */
+const at = (day: number, hours: number, minutes: number) => new Date(2026, 9, day, hours, minutes).getTime();
+const NIGHT = '22:00-07:00';
+const LUNCH = '12:00-13:00';
+
+test('#63 AC-2：時段內照樣回 items、pending 為 null，但一句都不交給播報器', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT });
+  // 語意與 ADR-007 的每瀏覽器靜音完全相同：清單與表情照常更新。
+  expect(round.evaluated).toBe(true);
+  expect(round.items).toHaveLength(1);
+  expect(round.items[0]!.plan.emotion).toBe('critical');
+  expect(round.pending).toBeNull();
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#63 AC-2：時段外照常交付（同一個設定、只有時刻不同）', async () => {
+  const h = harness();
+  h.setClock(at(15, 12, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(1);
+  expect(round.pending).toBe(1);
+});
+
+test('#63 AC-2：跨午夜 —— 凌晨 3 點仍在 22:00-07:00 內，07:00 整就恢復出聲（終點不含）', async () => {
+  const h = harness();
+  h.setClock(at(16, 3, 0));
+  await h.run([alert({ fingerprint: 'fp-night' })], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(0);
+
+  h.setClock(at(16, 7, 0));
+  await h.run([alert({ fingerprint: 'fp-morning' })], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(1);
+});
+
+test('#63 AC-2：不跨午夜 —— 12:00 整開始安靜，13:00 整恢復出聲（起點含、終點不含）', async () => {
+  const h = harness();
+  h.setClock(at(15, 12, 0));
+  await h.run([alert({ fingerprint: 'fp-noon' })], { quietHours: LUNCH });
+  expect(h.spoken).toHaveLength(0);
+
+  h.setClock(at(15, 13, 0));
+  await h.run([alert({ fingerprint: 'fp-after' })], { quietHours: LUNCH });
+  expect(h.spoken).toHaveLength(1);
+});
+
+test('#63 AC-2：時段內的告警照樣經過 dedup —— 時段結束時不會一口氣補念出來', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  // 第一輪：過了 dedup（回得到 items），只是沒交付。
+  expect((await h.run([alert()], { quietHours: NIGHT })).items).toHaveLength(1);
+
+  // 同一則、同一個時段內再評估一次：dedup 已經把它記成「播過」。
+  h.setClock(at(15, 22, 40));
+  expect((await h.run([alert()], { quietHours: NIGHT })).items).toHaveLength(0);
+
+  // 時段結束之後它還在燒：`repeatFiringMin: 0` = 永不重播 → 沒有補念，一句都沒有。
+  h.setClock(at(16, 7, 30));
+  const after = await h.run([alert()], { quietHours: NIGHT });
+  expect(after.items).toHaveLength(0);
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#63 AC-3：quietAllowCritical 開著時，時段內的 critical firing 照常交付', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT, quietAllowCritical: true });
+  expect(h.spoken).toHaveLength(1);
+  expect(h.spoken[0]!.emotion).toBe('critical');
+  expect(round.pending).toBe(1);
+});
+
+test('#63 AC-3：quietAllowCritical 開著時，同一輪的非 critical 仍然不交付（items 照回兩則）', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  const round = await h.run(
+    [
+      alert({ name: 'Disk', severity: 'warning', fingerprint: 'fp-w', summary: '磁碟快滿' }),
+      alert({ name: 'CPU', severity: 'critical', fingerprint: 'fp-c' }),
+    ],
+    { quietHours: NIGHT, quietAllowCritical: true }
+  );
+  expect(round.items).toHaveLength(2);
+  expect(h.spoken.map((p) => p.name)).toEqual(['CPU']);
+});
+
+test('#63 AC-3：quietAllowCritical 關著（預設）時，時段內的 critical 也不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  // BASE 沒有這個鍵（= 舊 dashboard 的 JSON），等同 false。
+  await h.run([alert({ fingerprint: 'fp-a' })], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(0);
+
+  await h.run([alert({ fingerprint: 'fp-b' })], { quietHours: NIGHT, quietAllowCritical: false });
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#63 AC-3：破靜音的嚴重度判斷會套別名（P1 要有別名才破得了）', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  // minSeverity 留空 → P1 過得了門檻、進得到交付閘門；但沒有別名時它的排名是 0。
+  await h.run([alert({ severity: 'P1', fingerprint: 'fp-p1' })], {
+    minSeverity: '',
+    quietHours: NIGHT,
+    quietAllowCritical: true,
+  });
+  expect(h.spoken).toHaveLength(0);
+
+  await h.run([alert({ severity: 'P1', fingerprint: 'fp-p1b' })], {
+    minSeverity: '',
+    quietHours: NIGHT,
+    quietAllowCritical: true,
+    severityAliasSpec: 'P1=critical',
+  });
+  expect(h.spoken).toHaveLength(1);
+  // 念出來的仍是原始 label（別名只影響判斷）。
+  expect(h.spoken[0]!.severity).toBe('p1');
+});
+
+test('#63 AC-3：critical 的 resolved 不破靜音 —— 時段內恢復不出聲，但 items 照回', async () => {
+  const h = harness();
+  // 時段外先把 firing 念出來。
+  h.setClock(at(15, 12, 0));
+  await h.run([alert({ fingerprint: 'fp-a' })], { quietHours: NIGHT, quietAllowCritical: true });
+  expect(h.spoken).toHaveLength(1);
+
+  // 時段內恢復：半夜只有需要有人起來處理的事才出聲，恢復不需要。
+  h.setClock(at(15, 23, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], {
+    quietHours: NIGHT,
+    quietAllowCritical: true,
+  });
+  expect(round.items).toHaveLength(1);
+  expect(round.items[0]!.plan.emotion).toBe('resolved');
+  expect(h.spoken).toHaveLength(1);
+});
+
+test('#63 AC-6：每瀏覽器靜音勝過 quietAllowCritical —— 觀看者按了靜音，critical 也不念', async () => {
+  const h = harness();
+  h.setMuted(true);
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT, quietAllowCritical: true });
+  expect(round.items).toHaveLength(1);
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#63 AC-1 / AC-4：留空或格式錯誤時照常交付（不靜音）', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  for (const [i, spec] of ['', '   ', '亂寫', '25:00-07:00', '22:00-22:00'].entries()) {
+    await h.run([alert({ fingerprint: `fp-${i}` })], { quietHours: spec });
+  }
+  expect(h.spoken).toHaveLength(5);
+});
+
+test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 1 的延伸）', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(0);
+
+  // 同一個時刻、同一台播報器，只有設定變了 —— 解析有一格快取，換字串就要換結果。
+  await h.run([alert({ fingerprint: 'fp-b' })], { quietHours: LUNCH });
+  expect(h.spoken).toHaveLength(1);
+  await h.run([alert({ fingerprint: 'fp-c' })], { quietHours: NIGHT });
+  expect(h.spoken).toHaveLength(1);
+});
