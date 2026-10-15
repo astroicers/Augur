@@ -153,3 +153,224 @@ test('未知但合法的字串嚴重度照原字念（只正規化，不改寫�
   expect(formatAlert(withSeverity('fatal'))).toContain('嚴重度 fatal');
   expect(formatAlert(withSeverity('Sev1'), 'en')).toContain('severity sev1');
 });
+
+// ---- #46：name / instance / summary / value 的缺值與非字串 ----
+
+/**
+ * 型別標註說 `name: string`、`instance?: string`、`summary?: string`、`value?: number`，
+ * 但這四個欄位與 severity 同樣來自 Grafana 的面板資料，標註一樣不可信（#46）。
+ * 下面每一條都用**整句比對**：只斷言「不含 undefined」會讓「省略整個子句」與
+ * 「換個詞念」兩種實作都算過，而這兩者是不同的句型（#39 的教訓）。
+ */
+function withField(field: keyof ParsedAlert, value: unknown, over: Partial<ParsedAlert> = {}): ParsedAlert {
+  return { ...mk(over), [field]: value } as unknown as ParsedAlert;
+}
+
+/** 四個欄位共用的髒值清單：缺值、空白、以及各類非字串。 */
+const DIRTY_FIELD: Array<[string, unknown]> = [
+  ['undefined', undefined],
+  ['null', null],
+  ['空字串', ''],
+  ['全空白', '   '],
+  ['空物件', {}],
+  ['有同名欄位的物件', { name: 'HighCPU' }],
+  ['空陣列', []],
+  ['單元素陣列', ['HighCPU']],
+  ['多元素陣列', [1, 2]],
+  ['數字 0', 0],
+  ['數字 42', 42],
+  ['NaN', NaN],
+  ['Infinity', Infinity],
+  ['true', true],
+  ['false', false],
+  ['function', () => 'HighCPU'],
+];
+
+/**
+ * 對四個欄位**同時**都算髒的值：從共用清單扣掉有限數字——`0` / `42` 對 `value`
+ * 是完全正常的值，只有對 name/instance/summary 才算髒。
+ */
+const DIRTY_EVERY_FIELD: Array<[string, unknown]> = [
+  ...DIRTY_FIELD.filter(([label]) => !label.startsWith('數字')),
+  ['-Infinity', -Infinity],
+];
+
+/** `value` 專用：再補上「看起來像數字的字串」——它對 name 合法，對 value 仍是非數字。 */
+const DIRTY_VALUE: Array<[string, unknown]> = [...DIRTY_EVERY_FIELD, ['數字字串', '95.2']];
+
+/** 句子裡絕不該出現的 JS 轉字串痕跡（票文列的前三個 + 實測會漏出的其餘幾個）。 */
+const ARTIFACTS = ['undefined', 'null', '[object Object]', 'NaN', 'Infinity', 'true', 'false', '=>', 'function'];
+
+// AC-1：name
+
+test('AC-1：name 髒值時 zh 念「未命名告警」，整句釘死', () => {
+  const expected = '偵測到告警：未命名告警，嚴重度 critical，受影響對象 host-1，目前數值 95.20，CPU high。';
+  for (const [label, v] of DIRTY_FIELD) {
+    expect([label, formatAlert(withField('name', v))]).toEqual([label, expected]);
+  }
+});
+
+test('AC-1：name 髒值時 en 念 "unnamed alert"，整句釘死', () => {
+  const expected = 'Alert firing: unnamed alert, severity critical, on host-1, current value 95.20, CPU high.';
+  for (const [label, v] of DIRTY_FIELD) {
+    expect([label, formatAlert(withField('name', v), 'en')]).toEqual([label, expected]);
+  }
+});
+
+test('AC-1：resolved 時 name 髒值一樣換成替代詞，整句釘死（兩種語言）', () => {
+  for (const [label, v] of DIRTY_FIELD) {
+    const a = withField('name', v, { status: 'resolved' });
+    expect([label, formatAlert(a)]).toEqual([
+      label,
+      '告警已恢復：未命名告警，受影響對象 host-1，目前數值 95.20，CPU high。',
+    ]);
+    expect([label, formatAlert(a, 'en')]).toEqual([
+      label,
+      'Alert resolved: unnamed alert, on host-1, current value 95.20, CPU high.',
+    ]);
+  }
+});
+
+test('AC-1：name 髒值時名稱子句不被省略——子句數與乾淨輸入相同（兩種語言）', () => {
+  const cleanZh = formatAlert(mk()).split('，').length;
+  const cleanEn = formatAlert(mk(), 'en').split(', ').length;
+  for (const [label, v] of DIRTY_FIELD) {
+    expect([label, formatAlert(withField('name', v)).split('，').length]).toEqual([label, cleanZh]);
+    expect([label, formatAlert(withField('name', v), 'en').split(', ').length]).toEqual([label, cleanEn]);
+  }
+});
+
+// AC-2：instance / summary / value
+
+test('AC-2：instance 髒值時整個「受影響對象」子句消失，整句釘死（兩種語言）', () => {
+  for (const [label, v] of DIRTY_FIELD) {
+    expect([label, formatAlert(withField('instance', v))]).toEqual([
+      label,
+      '偵測到告警：HighCPU，嚴重度 critical，目前數值 95.20，CPU high。',
+    ]);
+    expect([label, formatAlert(withField('instance', v), 'en')]).toEqual([
+      label,
+      'Alert firing: HighCPU, severity critical, current value 95.20, CPU high.',
+    ]);
+  }
+});
+
+test('AC-2：summary 髒值時整個摘要子句消失，整句釘死（兩種語言）', () => {
+  for (const [label, v] of DIRTY_FIELD) {
+    expect([label, formatAlert(withField('summary', v))]).toEqual([
+      label,
+      '偵測到告警：HighCPU，嚴重度 critical，受影響對象 host-1，目前數值 95.20。',
+    ]);
+    expect([label, formatAlert(withField('summary', v), 'en')]).toEqual([
+      label,
+      'Alert firing: HighCPU, severity critical, on host-1, current value 95.20.',
+    ]);
+  }
+});
+
+/**
+ * `value` 不在 AC-2 列出的兩個欄位裡，但票文標題寫的是「其他欄位」，而它是同一個缺陷：
+ * 舊實作的 `formatNumber` 第一行 `if (!Number.isFinite(n)) return String(n)` 正好
+ * 產出本票要擋的字串（`{}` → `[object Object]`、`[1, 2]` → `1,2`、`NaN` → `NaN`）。
+ */
+test('AC-2（延伸）：value 非數字或非有限值時整個數值子句消失，整句釘死（兩種語言）', () => {
+  for (const [label, v] of DIRTY_VALUE) {
+    expect([label, formatAlert(withField('value', v))]).toEqual([
+      label,
+      '偵測到告警：HighCPU，嚴重度 critical，受影響對象 host-1，CPU high。',
+    ]);
+    expect([label, formatAlert(withField('value', v), 'en')]).toEqual([
+      label,
+      'Alert firing: HighCPU, severity critical, on host-1, CPU high.',
+    ]);
+  }
+});
+
+test('AC-2：髒欄位與該欄位整個缺席的句子逐字相同（instance / summary / value）', () => {
+  for (const field of ['instance', 'summary', 'value'] as const) {
+    const absent = mk();
+    delete absent[field];
+    for (const [label, v] of field === 'value' ? DIRTY_VALUE : DIRTY_FIELD) {
+      expect([label, field, formatAlert(withField(field, v))]).toEqual([label, field, formatAlert(absent)]);
+      expect([label, field, formatAlert(withField(field, v), 'en')]).toEqual([
+        label,
+        field,
+        formatAlert(absent, 'en'),
+      ]);
+    }
+  }
+});
+
+test('AC-1/AC-2：四個欄位同時是髒值時仍組得出句子，整句釘死（兩種語言）', () => {
+  for (const [label, v] of DIRTY_EVERY_FIELD) {
+    const a = { ...mk(), name: v, instance: v, summary: v, value: v } as unknown as ParsedAlert;
+    expect([label, formatAlert(a)]).toEqual([label, '偵測到告警：未命名告警，嚴重度 critical。']);
+    expect([label, formatAlert(a, 'en')]).toEqual([label, 'Alert firing: unnamed alert, severity critical.']);
+  }
+});
+
+test('AC-1/AC-2：任一欄位髒值都不讓 JS 轉字串痕跡漏進句子（兩種語言）', () => {
+  for (const field of ['name', 'instance', 'summary', 'value'] as const) {
+    for (const [label, v] of field === 'value' ? DIRTY_VALUE : DIRTY_FIELD) {
+      for (const lang of ['zh', 'en'] as const) {
+        const text = formatAlert(withField(field, v), lang);
+        for (const artifact of ARTIFACTS) {
+          expect([label, field, lang, artifact, text.includes(artifact)]).toEqual([
+            label,
+            field,
+            lang,
+            artifact,
+            false,
+          ]);
+        }
+      }
+    }
+  }
+});
+
+test('AC-1/AC-2：髒值不拋例外，連 severity 也一起髒掉時也不拋', () => {
+  for (const [, v] of DIRTY_EVERY_FIELD) {
+    const a = { ...mk(), name: v, severity: v, instance: v, summary: v, value: v } as unknown as ParsedAlert;
+    expect(() => formatAlert(a)).not.toThrow();
+    expect(formatAlert(a)).toBe('偵測到告警：未命名告警，嚴重度 unknown。');
+    expect(formatAlert(a, 'en')).toBe('Alert firing: unnamed alert, severity unknown.');
+  }
+});
+
+// AC-3：正常字串逐字不變
+
+test('AC-3：前後有空白的正常字串原樣念出（判空才 trim，輸出不 trim）', () => {
+  expect(formatAlert(withField('instance', ' host-1 '))).toBe(
+    '偵測到告警：HighCPU，嚴重度 critical，受影響對象  host-1 ，目前數值 95.20，CPU high。',
+  );
+  expect(formatAlert(withField('name', ' HighCPU '), 'en')).toBe(
+    'Alert firing:  HighCPU , severity critical, on host-1, current value 95.20, CPU high.',
+  );
+});
+
+test('AC-3：有限數值的格式化規則未變（整數、兩位小數、極小值、極大值、負值、0）', () => {
+  const cases: Array<[unknown, string]> = [
+    [42, '42'],
+    [0, '0'],
+    [-5, '-5'],
+    [95.2, '95.20'],
+    [-0.5, '-0.50'],
+    [0.004, '0.0040'],
+    [1e21, '1000000000000000000000'],
+  ];
+  for (const [v, expected] of cases) {
+    expect([v, formatAlert(withField('value', v), 'en')]).toEqual([
+      v,
+      `Alert firing: HighCPU, severity critical, on host-1, current value ${expected}, CPU high.`,
+    ]);
+  }
+});
+
+test('AC-3：name/instance/summary 是一般字串時整句與修補前逐字相同', () => {
+  expect(formatAlert(mk({ name: 'DiskFull', instance: 'db-7', summary: '磁碟將滿' }))).toBe(
+    '偵測到告警：DiskFull，嚴重度 critical，受影響對象 db-7，目前數值 95.20，磁碟將滿。',
+  );
+  expect(formatAlert(mk({ name: 'DiskFull', instance: 'db-7', summary: 'disk almost full' }), 'en')).toBe(
+    'Alert firing: DiskFull, severity critical, on db-7, current value 95.20, disk almost full.',
+  );
+});

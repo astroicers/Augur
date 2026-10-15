@@ -41,11 +41,21 @@ export type Emotion = 'calm' | 'warning' | 'critical' | 'resolved'
 export interface BroadcastPlan {
   /** 要念出的事實句（formatAlert 產） */
   text: string
-  /** 原始嚴重度（critical/error/warning/info/unknown） */
+  /**
+   * **正規化後**的嚴重度：去空白、轉小寫（`' CRITICAL '` → `'critical'`），
+   * 缺值／空白／非字串一律收斂成 `'unknown'`（#39 起；`format.ts` 的 `speakableSeverity`）。
+   * 與 `text` 裡唸出來的那個嚴重度保證同值，所以下游回顯／分組都拿得到合法字串，
+   * 但**不是** `ParsedAlert.severity` 的原值——要原值請讀來源的 `ParsedAlert`。
+   * 常見值：critical / error / warning / info / unknown（其餘字串照原字保留）。
+   */
   severity: string
   /** 表情（severityToEmotion 產） */
   emotion: Emotion
-  /** 告警名稱 */
+  /**
+   * 告警名稱——**原樣轉手** `ParsedAlert.name`，未經 `severity` 那套收斂。
+   * 面板資料缺名稱時這裡就是 `undefined`／非字串，與 `text` 裡唸出的替代詞
+   * （zh「未命名告警」／en "unnamed alert"，#46）不保證一致。
+   */
   name: string
   /** 告警狀態 */
   status: 'firing' | 'resolved'
