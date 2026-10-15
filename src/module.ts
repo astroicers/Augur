@@ -101,6 +101,25 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         defaultValue: DEFAULT_OPTIONS.quietAllowCritical ?? false,
         showIf: (c) => c.enableTTS && (c.quietHours ?? '').trim() !== '',
       })
+      .addNumberInput({
+        // #64。命名注意：`src/avatar/flap.ts` 是嘴型開合，與這裡無關 —— 這一組一律 flapping。
+        path: 'flappingThreshold',
+        name: '抖動抑制：翻轉次數門檻',
+        description:
+          '同一則告警在下面那個窗長內 firing 與 resolved 之間翻幾次，就先不念它。例如門檻 4、窗長 10 分鐘：10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復，而且恢復時念的是當下的實際狀態（還在燒就念告警、已經好了就念恢復）。達到門檻的那一次仍會念出來，之後的翻轉才不念。抑制期間畫面與清單照常更新。0 或留空 = 關閉，行為與沒有這個選項時完全相同。被最低播報嚴重度擋下的告警不計入翻轉次數。',
+        defaultValue: DEFAULT_OPTIONS.flappingThreshold ?? 0,
+        settings: { min: 0, max: 100, step: 1, integer: true },
+        showIf: (c) => c.enableTTS,
+      })
+      .addNumberInput({
+        path: 'flappingWindowMin',
+        name: '抖動抑制：窗長（分鐘）',
+        description:
+          '翻轉次數在多長的窗內計算，同時也是「穩定多久就解除抑制」的長度。例如 10 = 10 分鐘內翻到門檻次數就先不念，之後維持同一個狀態滿 10 分鐘就解除。0、負數或留空 = 整個抖動抑制視同關閉（窗長 0 會讓「穩定滿窗」立刻成立，等於設了卻沒用）。',
+        defaultValue: DEFAULT_OPTIONS.flappingWindowMin ?? 10,
+        settings: { min: 1, max: 1440, step: 1, integer: true },
+        showIf: (c) => c.enableTTS && (c.flappingThreshold ?? 0) > 0,
+      })
       .addTextInput({
         path: 'ttsVoice',
         name: '指定聲線',
