@@ -20,9 +20,8 @@
 >
 > **這份文件不退役。** 它仍被 `src/avatar/flap.ts` 檔頭、`docs/sprite/sprite-sheet-spec.md`（9 處）、
 > `monitoring/README.md`、`docs/handoff/remaining-plan.md`、`docs/dependency-audit.md`
-> 與 `docs/ROADMAP.md` 的 B4-3 引用，而 §一的四個硬前提、
-> §三點五的 Web Speech 實測數字（語速 5.6 字/秒、boundary 1.53 次/秒）在版控裡沒有第二個出處 ——
-> 退役會讓那些引用全部指向一份作廢檔。
+> 與 `docs/ROADMAP.md` 的 B4-3 引用 —— 退役會讓那些引用全部指向一份作廢檔。
+> （§一的四個硬前提與 §三點五的 Web Speech 實測數字，ADR-004 正文也有收錄；本檔保留的是當時的完整脈絡。）
 >
 > 改法是：**每一節都帶狀態標記；仍開著的項目一律改指向 `docs/ROADMAP.md`〈未完成項目〉的編號。**
 > 那裡是現行的單一追蹤處；本檔自 2026-10-15 起只負責保留歷史原文與當時的理由。
@@ -101,8 +100,8 @@ P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證
 
 ⏳ **狀態（2026-10-15）：本節七個小節逐一標了狀態。真正還需要你的只剩四件** ——
 `WEBHOOK_SECRET`（B3-3）、`.claude/settings.json`（B7-1）、ADR-004〈查不到〉第 6 項（B4-4）、
-根 `.env.example` 的去留（B3-4），另加兩件已實質備好只等一句裁定的
-`.config/AGENTS/` 去留（B7-4）與 logo（`logo` 條）。其餘都已走完或被實測推翻。
+根 `.env.example` 的去留（B3-4），另加一件已實質備好只等一句裁定的
+`.config/AGENTS/` 去留（B7-4）。logo 不在此列：它要從 master frame 裁圖，卡在 B2-4（見 ROADMAP 的 `logo` 條）。其餘都已走完或被實測推翻。
 
 ### ~~🔴 會反向決定 `src/core/` 存廢的架構分叉（最重要）~~ ✅ **已走 (b)，P4 已完成**
 
@@ -119,7 +118,7 @@ P2（腳手架併入 + `src/core/` 遷入 + 舊管線刪除）已完成並驗證
 
 ✅ **已選 (b) 並實作完成**：`src/sources/rulesFetcher.ts`（打端點）+ `panelAlerts.ts`（雙軌：
 `alertState` 當觸發、rules 端點當內容）。`src/core/` **全部留用**。
-~~273 行零修改存活。~~ ⚠️ **「零修改」自 2026-10 起不再成立**（同 `docs/ROADMAP.md`〈未完成項目〉的
+~~273 行零修改存活。~~ ⚠️ **「零修改」自 2026-09 下旬起不再成立**（同 `docs/ROADMAP.md`〈未完成項目〉的
 **散落-2**）：`dedup.ts` 後來因兩個真實 bug 加了 `forget()` 與 `setWindow()`
 （commit「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」與
 「fix(panel): 會讓面板永久靜音的三條路徑…」）。**留用**這個結論沒變，變的是「零修改」。
@@ -173,7 +172,7 @@ ADR-004 決策 7 補訂正。兩造原文與裁定並列在 `docs/ROADMAP.md`〈
 | ADR-004 檔頭升級來歷寫「6 項查不到」，同檔〈查不到〉只列 5 項 | 第 6 項（rules 端點穩定性）只存在於未納管的 `.asp-fact-check.md`。**改 ADR 需你授權**，故未動 | ⏳ **仍開著 → `docs/ROADMAP.md` B4-4**（屬「ADR-004 的下一次修訂」那一批，仍需人類授權）。補列時要引用 `docs/measurements.md` M-1 的實測，並留意 **A2-3** 的更正：M-1 量的是 `fetch + .json()`，不是 `getBackendSrv().get()` 本身 |
 | `.asp-fact-check.md` 被 gitignore | 24 列中約 10–15 列只活在版控外。這是全機 15+ repo 的 ASP 慣例，**不宜單一 repo 破例**，故未動。ADR-004 的 Verification Evidence 表（已版控、每列自帶一級來源）承擔了主要舉證責任 | ⏳ **維持原判（不破例）**，但補列的缺口追蹤於 `docs/ROADMAP.md` **散落-3**；SP-9.6 另立了一條配套規則：公開 repo 要看得到的結論必須**逐字內嵌進版控文件**，不可只寫「見 `.asp-fact-check.md`」 |
 | `monitoring/windows/*.ps1` 的供應鏈 | 兩支腳本要求管理員權限、抓 GitHub `releases/latest`（**版本不 pin**）、靜默安裝成 Windows 服務，**零 checksum、零簽章驗證**。公開 repo 上陌生人可能照著跑 | ✅ **已修。** 兩支腳本現在都釘住版本並驗 SHA256（`windows_exporter-install.ps1` 釘 `0.31.8` + `Get-FileHash -Algorithm SHA256` 比對 release 的 `sha256sums.txt`；`alloy-install.ps1` 同樣做法）。管理員權限與靜默安裝是安裝 Windows 服務的必然，檔頭已寫明 |
-| `npm run e2e` 會登入一台無關的 Grafana | `baseURL` 預設 `localhost:3000`（本機被別的 stack 佔著），`tests/` 未落地故只跑 `@grafana/plugin-e2e` 內建的 auth.setup。需固定 `GRAFANA_URL` 或在 P4 補 `tests/` | ✅ **已修（兩半都做了）。** 根 `playwright.config.ts` 把 `baseURL` 覆寫成 `process.env.GRAFANA_URL ?? 'http://127.0.0.1:3002'`，註解逐字寫明「不覆寫的後果不是連不上，是去登入 3000 上那台無關的 Grafana」；`tests/` 也已落地（`plugin-loads.spec.ts`、`panel-speaks.spec.ts`）。⚠️ 另一個相關坑仍開著：`.config/AGENTS/e2e-testing.md` 教的 `GRAFANA_VERSION` 在本 repo 無效 → **B7-4-附** |
+| `npm run e2e` 會登入一台無關的 Grafana | `baseURL` 預設 `localhost:3000`（本機被別的 stack 佔著），`tests/` 未落地故只跑 `@grafana/plugin-e2e` 內建的 auth.setup。需固定 `GRAFANA_URL` 或在 P4 補 `tests/` | ✅ **已修（兩半都做了）。** 根 `playwright.config.ts` 把 `baseURL` 覆寫成 `process.env.GRAFANA_URL ?? 'http://127.0.0.1:3002'`，註解寫明「不覆寫的後果**不是連不上**，是更糟的：`@grafana/plugin-e2e` 的 `auth.setup` 會拿 admin 帳密去登入 3000 上那台**無關的 Grafana**」；`tests/` 也已落地（`plugin-loads.spec.ts`、`panel-speaks.spec.ts`）。⚠️ 另一個相關坑仍開著：`.config/AGENTS/e2e-testing.md` 教的 `GRAFANA_VERSION` 在本 repo 無效 → **B7-4-附** |
 
 ### 🔵 覆蓋缺口（review 補查，非缺陷）
 
@@ -216,7 +215,7 @@ ADR-004 決策 7 補訂正。兩造原文與裁定並列在 `docs/ROADMAP.md`〈
 
 ## 三點五、POC 實測結果（2026-09-17）與它推翻的兩件事
 
-✅ **狀態（2026-10-15）：本節的數字仍然有效，且是版控裡唯一的出處** ——
+✅ **狀態（2026-10-15）：本節的數字仍然有效**（ADR-004 正文也有收錄；本節保留當時的完整脈絡）——
 `src/avatar/flap.ts`、`src/speech/speaker.ts` 與 `docs/sprite/sprite-sheet-spec.md`
 都在引用它。**不要刪，也不要照它推翻的那兩件舊主張做。**
 
@@ -316,7 +315,7 @@ SP-2.6（虹膜直徑）、SP-3.3（瞳孔位移）、SP-5.3（可讀性實測�
 ## 四、P3/P4 契約備忘（給下一階段執行者）
 
 ✅ **狀態（2026-10-15）：P3 與 P4 都已完成，本節整體降為歷史契約。**
-每一塊下面都帶了狀態。**只有帶 ❌ 的那兩行是「不要照做」**，其餘是已落實的設計理由，
+各塊的狀態寫在塊下或由本節頭涵蓋（types 層由節頭涵蓋）。**只有帶 ❌ 的那一行是「不要照做」**，其餘是已落實的設計理由，
 拆掉會把對的東西改壞。仍開著的部分一律指向 `docs/ROADMAP.md`〈未完成項目〉。
 
 **types 層**：D1（複製 episode 而非重算）、D5（levelIndex）、D6（repeatFiringMin）、
