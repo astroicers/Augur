@@ -18,8 +18,9 @@
 >
 > ## 📌 2026-10-15 逐節補狀態（A0-7：選「逐條補狀態」，**不**整份退役）
 >
-> **這份文件不退役。** 它仍被 `src/avatar/flap.ts` 檔頭、`docs/sprite/sprite-sheet-spec.md`（5 處）、
-> `monitoring/README.md` 與 `docs/ROADMAP.md` 的 B4-3 引用，而 §一的四個硬前提、
+> **這份文件不退役。** 它仍被 `src/avatar/flap.ts` 檔頭、`docs/sprite/sprite-sheet-spec.md`（9 處）、
+> `monitoring/README.md`、`docs/handoff/remaining-plan.md`、`docs/dependency-audit.md`
+> 與 `docs/ROADMAP.md` 的 B4-3 引用，而 §一的四個硬前提、
 > §三點五的 Web Speech 實測數字（語速 5.6 字/秒、boundary 1.53 次/秒）在版控裡沒有第二個出處 ——
 > 退役會讓那些引用全部指向一份作廢檔。
 >
@@ -168,7 +169,7 @@ ADR-004 決策 7 補訂正。兩造原文與裁定並列在 `docs/ROADMAP.md`〈
 
 | 項目 | 狀況（2026-09-16 原文） | 現況（2026-10-15） |
 |---|---|---|
-| `.claude/settings.json` 進了公開 repo | 內含 `Bash(*)` 全域放行與三條 `/home/ubuntu/.claude/asp/hooks/` 絕對路徑，是本機狀態。零憑證（不觸鐵則二），但 `git rm --cached` 一行即可清掉。與 nami 是同一個「什麼該公開」的問題 | ⏳ **仍開著 → `docs/ROADMAP.md` B7-1。** 三條 v4 hook 絕對路徑已於 asp-ng 接入時移除（2026-10-10），現在是 deny 12 條 / ask 12 條；但「`git rm --cached` 一行即可」**已不成立** —— 移出前要先替 deny 規則與 ship-gate 找著落（`pretooluse-ship-gate.sh` 不能直接搬到全域），`.claude/skills/` 下的 11 個專案資產也不要一起移 |
+| `.claude/settings.json` 進了公開 repo | 內含 `Bash(*)` 全域放行與三條 `/home/ubuntu/.claude/asp/hooks/` 絕對路徑，是本機狀態。零憑證（不觸鐵則二），但 `git rm --cached` 一行即可清掉。與 nami 是同一個「什麼該公開」的問題 | ⏳ **仍開著 → `docs/ROADMAP.md` B7-1。** 三條 v4 hook 絕對路徑已於 asp-ng 接入時移除（2026-10-10），現在是 deny 10 條 / ask 10 條（2026-10-15 實查 `.claude/settings.json`；`docs/ROADMAP.md` B7-1 仍記 12 / 12，待該條自己的票更正）；但「`git rm --cached` 一行即可」**已不成立** —— 移出前要先替 deny 規則與 ship-gate 找著落（`pretooluse-ship-gate.sh` 不能直接搬到全域），`.claude/skills/` 下的 11 個專案資產也不要一起移 |
 | ADR-004 檔頭升級來歷寫「6 項查不到」，同檔〈查不到〉只列 5 項 | 第 6 項（rules 端點穩定性）只存在於未納管的 `.asp-fact-check.md`。**改 ADR 需你授權**，故未動 | ⏳ **仍開著 → `docs/ROADMAP.md` B4-4**（屬「ADR-004 的下一次修訂」那一批，仍需人類授權）。補列時要引用 `docs/measurements.md` M-1 的實測，並留意 **A2-3** 的更正：M-1 量的是 `fetch + .json()`，不是 `getBackendSrv().get()` 本身 |
 | `.asp-fact-check.md` 被 gitignore | 24 列中約 10–15 列只活在版控外。這是全機 15+ repo 的 ASP 慣例，**不宜單一 repo 破例**，故未動。ADR-004 的 Verification Evidence 表（已版控、每列自帶一級來源）承擔了主要舉證責任 | ⏳ **維持原判（不破例）**，但補列的缺口追蹤於 `docs/ROADMAP.md` **散落-3**；SP-9.6 另立了一條配套規則：公開 repo 要看得到的結論必須**逐字內嵌進版控文件**，不可只寫「見 `.asp-fact-check.md`」 |
 | `monitoring/windows/*.ps1` 的供應鏈 | 兩支腳本要求管理員權限、抓 GitHub `releases/latest`（**版本不 pin**）、靜默安裝成 Windows 服務，**零 checksum、零簽章驗證**。公開 repo 上陌生人可能照著跑 | ✅ **已修。** 兩支腳本現在都釘住版本並驗 SHA256（`windows_exporter-install.ps1` 釘 `0.31.8` + `Get-FileHash -Algorithm SHA256` 比對 release 的 `sha256sums.txt`；`alloy-install.ps1` 同樣做法）。管理員權限與靜默安裝是安裝 Windows 服務的必然，檔頭已寫明 |
