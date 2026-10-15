@@ -45,6 +45,7 @@ import {
   checkOutlineContinuity,
   checkOverlayOwnership,
   optional as effective,
+  ownershipMask,
   windowRect,
 } from './lib/spriteChecks.mjs';
 
@@ -669,7 +670,10 @@ function writeDiffImages(sheets, manifest, findings, outDir) {
       }
     } else {
       // reactions：把**越界**的非零 alpha 標洋紅（SP-7.4 / SP-6.6 的失敗模式）
-      const allow = ownershipMaskFor(manifest, cell);
+      // ⚠️ `?? ''` 不能省。`ownershipMask` 直接 `code.includes(...)`，
+      // 而這裡的 cell 來自 diff 清單而非驗證過的 9 格迴圈 —— 缺一格就是 TypeError，
+      // 一個「產出 diff 圖」的輔助步驟不該把整支工具變成 exit 2。
+      const allow = ownershipMask(manifest.reactionOwnership[cell] ?? '', manifest);
       const skin = skinMask(sheets.directions, manifest);
       for (let y = 0; y < cellPx; y++) {
         for (let x = 0; x < cellPx; x++) {
@@ -691,40 +695,6 @@ function writeDiffImages(sheets, manifest, findings, outDir) {
     written.push(`${path.relative(ROOT, p)}（${ids.join(' ')}：${marked} 個洋紅像素）`);
   }
   return written;
-}
-
-/** 取某一格的產權允許遮罩。`spriteChecks` 的 `ownershipMask` 未 export，這裡用同一組規則重建。 */
-function ownershipMaskFor(manifest, cell) {
-  const { cellPx } = manifest.sheet;
-  const code = manifest.reactionOwnership[cell] ?? '';
-  const mask = new Uint8Array(cellPx * cellPx);
-  const rects = { E: windowRect(manifest.windows.E, cellPx), B: windowRect(manifest.windows.B, cellPx), M: windowRect(manifest.windows.M, cellPx) };
-  const inR = (x, y, r) => x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1;
-  if (code.includes('K')) {
-    const lo = Math.floor(manifest.margins.silhouetteBox[0] * cellPx);
-    const hi = Math.ceil(manifest.margins.silhouetteBox[1] * cellPx);
-    for (let y = lo; y < hi; y++) {
-      for (let x = lo; x < hi; x++) {
-        if (!inR(x, y, rects.E) && !inR(x, y, rects.B) && !inR(x, y, rects.M)) {
-          mask[y * cellPx + x] = 1;
-        }
-      }
-    }
-  }
-  for (const k of ['E', 'B', 'M']) {
-    if (!code.includes(k)) {
-      continue;
-    }
-    const r = rects[k];
-    for (let y = r.y0; y < r.y1; y++) {
-      for (let x = r.x0; x < r.x1; x++) {
-        if (x >= 0 && y >= 0 && x < cellPx && y < cellPx) {
-          mask[y * cellPx + x] = 1;
-        }
-      }
-    }
-  }
-  return mask;
 }
 
 // --- 報表 -----------------------------------------------------------------
