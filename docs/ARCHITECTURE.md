@@ -2,10 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-15（#51：新增 `severityAliases` 選項與 `core/severityAliases.ts`——
+> 最後更新：2026-10-15（#58：導播管線收成 `src/director/BroadcastDirector.ts`——
+> 不依賴 React 的深模組，`MascotPanel.tsx` 只剩呈現與接線）。
+> 前一次是 2026-10-15（#51：新增 `severityAliases` 選項與 `core/severityAliases.ts`——
 > 嚴重度別名的前置正規化）。
-> 前一次是 2026-10-14（#31：補 ADR-006 與播報紀錄／外部語音／嘴型擺動四個模組、
-> 〈設定〉改列全部 panel 選項、拿掉寫死的測試數與 `src/core` 行數）。
 
 ## 一句話
 
@@ -34,11 +34,14 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
        （src/sources/rulesFetcher.ts；內容來源，與 ParsedAlert 一對一）
                                  │
                                  ▼  ParsedAlert[]
-                      src/components/MascotPanel.tsx（導播）
+                 src/director/BroadcastDirector.ts（導播；不依賴 React）
                         ├ core/severityAliases.ts  resolveSeverity 前置正規化（別名 → 標準嚴重度）
                         ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
                         ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
+                                 │  BroadcastItem[]（時間順序）
+                      src/components/MascotPanel.tsx（接線＋呈現）
+                        每輪 panel data 餵一次 evaluate(input, settings)
                                  │
               ┌──────────────────┴──────────────────┐
               ▼                                     ▼
@@ -76,7 +79,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 |---|---|
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
-| `src/components/MascotPanel.tsx` | 導播 + 呈現。是舊 `server.ts:68-77` 處理迴圈的搬家 |
+| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出） |
+| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
@@ -107,6 +111,12 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 **來源層的三個不變量**（`panelAlerts.ts` 檔頭有完整說明）：episode 用複製而非重算、
 `startsAt` 釘死、每次評估都無條件 emit 而把抑制交給 dedup。
 第三條讓 `dedup.ts` 既有的「同一則只念一次」語意直接沿用就是對的。
+
+**導播不依賴 React**（#58）。它的四條不變量（設定隨呼叫帶進來、source 與 dedup 同生同死、
+換去重視窗一律 `setWindow` 不重建、一輪評估是原子的）先前靠 `MascotPanel.tsx` 裡
+**effect 的宣告順序**維持，而三條破掉的症狀都一樣：**永久靜音**（告警在燒而面板一聲不吭，
+不留任何錯誤）。收成深模組之後，那些條件由呼叫順序與狀態保證 —— 新增 effect 或調換位置
+都不可能破掉它們，後續功能（靜音／值班時段、抖動抑制）也接在這一支上而不是再加一個 effect。
 
 **avatar 可換**：上層只依賴 `AvatarController` 介面。換實作不動導播、不動語音、不動 DOM 層。
 
