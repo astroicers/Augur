@@ -192,7 +192,7 @@ npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身
 
 | 目錄 | 是什麼 |
 |---|---|
-| `src/core/` | 來源中立的核心邏輯：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。不依賴瀏覽器或 Node，從舊架構整包繼承、`ParsedAlert` 這條邊界沒動——但**不是「零修改」**：`dedup.ts` 為兩次真實的永久靜音缺陷加過 `forget()` 與 `setWindow()`，`severity.ts` 補過缺值收斂。別再寫死行數。 |
+| `src/core/` | 來源中立的核心邏輯：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。不依賴瀏覽器或 Node，從舊架構整包繼承、`ParsedAlert` 這條邊界沒動——但內部**改過**：`dedup.ts` 為兩次真實的永久靜音缺陷加了 `forget()`（commit「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」）與 `setWindow()`（commit「fix(panel): 會讓面板永久靜音的三條路徑，以及 speaker.ts 的第一份測試」），`severity.ts` 補過缺值收斂，`format.ts` 改過髒值處理與別名參數（#39、#46、#51）等。行數會變，別寫死。 |
 | `monitoring/` | docker-compose 開發環境 + 8 條 Windows 主機 alert rule（3 條效能、5 條 Loki 事件），另有 2 條 POC 用的合成規則 |
 | ~~`assets/`~~ | 已於 2026-09-21 退出版控：出處查不到，依 `docs/asset-provenance.md` 自訂的規則移除。角色定義改由 `live2d-template-spec-v1.md` §7 的文字描述 + `sprite-sheet-spec.md` SP-6.0 的色票表承擔，兩者都是本專案自己的產物。 |
 | `live2d/_archive/` | 已廢棄的 Live2D 路線。但 `live2d-template-spec-v1.md` §6 仍在用：它定義了 calm/warning/critical/resolved 四個表情的視覺語意，是 sprite 反應圖的內容大綱。 |
