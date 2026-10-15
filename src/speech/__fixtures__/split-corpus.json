@@ -1,0 +1,544 @@
+{
+  "about": [
+    "斷句規則的共用語料（#59）。TypeScript 與 Python 兩邊的 golden 測試都讀這一份，它是唯一事實源。",
+    "消費者：src/speech/__tests__/splitCorpus.test.ts（splitForRemoteVoice、splitClauses）與",
+    "tools/tts-server/test_textsplit.py 的「語料逐句比對」那一支（textsplit.clauses）。",
+    "",
+    "怎麼產生的：以現行實作跑出三份輸出，再逐句人工複核。複核發現可疑的句子帶 `suspect` 欄位，",
+    "裡面寫明為什麼可疑、以及為什麼本票不改（#59 票文：行為一律不變）。",
+    "要改任何一條規則：先改這份語料，再改實作 —— 不要反過來照抄實作的新輸出。",
+    "",
+    "欄位：text＝輸入；maxChars＝splitForRemoteVoice 的字數上限（正式環境是 56＝10 秒 × 5.6 字/秒）；",
+    "minChars＝splitClauses 與 Python clauses 的字數下限（正式環境是 16）；covers＝這一句涵蓋 AC-1 的哪些邊界。",
+    "三份實作的切點差異逐條記在 src/speech/splitRules.ts 的檔頭。",
+    "",
+    "⚠️ 這份檔案含 lone surrogate 轉義（emoji-limit-1 的 \\ud83d／\\ude00）—— 那是硬切上限為 1 時",
+    "切在代理對中間的真實輸出。Python 端只讀 text／minChars／pythonClauses，不碰也不重新編碼那一欄。"
+  ],
+  "cases": [
+    {
+      "id": "empty",
+      "covers": ["空字串"],
+      "note": "空字串。三份的回傳形狀不同（見 splitRules.ts 聚合層差異）。",
+      "text": "",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": [""],
+      "splitClauses": [""],
+      "pythonClauses": [],
+      "suspect": {
+        "severity": "低",
+        "why": "splitClauses('') 回 `['']`（`out.length ? out : [text]` 的後備路徑），所以空字串的一則會送出一次 `input: \"\"` 的 HTTP 請求；Python 的 clauses('') 回 `[]`。現行面板不會產生空的播報文字（buildBroadcastPlan 一定有字），所以觀察不到。",
+        "whyNotFixedHere": "既有測試已把 `['']` 釘住（remoteSpeaker.test.ts「沒有標點就整句一段；空字串原樣」），改它會動到 AC-4 要求一行不改的測試。"
+      }
+    },
+    {
+      "id": "whitespace-only",
+      "covers": ["空字串", "全形與半形標點"],
+      "note": "只有空白。",
+      "text": "   ",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["   "],
+      "splitClauses": ["   "],
+      "pythonClauses": []
+    },
+    {
+      "id": "single-char",
+      "covers": [],
+      "note": "一個字，不足任何下限。",
+      "text": "嗨",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["嗨"],
+      "splitClauses": ["嗨"],
+      "pythonClauses": ["嗨"]
+    },
+    {
+      "id": "zh-short-sentence",
+      "covers": ["全形與半形標點"],
+      "note": "短於上限：splitForRemoteVoice 直接整句回傳。",
+      "text": "短句。",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["短句。"],
+      "splitClauses": ["短句。"],
+      "pythonClauses": ["短句。"]
+    },
+    {
+      "id": "alert-zh-typical",
+      "covers": ["中英混合", "小數", "全形與半形標點"],
+      "note": "最典型的一則告警（正式環境的上限 56 字＝10 秒 × 5.6 字/秒）。",
+      "text": "偵測到告警：WindowsHighCPU，嚴重度 critical，目前數值 91.35。",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["偵測到告警：WindowsHighCPU，嚴重度 critical，目前數值 91.35。"],
+      "splitClauses": ["偵測到告警：WindowsHighCPU，", "嚴重度 critical，目前數值 91.35。"],
+      "pythonClauses": ["偵測到告警：WindowsHighCPU，", "嚴重度 critical，目前數值 91.35。"]
+    },
+    {
+      "id": "alert-zh-typical-max20",
+      "covers": ["中英混合", "小數", "全形與半形標點"],
+      "note": "同一則，上限壓到 20 字逼出多段。",
+      "text": "偵測到告警：WindowsHighCPU，嚴重度 critical，目前數值 91.35。",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["偵測到告警：WindowsHighCPU", "，嚴重度 critical，目前數值 ", "91.35。"],
+      "splitClauses": ["偵測到告警：WindowsHighCPU，", "嚴重度 critical，", "目前數值 91.35。"],
+      "pythonClauses": ["偵測到告警：WindowsHighCPU，", "嚴重度 critical，", "目前數值 91.35。"]
+    },
+    {
+      "id": "alert-zh-long",
+      "covers": ["中英混合", "IPv4", "小數", "全形與半形標點"],
+      "note": "正式環境上限下的長告警，涵蓋 IPv4 與小數。",
+      "text": "偵測到告警：WindowsHighCPU，嚴重度 critical，受影響對象 192.168.1.20，目前數值 91.35，Windows host CPU usage is high，已經持續兩分鐘，請值班人員盡快處理。",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": [
+        "偵測到告警：WindowsHighCPU，嚴重度 critical，受影響對象 192.168.1.20，",
+        "目前數值 91.35，Windows host CPU usage is high，已經持續兩分鐘，",
+        "請值班人員盡快處理。"
+      ],
+      "splitClauses": [
+        "偵測到告警：WindowsHighCPU，",
+        "嚴重度 critical，受影響對象 192.168.1.20，",
+        "目前數值 91.35，Windows host CPU usage is high，",
+        "已經持續兩分鐘，請值班人員盡快處理。"
+      ],
+      "pythonClauses": [
+        "偵測到告警：WindowsHighCPU，",
+        "嚴重度 critical，受影響對象 192.168.1.20，",
+        "目前數值 91.35，Windows host CPU usage is high，",
+        "已經持續兩分鐘，請值班人員盡快處理。"
+      ]
+    },
+    {
+      "id": "ideographic-comma",
+      "covers": ["全形與半形標點"],
+      "note": "頓號：只有 splitForRemoteVoice 在它後面切（差異 2）。這個上限下三份輸出的差別被聚合層抹平。",
+      "text": "受影響對象甲、乙、丙，請檢查。",
+      "maxChars": 12,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響對象甲、乙、丙，", "請檢查。"],
+      "splitClauses": ["受影響對象甲、乙、丙，請檢查。"],
+      "pythonClauses": ["受影響對象甲、乙、丙，請檢查。"]
+    },
+    {
+      "id": "ideographic-comma-forced",
+      "covers": ["全形與半形標點", "中英混合"],
+      "note": "同樣的頓號，但上限／下限選得讓切點真的改變輸出：splitForRemoteVoice 在頓號後切，splitClauses 與 Python 整句一段。",
+      "text": "受影響的服務有 web、db、cache，請檢查。",
+      "maxChars": 15,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響的服務有 web、db、", "cache，請檢查。"],
+      "splitClauses": ["受影響的服務有 web、db、cache，請檢查。"],
+      "pythonClauses": ["受影響的服務有 web、db、cache，請檢查。"]
+    },
+    {
+      "id": "fullwidth-colon",
+      "covers": ["全形與半形標點"],
+      "note": "全形冒號：splitForRemoteVoice 不切、splitClauses 與 Python 切（差異 3）。下限壓到 4 字，冒號那一段才不會被併回去。",
+      "text": "偵測到告警：主機 CPU 使用率過高",
+      "maxChars": 10,
+      "minChars": 4,
+      "splitForRemoteVoice": ["偵測到告警：主機 ", "CPU 使用率過高"],
+      "splitClauses": ["偵測到告警：", "主機 CPU 使用率過高"],
+      "pythonClauses": ["偵測到告警：", "主機 CPU 使用率過高"]
+    },
+    {
+      "id": "ipv4-decimal",
+      "covers": ["IPv4", "小數"],
+      "note": "IPv4 與小數：半形 . 後面接數字不切（差異 5）。",
+      "text": "受影響對象 192.168.1.20，目前數值 91.35。",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響對象 192.168.1.20，", "目前數值 91.35。"],
+      "splitClauses": ["受影響對象 192.168.1.20，", "目前數值 91.35。"],
+      "pythonClauses": ["受影響對象 192.168.1.20，", "目前數值 91.35。"]
+    },
+    {
+      "id": "ipv4-port-time-thousands",
+      "covers": ["IPv4", "時間", "小數"],
+      "note": "IP:埠、時間、千分位：半形 , : 後面接數字不切。",
+      "text": "受影響對象 192.168.1.20:9182，時間 12:30:05，數量 1,234。",
+      "maxChars": 24,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響對象 192.168.1.20:9182，", "時間 12:30:05，數量 1,234。"],
+      "splitClauses": ["受影響對象 192.168.1.20:9182，", "時間 12:30:05，", "數量 1,234。"],
+      "pythonClauses": ["受影響對象 192.168.1.20:9182，", "時間 12:30:05，", "數量 1,234。"]
+    },
+    {
+      "id": "url-http-en",
+      "covers": ["URL", "中英混合"],
+      "note": "URL：半形 . : 後面接 / 不切。",
+      "text": "see http://grafana.local/d/x please",
+      "maxChars": 20,
+      "minChars": 16,
+      "splitForRemoteVoice": ["see http://grafana.", "local/d/x please"],
+      "splitClauses": ["see http://grafana.local/d/x please"],
+      "pythonClauses": ["see http://grafana.local/d/x please"],
+      "suspect": {
+        "severity": "中",
+        "why": "splitForRemoteVoice 把 `http://grafana.local` 在 `grafana.` 後面當成切點（`(?![\\d/])` 只擋「點後面是數字或 /」，擋不住 `local`）。tools/tts-server/textsplit.py 的註解（d135467）記著不切半形句點的理由正是「`91.35`、`grafana.local`」 —— 同一個理由在 speaker.ts 上沒有被採用。只有當字數上限剛好落在網址中間時才看得到。",
+        "whyNotFixedHere": "同 ipv6 那一條：本票不改行為。另外這一條只影響「唸出來多一個停頓」，不影響文字內容（接起來仍等於原文）。"
+      }
+    },
+    {
+      "id": "url-http-zh",
+      "covers": ["URL", "中英混合"],
+      "note": "中文句子裡的 URL。",
+      "text": "儀表板 http://grafana.local/d/x 可以看，請點進去。",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["儀表板 http://grafana.", "local/d/x 可以看，請點進去。"],
+      "splitClauses": ["儀表板 http://grafana.local/d/x 可以看，請點進去。"],
+      "pythonClauses": ["儀表板 http://grafana.local/d/x 可以看，請點進去。"]
+    },
+    {
+      "id": "ipv6",
+      "covers": ["IPv6"],
+      "note": "IPv6：`::` 的第二個冒號後面不是數字。",
+      "text": "對象 fe80::1ff:fe23:4567:890a 異常",
+      "maxChars": 26,
+      "minChars": 8,
+      "splitForRemoteVoice": ["對象 ", "fe80::1ff:fe23:4567:890a ", "異常"],
+      "splitClauses": ["對象 fe80::1ff:", "fe23:4567:890a 異常"],
+      "pythonClauses": ["對象 fe80::1ff:", "fe23:4567:890a 異常"],
+      "suspect": {
+        "severity": "高",
+        "why": "splitClauses 與 Python 在 `fe80::1ff:` 的第二個冒號後切開（冒號後面是 `1`／`f`，`f` 不是數字也不是 /），IPv6 位址被拆成兩次請求、中間多一個停頓。speaker.ts 的 splitForRemoteVoice 不切 —— 那正是 4c8c5fd（第二輪複審 R2）為 IPv6 與 C:\\ 做的修正，但同一條理由從未被套用到另外兩份。",
+        "whyNotFixedHere": "#59 票文明寫「行為一律不變」，本票只負責釘住現狀。要改的話請另開票，改語料與三份實作。"
+      }
+    },
+    {
+      "id": "windows-path",
+      "covers": ["Windows 路徑"],
+      "note": "Windows 路徑：`C:` 後面是反斜線，不是 / 也不是數字。",
+      "text": "磁碟 C:\\Data\\logs 已滿",
+      "maxChars": 14,
+      "minChars": 8,
+      "splitForRemoteVoice": ["磁碟 ", "C:\\Data\\logs ", "已滿"],
+      "splitClauses": ["磁碟 C:\\Data\\logs 已滿"],
+      "pythonClauses": ["磁碟 C:\\Data\\logs 已滿"]
+    },
+    {
+      "id": "windows-path-visible-split",
+      "covers": ["Windows 路徑"],
+      "note": "同樣的 C:\\ ，但前綴夠長、切出來的第一段就滿足下限 —— splitClauses 與 Python 真的把磁碟代號與路徑切成兩段。",
+      "text": "受影響的磁碟是 C:\\Data\\logs，請清理。",
+      "maxChars": 56,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響的磁碟是 C:\\Data\\logs，請清理。"],
+      "splitClauses": ["受影響的磁碟是 C:", "\\Data\\logs，請清理。"],
+      "pythonClauses": ["受影響的磁碟是 C:", "\\Data\\logs，請清理。"],
+      "suspect": {
+        "severity": "高",
+        "why": "同上一條的另一半：`C:` 後面是反斜線，不在 `(?![\\d/])` 的保護範圍內，所以 splitClauses 與 Python 把磁碟代號與路徑切成兩段（`受影響的磁碟是 C:` ／ `\\Data\\logs，請清理。`）。4c8c5fd 在 speaker.ts 上修掉的就是這個。",
+        "whyNotFixedHere": "同 ipv6 那一條：#59 票文明寫「行為一律不變」，本票只負責釘住現狀。要修的話三份要一起改，並且先改這份語料。"
+      }
+    },
+    {
+      "id": "windows-drive-only",
+      "covers": ["Windows 路徑"],
+      "note": "只有磁碟代號，後面接全形句號。",
+      "text": "告警已恢復：WindowsLowDisk，受影響對象 C:。",
+      "maxChars": 56,
+      "minChars": 8,
+      "splitForRemoteVoice": ["告警已恢復：WindowsLowDisk，受影響對象 C:。"],
+      "splitClauses": ["告警已恢復：WindowsLowDisk，", "受影響對象 C:。"],
+      "pythonClauses": ["告警已恢復：WindowsLowDisk，", "受影響對象 C:。"]
+    },
+    {
+      "id": "time-colon",
+      "covers": ["時間"],
+      "note": "時間：冒號後面是數字。",
+      "text": "時間 12:30 觸發",
+      "maxChars": 9,
+      "minChars": 8,
+      "splitForRemoteVoice": ["時間 12:30 ", "觸發"],
+      "splitClauses": ["時間 12:30 觸發"],
+      "pythonClauses": ["時間 12:30 觸發"]
+    },
+    {
+      "id": "alert-firing-short",
+      "covers": ["Alert firing: X", "中英混合"],
+      "note": "票文點名的 `Alert firing: X`。",
+      "text": "Alert firing: WindowsHighCPU",
+      "maxChars": 14,
+      "minChars": 16,
+      "splitForRemoteVoice": ["Alert firing: ", "WindowsHighCPU"],
+      "splitClauses": ["Alert firing: WindowsHighCPU"],
+      "pythonClauses": ["Alert firing: WindowsHighCPU"]
+    },
+    {
+      "id": "alert-firing-full",
+      "covers": ["Alert firing: X", "中英混合", "小數", "全形與半形標點"],
+      "note": "整則英文告警，正式環境上限。",
+      "text": "Alert firing: WindowsHighCPU, severity warning, current value 91.35.",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["Alert firing: WindowsHighCPU, severity warning, current ", "value 91.35."],
+      "splitClauses": ["Alert firing: WindowsHighCPU,", " severity warning,", " current value 91.35."],
+      "pythonClauses": ["Alert firing: WindowsHighCPU,", "severity warning,", "current value 91.35."]
+    },
+    {
+      "id": "alert-firing-full-min8",
+      "covers": ["Alert firing: X", "中英混合", "小數"],
+      "note": "同一則，下限 8 字逼出多句。",
+      "text": "Alert firing: WindowsHighCPU, severity warning, current value 91.35.",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["Alert firing: ", "WindowsHighCPU, ", "severity warning, ", "current value 91.35."],
+      "splitClauses": ["Alert firing:", " WindowsHighCPU,", " severity warning,", " current value 91.35."],
+      "pythonClauses": ["Alert firing:", "WindowsHighCPU,", "severity warning,", "current value 91.35."]
+    },
+    {
+      "id": "en-period-sentences",
+      "covers": ["全形與半形標點", "中英混合"],
+      "note": "半形句點：只有 splitForRemoteVoice 在它後面切（差異 4）。",
+      "text": "Disk is almost full. Please check now!",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["Disk is almost full.", " Please check now!"],
+      "splitClauses": ["Disk is almost full. Please check now!"],
+      "pythonClauses": ["Disk is almost full. Please check now!"]
+    },
+    {
+      "id": "en-semicolon-question",
+      "covers": ["全形與半形標點"],
+      "note": "半形分號、問號、驚嘆號：三份都切。",
+      "text": "Is it down; really? yes!",
+      "maxChars": 10,
+      "minChars": 4,
+      "splitForRemoteVoice": ["Is it ", "down; ", "really? ", "yes!"],
+      "splitClauses": ["Is it down;", " really?", " yes!"],
+      "pythonClauses": ["Is it down;", "really?", "yes!"]
+    },
+    {
+      "id": "mixed-zh-en",
+      "covers": ["中英混合"],
+      "note": "中英混合，兩種標點都有。",
+      "text": "主機 CPU 使用率過高，host cpu usage is high，請處理。",
+      "maxChars": 20,
+      "minChars": 8,
+      "splitForRemoteVoice": ["主機 CPU 使用率過高，host ", "cpu usage is high，", "請處理。"],
+      "splitClauses": ["主機 CPU 使用率過高，", "host cpu usage is high，請處理。"],
+      "pythonClauses": ["主機 CPU 使用率過高，", "host cpu usage is high，請處理。"]
+    },
+    {
+      "id": "long-no-punct-ascii",
+      "covers": ["超長沒有標點"],
+      "note": "130 個 x，沒有任何切點：splitForRemoteVoice 硬切、另兩份整串一段。",
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "xxxxxxxxxxxxxxxxxx"
+      ],
+      "splitClauses": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "pythonClauses": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ]
+    },
+    {
+      "id": "long-no-punct-cjk",
+      "covers": ["超長沒有標點"],
+      "note": "80 個中文字，沒有任何切點。",
+      "text": "告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": [
+        "告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警",
+        "告警告警告警告警告警告警告警告警告警告警告警告警"
+      ],
+      "splitClauses": [
+        "告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警"
+      ],
+      "pythonClauses": [
+        "告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警告警"
+      ]
+    },
+    {
+      "id": "long-no-punct-with-space",
+      "covers": ["超長沒有標點", "中英混合"],
+      "note": "沒有標點但有空白：空白是 splitForRemoteVoice 的切點、另兩份不是（差異 7）。",
+      "text": "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike november oscar papa",
+      "maxChars": 30,
+      "minChars": 16,
+      "splitForRemoteVoice": [
+        "alpha bravo charlie delta ",
+        "echo foxtrot golf hotel india ",
+        "juliett kilo lima mike ",
+        "november oscar papa"
+      ],
+      "splitClauses": [
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike november oscar papa"
+      ],
+      "pythonClauses": [
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike november oscar papa"
+      ]
+    },
+    {
+      "id": "emoji-hard-split",
+      "covers": ["emoji"],
+      "note": "上限 2：硬切不切在 UTF-16 代理對中間（複審 F7）。",
+      "text": "a😀b😀c😀d😀",
+      "maxChars": 2,
+      "minChars": 16,
+      "splitForRemoteVoice": ["a", "😀", "b", "😀", "c", "😀", "d", "😀"],
+      "splitClauses": ["a😀b😀c😀d😀"],
+      "pythonClauses": ["a😀b😀c😀d😀"]
+    },
+    {
+      "id": "emoji-limit-1",
+      "covers": ["emoji"],
+      "note": "上限 1：一個 emoji 本身就超過上限，代理對無法避免被拆（end-1 === i 的邊界）。",
+      "text": "a😀b",
+      "maxChars": 1,
+      "minChars": 16,
+      "splitForRemoteVoice": ["a", "\ud83d", "\ude00", "b"],
+      "splitClauses": ["a😀b"],
+      "pythonClauses": ["a😀b"]
+    },
+    {
+      "id": "emoji-only-odd-limit",
+      "covers": ["emoji"],
+      "note": "全是 emoji、上限是奇數：每一刀都踩在代理對上。",
+      "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "maxChars": 7,
+      "minChars": 16,
+      "splitForRemoteVoice": ["😀😀😀", "😀😀😀", "😀😀😀", "😀😀😀", "😀😀😀", "😀😀😀", "😀😀"],
+      "splitClauses": ["😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"],
+      "pythonClauses": ["😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"]
+    },
+    {
+      "id": "emoji-in-sentence",
+      "covers": ["emoji", "全形與半形標點"],
+      "note": "emoji 夾在中文句子裡。",
+      "text": "偵測到告警 🔥🔥🔥，請盡快處理。",
+      "maxChars": 8,
+      "minChars": 8,
+      "splitForRemoteVoice": ["偵測到告警 ", "🔥🔥🔥，", "請盡快處理。"],
+      "splitClauses": ["偵測到告警 🔥🔥🔥，請盡快處理。"],
+      "pythonClauses": ["偵測到告警 🔥🔥🔥，請盡快處理。"]
+    },
+    {
+      "id": "trailing-space",
+      "covers": ["全形與半形標點"],
+      "note": "標點後只剩空白：splitClauses 會丟掉那個片段（Python 另外 strip）。",
+      "text": "主機 CPU 使用率過高， ",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["主機 CPU 使用率過高， "],
+      "splitClauses": ["主機 CPU 使用率過高，"],
+      "pythonClauses": ["主機 CPU 使用率過高，"],
+      "suspect": {
+        "severity": "低",
+        "why": "splitClauses 的 `.filter((s) => s.trim() !== '')` 把只有空白的片段整個丟掉，所以切出來的句子接起來**不等於**原文（這裡少了結尾那個空格）。splitForRemoteVoice 反過來保證接起來等於原文。中途降級時 remoteSpeaker 用 `entry.clauses.slice(from).join('')` 組剩下的文字，被丟掉的字元就不會交給 Web Speech。",
+        "whyNotFixedHere": "本票不改行為。實務上丟掉的只有空白，唸不出差別；但這個不變量的破口值得記下來。"
+      }
+    },
+    {
+      "id": "leading-trailing-space",
+      "covers": ["全形與半形標點"],
+      "note": "前後都有空白。",
+      "text": "  偵測到告警：WindowsHighCPU。  ",
+      "maxChars": 56,
+      "minChars": 8,
+      "splitForRemoteVoice": ["  偵測到告警：WindowsHighCPU。  "],
+      "splitClauses": ["  偵測到告警：WindowsHighCPU。"],
+      "pythonClauses": ["偵測到告警：WindowsHighCPU。"],
+      "suspect": {
+        "severity": "低",
+        "why": "同上（splitClauses 丟掉尾端空白片段），外加 Python 對每一段 `.strip()`，所以三份的前後空白處理各不相同。",
+        "whyNotFixedHere": "本票不改行為。真正要決定的是「前後空白該由誰處理」—— 那是另一張票的範圍，這裡只先把三份各自的現狀釘住。"
+      }
+    },
+    {
+      "id": "newline",
+      "covers": ["全形與半形標點"],
+      "note": "換行也是 \\s：只有 splitForRemoteVoice 當它是切點。",
+      "text": "第一行\n第二行，請檢查。",
+      "maxChars": 8,
+      "minChars": 8,
+      "splitForRemoteVoice": ["第一行\n第二行，", "請檢查。"],
+      "splitClauses": ["第一行\n第二行，請檢查。"],
+      "pythonClauses": ["第一行\n第二行，請檢查。"]
+    },
+    {
+      "id": "bopomofo-tag",
+      "covers": ["全形與半形標點"],
+      "note": "注音標註 `[:ㄉㄧㄢ3]`：只有 Python 有不在 `[:` 裡切的例外（差異 8）。",
+      "text": "受影響對象是主機点[:ㄉㄧㄢ3]三五，請檢查。",
+      "maxChars": 56,
+      "minChars": 8,
+      "splitForRemoteVoice": ["受影響對象是主機点[:ㄉㄧㄢ3]三五，請檢查。"],
+      "splitClauses": ["受影響對象是主機点[:", "ㄉㄧㄢ3]三五，請檢查。"],
+      "pythonClauses": ["受影響對象是主機点[:ㄉㄧㄢ3]三五，請檢查。"],
+      "suspect": {
+        "severity": "低",
+        "why": "Python 有 `(?<!\\[:)` 不在注音標註裡切（d135467 第三輪複審 P2），splitClauses 沒有，所以 `点[:` 後面會被切開。textsplit.py 的註解同時記著注音標註是前一個模型 BreezyVoice 的前處理產物、換成 Qwen3-TTS 後輸入裡不再有它 —— 面板端從來不產生它，所以現行輸入上觀察不到。",
+        "whyNotFixedHere": "本票不改行為；也沒有證據說面板端需要這條例外。"
+      }
+    },
+    {
+      "id": "fullwidth-punct-sweep",
+      "covers": ["全形與半形標點"],
+      "note": "五個共用的全形切點（，。！？；）各出現一次、上限與下限都壓小，少掉任何一個都會改變輸出。",
+      "text": "警告；磁碟快滿了！要清嗎？請處理，謝謝。",
+      "maxChars": 6,
+      "minChars": 2,
+      "splitForRemoteVoice": ["警告；", "磁碟快滿了！", "要清嗎？", "請處理，", "謝謝。"],
+      "splitClauses": ["警告；", "磁碟快滿了！", "要清嗎？", "請處理，", "謝謝。"],
+      "pythonClauses": ["警告；", "磁碟快滿了！", "要清嗎？", "請處理，", "謝謝。"]
+    },
+    {
+      "id": "ascii-punct-sweep",
+      "covers": ["全形與半形標點", "中英混合"],
+      "note": "四個共用的半形切點（, ; ? !）各出現一次（後面都不是數字或 /），少掉任何一個都會改變輸出。",
+      "text": "warn; disk full! clean it, do it now?",
+      "maxChars": 10,
+      "minChars": 2,
+      "splitForRemoteVoice": ["warn; ", "disk full!", " clean it,", " do it ", "now?"],
+      "splitClauses": ["warn;", " disk full!", " clean it,", " do it now?"],
+      "pythonClauses": ["warn;", "disk full!", "clean it,", "do it now?"]
+    },
+    {
+      "id": "punct-only",
+      "covers": ["全形與半形標點"],
+      "note": "只有標點。",
+      "text": "，。！？",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["，。！？"],
+      "splitClauses": ["，。！？"],
+      "pythonClauses": ["，。！？"]
+    },
+    {
+      "id": "digit-and-slash-after-punct",
+      "covers": ["小數", "URL"],
+      "note": "半形標點後面接數字或 / 的三種寫法。",
+      "text": "數值 91.35，門檻 0.9，比例 1/2。",
+      "maxChars": 56,
+      "minChars": 8,
+      "splitForRemoteVoice": ["數值 91.35，門檻 0.9，比例 1/2。"],
+      "splitClauses": ["數值 91.35，", "門檻 0.9，比例 1/2。"],
+      "pythonClauses": ["數值 91.35，", "門檻 0.9，比例 1/2。"]
+    },
+    {
+      "id": "no-punct-short-zh",
+      "covers": ["中英混合"],
+      "note": "沒有標點、短於上限。",
+      "text": "主機 CPU 使用率過高",
+      "maxChars": 56,
+      "minChars": 16,
+      "splitForRemoteVoice": ["主機 CPU 使用率過高"],
+      "splitClauses": ["主機 CPU 使用率過高"],
+      "pythonClauses": ["主機 CPU 使用率過高"]
+    }
+  ]
+}
