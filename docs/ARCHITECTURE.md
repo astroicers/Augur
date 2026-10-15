@@ -2,9 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-14（#31：補 ADR-006 與播報紀錄／外部語音／嘴型擺動四個模組、
-> 〈設定〉改列全部 12 個 panel 選項、拿掉寫死的測試數與 `src/core` 行數）。
-> 前一次是 2026-10-02（B2-7 / B2-8：`SpriteController` 接上、兩個 sprite URL 選項）。
+> 最後更新：2026-10-15（#51：新增 `severityAliases` 選項與 `core/severityAliases.ts`——
+> 嚴重度別名的前置正規化）。
+> 前一次是 2026-10-14（#31：補 ADR-006 與播報紀錄／外部語音／嘴型擺動四個模組、
+> 〈設定〉改列全部 panel 選項、拿掉寫死的測試數與 `src/core` 行數）。
 
 ## 一句話
 
@@ -34,6 +35,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                                  │
                                  ▼  ParsedAlert[]
                       src/components/MascotPanel.tsx（導播）
+                        ├ core/severityAliases.ts  resolveSeverity 前置正規化（別名 → 標準嚴重度）
                         ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
                         ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
@@ -79,6 +81,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
+| `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報 |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後只為真實 bug 加過 `dedup.forget()`／`setWindow()` 與 `severity` 的缺值收斂（別再寫死行數，見 ROADMAP 散落-2） |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
 | `src/speech/remoteSpeaker.ts` | 外部語音服務的播報器（ADR-005）。同一個 `Speaker` 介面；逐句取音訊、Web Audio 播放（CSP 的 `media-src 'none'` 會擋 `<audio>`）、音量包絡驅動嘴型；任何一則失敗或逾時就把**那一則**交回 Web Speech |
@@ -113,12 +116,13 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options 共 **12 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
+Panel options 共 **13 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
 `src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改：
 
 | option | 預設 | 作用 |
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
+| `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
@@ -130,6 +134,13 @@ Panel options 共 **12 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 | `ttsTimeoutSec` | `30` | 外部語音逾時（輪到某一句時起算）。逾時就從那一句起改用 Web Speech 念完該則 |
 | `directionsImgUrl` | `''`（內建素材） | directions 精靈圖 URL |
 | `reactionsImgUrl` | `''`（內建素材） | reactions 精靈圖 URL |
+
+`severityAliases`（#51）的解析在 `core/severityAliases.ts`（純函式；格式錯誤的項目略過不拋，
+`describeSkippedAliases` 可回報）。分隔符與 `=` 的全形寫法照樣認得——編輯器說明是中文，
+只認半形會讓整組設定靜默失效。別名以**前置正規化**的形式生效：導播層先 `resolveSeverity`
+再餵給 `rankOf`/`meetsMin`/`severityToEmotion`，那三個純函式一律不收設定參數
+（延續 2026-09-18 不擴 `Emotion` 那次裁定所依據的純函式語意）。
+播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`，只正規化大小寫）。
 
 兩個 sprite URL 的預設**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的
 `[hash][ext]`，空字串時由 `SpriteController` 改用 `spriteAssets.ts` 的 import 值。

@@ -1496,3 +1496,80 @@ test('附錄-7：計時器的重試窗用完之後，面板自己的 pointermove
     jest.useRealTimers();
   }
 });
+
+// ---------------------------------------------------------------------------
+// #51：嚴重度別名的接線。這支檔案是導播管線唯一的匯流處 ——
+// 別名若只進了 core/ 而沒接上 effect，core 的測試照樣全綠而面板行為毫無變化。
+// ---------------------------------------------------------------------------
+
+test('#51：選項留空時 P1 這類 label 照舊被門檻擋掉（AC-1 的接線面）', async () => {
+  // ⚠️ 要有一則**過得了門檻**的對照句（LOW-2）。只 `await settle()` 就斷言 spoken 為空的話，
+  // evaluate 鏈可能根本還沒跑完 —— 那條測試不論實作怎樣都會綠。先等 critical 被念出，
+  // 才證明這一輪評估真的跑完了，此時 P1 沒被念才是「被門檻擋掉」。
+  mockedFetch.mockResolvedValue([
+    { alertname: 'Pager', severity: 'P1', summary: '值班被叫起來' },
+    { alertname: 'Ctrl', severity: 'critical', summary: '對照組' },
+  ]);
+  render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.map((p) => p.text).join(' ')).toContain('對照組'));
+  // OPTIONS.minSeverity = 'warning'；P1 查不到 → 排名 0 → 不放行。
+  expect(spoken.map((p) => p.text).join(' ')).not.toContain('值班被叫起來');
+  expect(spoken).toHaveLength(1);
+});
+
+test('#51：設了 severityAliases，P1 過得了門檻、表情吃別名，句子保留原始 label', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'Pager', severity: 'P1', summary: '值班被叫起來' }]);
+  render(
+    <MascotPanel {...props({ alertState: ALERTING, options: { severityAliases: ' p1 = CRITICAL , 亂寫 ' } })} />
+  );
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken).toHaveLength(1);
+  // 門檻與表情都以 critical 判斷；格式錯誤的那一項被略過而不影響合法的那一項。
+  expect(spoken[0]!.emotion).toBe('critical');
+  expect(spoken[0]!.severity).toBe('p1');
+  expect(spoken[0]!.text).toContain('嚴重度 p1');
+});
+
+test('#51：別名也接到播報紀錄上 —— 設了別名的 P1 紀錄會列在清單裡（LOW-1）', async () => {
+  // 這一條守的是「播過、紀錄裡卻沒有」：紀錄的門檻與播報同一個 meetsMin，
+  // 若 MascotPanel 只把別名傳給導播 effect 而漏了 history effect，這則 P1 紀錄
+  // 會被 minSeverity=warning 擋掉而從清單消失，而上面兩條測試照樣全綠。
+  mockedHistory.mockResolvedValue({
+    raw: [histAnn({ text: histAnn().text.replace('severity=warning', 'severity=P1') })],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(
+    <MascotPanel {...props({ alertState: OK, options: { severityAliases: 'P1=critical' } })} />
+  );
+
+  await waitFor(() =>
+    expect(view.container.textContent).toContain('偵測到告警：MerakContainerMemoryHigh，嚴重度 p1，目前數值 0.93，api-7f9c 記憶體過高。')
+  );
+  // 紀錄一句都不念（ADR-006 決策 5）—— 別名不改這條分界。
+  await settle();
+  expect(spoken).toEqual([]);
+});
+
+test('#51：留空時那則 P1 紀錄照舊被門檻擋掉（上一條的對照組）', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: [
+      histAnn({ text: histAnn().text.replace('severity=warning', 'severity=P1') }),
+      histAnn({
+        id: 12,
+        alertName: 'DiskFull',
+        text: 'DiskFull {alertname=DiskFull, pod=db-0, severity=critical} - A=99, B=99',
+        data: { values: { A: 99 } },
+      }),
+    ],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  // 先等那則 critical 的紀錄到位，才證明這一次讀取真的跑完了。
+  await waitFor(() => expect(view.container.textContent).toContain('db-0 磁碟滿了'));
+  expect(view.container.textContent).not.toContain('api-7f9c 記憶體過高');
+});

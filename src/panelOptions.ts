@@ -13,6 +13,17 @@ export interface MascotPanelOptions {
   /** 只播 >= 此嚴重度；空字串 = 不過濾。值域為 severity.ts 的 RANK key。 */
   minSeverity: string;
   /**
+   * 嚴重度別名（#51）：`P1=critical, sev2=warning, disaster=critical`。
+   * 空字串 = 沒有任何別名，行為與沒有這個選項時完全相同（不附內建別名表，
+   * 猜一張表會讓現有使用者升版後行為改變）。解析見 `core/severityAliases.ts`。
+   *
+   * **選填（`?`）而非必填**，與其他欄位的慣例不同，理由是這一欄是後來加的：
+   * 舊 dashboard 存下來的 panel JSON 沒有這個鍵。宣告成必填會讓既有的
+   * `MascotPanelOptions` 字面值（含測試 fixture）全部得補一行，而 AC-1 要的正是
+   * 「既有測試不改」。讀的那一側一律 `?? ''`，與 `ttsEndpoint` 的防禦同一招。
+   */
+  severityAliases?: string;
+  /**
    * 同一則告警持續燒時，每隔幾分鐘重播一次。0 = 永不重播。
    * 這把 ADR-004 決策 4 宣告「放棄」的 Grafana repeat_interval 補了回來。
    */
@@ -49,6 +60,7 @@ export interface MascotPanelOptions {
 
 export const DEFAULT_OPTIONS: MascotPanelOptions = {
   minSeverity: '',
+  severityAliases: '',
   repeatFiringMin: 0,
   fallbackSeverity: 'critical',
   alertLang: 'zh',
