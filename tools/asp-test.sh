@@ -180,7 +180,7 @@ echo '--- sprite 工具自測 ---'
 # ⚠️ 要有**最低斷言數**，理由與 jest 的 MIN_TESTS 完全相同：只看退出碼的話，
 # 「變異體表被重構成空的」會讓第 [3] 節整個消失而退出碼照樣是 0 ——
 # 而第 [3] 節正是「每一條檢查都紅在該紅的地方」的唯一證據。
-MIN_SELFTEST=156
+MIN_SELFTEST=182
 SELF_OUT=$(node tools/check-sprite-sheets.selftest.mjs 2>&1) || { GATE_OK=false; FAILED="$FAILED sprite-selftest"; }
 printf '%s\n' "$SELF_OUT" | tail -2
 SELF_PASS=$(printf '%s' "$SELF_OUT" | sed -nE 's/^([0-9]+) 通過 \/ ([0-9]+) 失敗$/\1/p' | tail -1)
@@ -223,19 +223,23 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（2026-10-14 由 jest --ci --json 實數，不是手算）：
-#   core/dedup 13 + core/emotion 8 + core/severity 12 + core/format-plan 4
-# + sources/panelAlerts 18 + sources/history 32 + sources/historyFetcher 5
-# + speech/speaker 30 + speech/remoteSpeaker 41 + components/MascotPanel 50
+# MIN_TESTS = 所有測試檔之和（2026-10-15 於 main cc2bd07 由 jest --ci --json 實數，
+# CI run 38687918659 同數；不是手算）：
+#   core/dedup 13 + core/emotion 11 + core/severity 12 + core/format-plan 9
+# + core/format 13 + sources/panelAlerts 18 + sources/history 32
+# + sources/historyFetcher 5 + sources/panelRules 9 + speech/speaker 30
+# + speech/remoteSpeaker 41 + components/MascotPanel 54 + dom/dashboardPanels 16
 # + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 = 264（15 個 suite）
+# + __tests__/implementation-contract 6 = 314（18 個 suite）
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # ⚠️ 2026-10-14 之前這裡寫 189（13 suites），而實際已是 258（15 suites）——
 #    ADR-005／ADR-006 與語音開關的測試加進來時沒跟著調，閘門因此有 69 條的鬆弛
 #    （#30 / PR #38 同日校到 264）。
+# 2026-10-15 第一批（#33 #34 #36 #39，PR #41 #42 #44 #45）合併後由主管層統一校到 314；
+#    各票依票文不得自改本檔，避免並行的票改同一行而互相衝突。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=264
+MIN_TESTS=314
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
