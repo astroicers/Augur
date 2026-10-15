@@ -12,6 +12,7 @@
  */
 import { buildBroadcastPlan } from '../core/format';
 import { meetsMin } from '../core/severity';
+import { resolveSeverity, type SeverityAliasMap } from '../core/severityAliases';
 import type { AlertLang, BroadcastPlan, ParsedAlert } from '../core/types';
 import { panelRulerRulesOf, panelRulesOf } from './panelRules';
 
@@ -198,7 +199,7 @@ interface RawAnnotation {
 export function historyToEntries(
   raw: unknown,
   templates: Map<string, RuleTemplate>,
-  opts: { minSeverity: string; lang: AlertLang }
+  opts: { minSeverity: string; lang: AlertLang; aliases?: SeverityAliasMap }
 ): HistoryResult {
   if (!Array.isArray(raw)) {
     throw new Error('告警歷史的回應不是清單');
@@ -226,9 +227,11 @@ export function historyToEntries(
     const name = a.alertName ?? parsed?.title ?? 'unknown';
     const tpl = templates.get(name);
     const severity = parsed?.labels['severity'] ?? tpl?.severity ?? 'unknown';
-    // 與播報同一個門檻。resolved 也要過：播報那邊 resolved 只會跟在播過的 firing 後面，
+    // 與播報同一個門檻，也與播報同一張別名表（#51）：門檻在兩邊判得不一樣的話，
+    // 紀錄清單會出現「播過但紀錄裡沒有」或反之。`aliases` 省略 → 恆等，行為照舊。
+    // resolved 也要過：播報那邊 resolved 只會跟在播過的 firing 後面，
     // 被門檻擋掉的 firing 不會有恢復句。
-    if (!meetsMin(severity, opts.minSeverity)) {
+    if (!meetsMin(resolveSeverity(severity, opts.aliases), opts.minSeverity)) {
       continue;
     }
     const summary =
@@ -245,7 +248,7 @@ export function historyToEntries(
       ...(summary !== undefined ? { summary } : {}),
       ...(value !== undefined ? { value } : {}),
     };
-    const plan = buildBroadcastPlan(alert, opts.lang);
+    const plan = buildBroadcastPlan(alert, opts.lang, opts.aliases);
     entries.push({
       key: `h:${a.id ?? `${time}:${name}:${status}`}`,
       time,
