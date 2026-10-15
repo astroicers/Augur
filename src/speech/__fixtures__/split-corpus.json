@@ -554,7 +554,7 @@
     {
       "id": "fullwidth-digit-after-ascii-comma",
       "covers": ["全形與半形標點"],
-      "note": "半形逗號後面接**全形**數字：JS 的 `\\d`（沒有 u 旗標）只認 0-9，兩份 TS 都在逗號後切；Python 的 `\\d` 認所有 Unicode 數字，不切。",
+      "note": "半形逗號後面接**全形**數字：JS 的 `\\d`（不論有沒有 u 旗標）只認 0-9，兩份 TS 都在逗號後切；Python 的 `\\d` 認 Unicode 十進位數字 Nd，不切。",
       "text": "數量,１２３。",
       "maxChars": 4,
       "minChars": 1,

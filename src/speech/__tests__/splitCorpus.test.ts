@@ -129,7 +129,7 @@ describe('語料釘住的三份差異（AC-5 的機械證據）', () => {
     return c;
   };
 
-  it('差異 1：五個全形切點三份都切；半形 , ; ? ! 在 splitClauses 與 Python 都是切點', () => {
+  it('差異 1：句中的全形 ；！？， 三份都切；句中的半形 ; ! , 在 splitClauses 與 Python 都是切點', () => {
     const fw = get('fullwidth-punct-sweep');
     for (const out of [fw.splitForRemoteVoice, fw.splitClauses, fw.pythonClauses]) {
       expect(out).toEqual(['警告；', '磁碟快滿了！', '要清嗎？', '請處理，', '謝謝。']);
@@ -137,6 +137,7 @@ describe('語料釘住的三份差異（AC-5 的機械證據）', () => {
     // 半形：空白是 splitForRemoteVoice 專屬的切點、Python 另外 strip，所以三份的段落邊界不同；
     // 半形那句每個標點後面都接空白，而空白本身是 splitForRemoteVoice 的切點，
     // 所以這裡驗不到「, ; ? ! 是 splitForRemoteVoice 的切點」——那由其他 golden 句子釘住。
+    // 兩句的句尾（全形 `。`、半形 `?`）是零寬切點落在字串結尾，觀察不到；它們由 en-semicolon-question 等句子釘住。
     const ascii = get('ascii-punct-sweep');
     for (const out of [ascii.splitForRemoteVoice, ascii.splitClauses, ascii.pythonClauses]) {
       expect(out.map((s) => s.trim()).filter((s) => s !== '')).toEqual(
