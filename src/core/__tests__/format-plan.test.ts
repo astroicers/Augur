@@ -101,3 +101,44 @@ test('#39：plan.severity 正規化不改變 emotion 判定', () => {
     expect(plan.emotion).toBe(severityToEmotion(v, 'firing'));
   }
 });
+
+// ---- #46：name / instance / summary / value 的髒值經 buildBroadcastPlan 之後 ----
+
+/**
+ * 句子本身的整句斷言在 `format.test.ts`（#46 AC-1/AC-2）；這裡只確認
+ * **真正餵給 TTS 的那條路徑**（`buildBroadcastPlan().text`）同樣乾淨——
+ * panel 與 history 都是經這個函式取 text，不是直接呼叫 `formatAlert`。
+ */
+const DIRTY_FIELD_VALUES: unknown[] = [undefined, null, '', '   ', {}, [], [1, 2], NaN, true, () => 'x'];
+
+test('#46：name 髒值時 plan.text 唸替代詞，整句釘死（兩種語言）', () => {
+  for (const v of DIRTY_FIELD_VALUES) {
+    const a = { ...mk(), name: v } as unknown as ParsedAlert;
+    expect(buildBroadcastPlan(a, 'zh').text).toBe(
+      '偵測到告警：未命名告警，嚴重度 critical，受影響對象 host-1，目前數值 95.20，CPU high。',
+    );
+    expect(buildBroadcastPlan(a, 'en').text).toBe(
+      'Alert firing: unnamed alert, severity critical, on host-1, current value 95.20, CPU high.',
+    );
+  }
+});
+
+test('#46：instance/summary/value 髒值時 plan.text 省略該子句，整句釘死（zh）', () => {
+  for (const v of DIRTY_FIELD_VALUES) {
+    const a = { ...mk(), instance: v, summary: v, value: v } as unknown as ParsedAlert;
+    expect(buildBroadcastPlan(a, 'zh').text).toBe('偵測到告警：HighCPU，嚴重度 critical。');
+  }
+});
+
+test('#46：髒值不讓 undefined / null / [object Object] 進到 plan.text', () => {
+  for (const v of DIRTY_FIELD_VALUES) {
+    const a = { ...mk(), name: v, severity: v, instance: v, summary: v, value: v } as unknown as ParsedAlert;
+    for (const lang of ['zh', 'en'] as const) {
+      const { text } = buildBroadcastPlan(a, lang);
+      expect(text).not.toContain('undefined');
+      expect(text).not.toContain('null');
+      expect(text).not.toContain('[object Object]');
+      expect(text).not.toContain('NaN');
+    }
+  }
+});
