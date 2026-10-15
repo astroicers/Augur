@@ -2,10 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-15（#58：導播管線收成 `src/director/BroadcastDirector.ts`——
+> 最後更新：2026-10-15（#63：新增 `quietHours`／`quietAllowCritical` 兩個選項——
+> dashboard 層級的值班靜音時段，判斷在導播的交付閘門上）。
+> 前一次是 2026-10-15（#58：導播管線收成 `src/director/BroadcastDirector.ts`——
 > 不依賴 React 的深模組，`MascotPanel.tsx` 只剩呈現與接線）。
-> 前一次是 2026-10-15（#51：新增 `severityAliases` 選項與 `core/severityAliases.ts`——
-> 嚴重度別名的前置正規化）。
 
 ## 一句話
 
@@ -39,6 +39,9 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                         ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
                         ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
+                        交付閘門：每瀏覽器靜音（ADR-007）／值班靜音時段（#63，dashboard 層級，
+                          瀏覽器本地時間；quietAllowCritical 只放 critical 的 firing 過）
+                          任一個成立就不交給播報器 —— items 照回，清單與表情照常更新
                                  │  BroadcastItem[]（時間順序）
                       src/components/MascotPanel.tsx（接線＋呈現）
                         每輪 panel data 餵一次 evaluate(input, settings)
@@ -79,7 +82,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 |---|---|
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
-| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出） |
+| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（每瀏覽器靜音與 #63 的值班靜音時段）也在這一支，連同時段解析的純函式（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`） |
 | `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
@@ -126,7 +129,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options 共 **13 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
+Panel options 共 **15 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
 `src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改：
 
 | option | 預設 | 作用 |
@@ -137,6 +140,8 @@ Panel options 共 **13 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
 | `enableTTS` | `true` | 關掉就只更新畫面不發聲（對所有觀看者生效；panel 標題列的語音開關只管自己這台瀏覽器） |
+| `quietHours` | `''`（無排程） | 值班靜音時段 `22:00-07:00`：時段內照樣更新畫面，只是不念（#63）。**起點含、終點不含**；跨午夜與不跨午夜都支援。留空或格式錯誤即與沒有這個選項時完全相同 |
+| `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing（恢復句不念）。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果 |
 | `ttsVoice` | `''`（自動） | 指名聲線，**可只填名稱的一段**；空字串優先挑 zh-TW 本機引擎 |
 | `ttsPitch` | `1` | 音高 0–2。拉到 1.4–1.7 讓男聲像小男孩；部分瀏覽器不支援 |
 | `ttsRate` | `1` | 語速 0.5–2。會送給外部服務，但 `tools/tts-server` 的語速由參考音決定 |
@@ -151,6 +156,22 @@ Panel options 共 **13 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 再餵給 `rankOf`/`meetsMin`/`severityToEmotion`，那三個純函式一律不收設定參數
 （延續 2026-09-18 不擴 `Emotion` 那次裁定所依據的純函式語意）。
 播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`，只正規化大小寫）。
+
+`quietHours`（#63）的解析與「現在算不算時段內」是 `director/BroadcastDirector.ts` 裡的純函式
+（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`；不碰 DOM、時刻由注入的時鐘帶進來），
+判斷**不在** `MascotPanel.tsx` 的 effect 裡 —— 元件只把兩個選項原樣帶進每一輪的設定。
+**端點規則：起點含、終點不含**（`22:00-07:00` 在 22:00 整靜音、07:00 整恢復出聲），
+所以相鄰的兩段接得起來而不重疊。格式錯誤（缺 `-`、時間不合法、起訖相同）**視同沒設定**、不拋例外。
+
+兩種靜音是**不同層級**的開關，走同一條交付閘門、**任一個成立就不念**：
+`quietHours` 存在 dashboard JSON（所有觀看者共用，要編輯權限才改得動），
+ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號也按得動）。
+兩者都是「照樣評估、照樣經過 dedup、照樣回 `items`，只是不交付」——
+所以時段結束時不會把時段內的告警一口氣補念出來。`quietAllowCritical` **只對排程靜音生效**：
+觀看者自己按了靜音，critical 也不念。
+時段用的是**每個觀看者瀏覽器的本地時間**（`new Date(ms).getHours()`），
+代價是跨時區的觀看者各自落在不同的絕對時刻、日光節約轉換當天不保證 ——
+要全站同一個絕對時段得改成帶時區的設定，那是另一張票。
 
 兩個 sprite URL 的預設**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的
 `[hash][ext]`，空字串時由 `SpriteController` 改用 `spriteAssets.ts` 的 import 值。

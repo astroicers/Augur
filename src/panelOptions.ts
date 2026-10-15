@@ -34,6 +34,32 @@ export interface MascotPanelOptions {
   alertLang: AlertLang;
   /** 關掉就只更新畫面不發聲。 */
   enableTTS: boolean;
+  /**
+   * 值班靜音時段（#63）：`22:00-07:00`。空字串 = 沒有排程靜音，行為與沒有這個選項時
+   * 完全相同。**起點含、終點不含**；跨午夜（`22:00-07:00`）與不跨午夜（`12:00-13:00`）
+   * 都支援。時段內照樣更新清單與表情，只是不念 —— 時段結束時也不會補念。
+   *
+   * 這是 **dashboard 層級**的設定（存在 dashboard JSON，所有觀看者共用），
+   * 與 ADR-007 那顆「我這台瀏覽器」的靜音鈕是兩回事；兩者同時存在時
+   * **任一個成立就不念**。判斷用的是**每個觀看者自己瀏覽器的本地時間**，
+   * 所以跨時區的觀看者會各自落在不同的絕對時刻（日光節約轉換當天不保證）。
+   *
+   * 格式錯誤（缺 `-`、時間不合法、起訖相同）一律**視同沒設定**、不拋例外，
+   * 原因由 `director/BroadcastDirector.ts` 的 `describeQuietHours` 回報。
+   *
+   * **選填（`?`）而非必填**，理由同 `severityAliases`：舊 dashboard 存下來的 panel JSON
+   * 沒有這個鍵，宣告成必填會讓既有的 `MascotPanelOptions` 字面值（含測試 fixture）
+   * 全部得補一行，而 #63 AC-1 要的正是「既有測試不改」。讀的那一側一律 `?? ''`。
+   */
+  quietHours?: string;
+  /**
+   * 排程靜音時段內，`critical` 的 firing 照常念（#63）。預設 `false`。
+   * 嚴重度判斷經 `severityAliases`（#51），與門檻吃同一份解析結果。
+   *
+   * **只在排程靜音時段內生效，不覆蓋 ADR-007 的每瀏覽器靜音**：觀看者自己按了靜音，
+   * critical 也不該念。`resolved` 不破靜音（半夜只有需要有人處理的事才出聲）。
+   */
+  quietAllowCritical?: boolean;
   /** 指名聲線；空字串 = 自動挑（優先 zh-TW 且為本機引擎）。 */
   ttsVoice: string;
   /** 音高 0–2，1 = 聲線原本的音高。拉高讓大人的聲線聽起來像小孩。 */
@@ -65,6 +91,8 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   fallbackSeverity: 'critical',
   alertLang: 'zh',
   enableTTS: true,
+  quietHours: '',
+  quietAllowCritical: false,
   ttsVoice: '',
   ttsPitch: 1,
   ttsRate: 1,
