@@ -8,6 +8,7 @@ textsplit.py 的測試（ADR-005）。只用標準函式庫，不載模型、不
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -120,6 +121,36 @@ def 碰到上限才算失控():
     assert is_runaway(frames * FRAME_SEC, limit)
     assert not is_runaway((frames - 1) * FRAME_SEC, limit)  # 少一個 frame＝自己停下來的正常句
     assert not is_runaway(5.4, limit)
+
+
+# ---------------------------------------------------------------------------
+# 共用語料（#59）：與面板的 jest golden 測試讀同一份檔案。
+# 它是兩邊共用的唯一事實源 —— 改規則要先改語料，不是把實作的新輸出照抄回去。
+# ---------------------------------------------------------------------------
+
+CORPUS_PATH = Path(__file__).resolve().parents[2] / "src" / "speech" / "__fixtures__" / "split-corpus.json"
+
+
+def _load_corpus() -> list[dict]:
+    # 缺檔要紅、不能靜默跳過：語料是這一支與面板那一支共用的唯一事實源。
+    # 用 assert 而不是讓 open 丟 FileNotFoundError —— 下面的 harness 只接 AssertionError。
+    assert CORPUS_PATH.is_file(), f"語料檔不存在：{CORPUS_PATH}"
+    # ⚠️ 語料裡有 lone surrogate 轉義（面板端上限 1 的硬切輸出），所以只碰
+    # text／minChars／pythonClauses 這幾欄，絕不重新編碼 splitForRemoteVoice。
+    with CORPUS_PATH.open(encoding="utf-8") as fh:
+        return json.load(fh)["cases"]
+
+
+@test
+def 語料至少二十五句():
+    assert len(_load_corpus()) >= 25, len(_load_corpus())
+
+
+@test
+def 語料逐句比對():
+    for case in _load_corpus():
+        got = clauses(case["text"], case["minChars"])
+        assert got == case["pythonClauses"], (case["id"], case["text"], got, case["pythonClauses"])
 
 
 @test
