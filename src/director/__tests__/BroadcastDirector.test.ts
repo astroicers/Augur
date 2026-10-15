@@ -863,3 +863,29 @@ test('#64：解除補念之後，重播間隔從補念的那一刻重新起算 �
   expect(h.spoken).toHaveLength(7);
   expect(round.items).toHaveLength(0);
 });
+
+test('#64 AC-5：解除補念被嚴重度門檻擋下時也要 forget() —— 門檻調回來之後不會永久靜音', async () => {
+  const h = harness();
+  // 門檻 5：第 7 輪（T0+6min、firing）被抑制，而抑制前最後念出去的是「已恢復」。
+  // 抑制期間那一次 firing 照樣進了 dedup（記成「播過」），但它其實一句都沒出聲。
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  const low: Partial<ParsedAlert> = { fingerprint: 'fp-flap', severity: 'warning' };
+  await flipRounds(h, 7, over, 1_000_000, low);
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+
+  // 解除的那一輪門檻被調高到 critical（這則是 warning）→ 補念要被擋下，不出聲。
+  h.setClock(1_000_000 + 16 * MINUTE);
+  const blocked = await h.run([alert(low)], { ...over, minSeverity: 'critical' });
+  expect(h.spoken).toHaveLength(6);
+  expect(blocked.items).toEqual([]);
+
+  // 門檻調回來，而它**仍在燒**：沒有上面那次 forget() 的話，dedup 記著抑制期間
+  // 那次 firing 的時間戳，預設窗是 Infinity → 這一則永久靜音（告警在燒而面板不吭聲）。
+  h.setClock(1_000_000 + 17 * MINUTE);
+  const after = await h.run([alert(low)], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+  expect(after.items).toHaveLength(1);
+  expect(after.items[0]!.suppressed).toBeUndefined();
+});

@@ -801,12 +801,20 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         // 所以 `forget()` 之後不必再做什麼 —— 它之後若再燒起來，照常念得出來。
         for (const pendingAlert of flapping.release(flappingRound)) {
           // 補念照樣過嚴重度門檻（`resolved` 不受門檻影響，與主迴圈同一條規則）：
-          // 抑制期間有人把門檻調高時，不該冒出一句低於門檻的告警。這裡**不動 dedup**
-          // —— 抑制期間它已經與實際狀態同步，不念就讓它保持同步。
+          // 抑制期間有人把門檻調高時，不該冒出一句低於門檻的告警。
+          //
+          // ⚠️ 不念的那一則**必須 `forget()`**，不能讓 dedup 留著抑制期間記下的
+          // 「播過 firing」。抑制期間的每一次翻轉都進了 dedup，所以它記著的是
+          // 「最後那個 firing 播過了」—— 而那一句其實被抖動抑制吞掉了，現在又被門檻擋下，
+          // 從頭到尾沒有出聲。留著那個時間戳的後果是：門檻之後調回來時，預設
+          // `repeatFiringMin: 0` → 窗是 `Infinity` → `t - last < Infinity` 恆真，
+          // 這一則**永久靜音**（症狀是告警真的在燒而面板一聲不吭，不留任何錯誤訊息）。
+          // 這與「被門檻擋下的告警不得進 dedup」是同一條不變量，見下方主迴圈那段註解。
           if (
             pendingAlert.status === 'firing' &&
             !meetsMin(resolveSeverity(pendingAlert.severity, aliases), round.minSeverity)
           ) {
+            dedup.forget(pendingAlert.fingerprint);
             continue;
           }
           dedup.forget(pendingAlert.fingerprint);
