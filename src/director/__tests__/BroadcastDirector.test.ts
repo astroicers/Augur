@@ -347,14 +347,15 @@ test('次序：resolved 只念一次', async () => {
   expect(texts(h.spoken)).not.toMatch(/恢復.*恢復/s);
 });
 
-test('次序：交出去的項目帶著組好的 BroadcastPlan 與原始 ParsedAlert', async () => {
+test('交付項目：帶著組好的 BroadcastPlan，與來源層給的同一個 ParsedAlert 物件', async () => {
   const h = harness();
-  const round = await h.run([alert({ severity: 'warning', fingerprint: 'fp-w' })]);
+  const given = alert({ severity: 'warning', fingerprint: 'fp-w' });
+  const round = await h.run([given]);
   expect(round.items).toHaveLength(1);
   expect(round.items[0]!.plan.emotion).toBe('warning');
   expect(round.items[0]!.plan.text).toContain('CPU');
   // 來源事件原封不動一起帶出來（呼叫端組 feed 的 key 要用它）。
-  expect(round.items[0]!.alert.fingerprint).toBe('fp-w');
+  expect(round.items[0]!.alert).toBe(given);
   expect(round.items[0]!.at).toBe(1_000_000);
 });
 
