@@ -421,9 +421,15 @@ describe('#70：紀錄的名字跟著 alertNameLabel', () => {
 
   test('AC-2：篩選框搜得到 label 值當成的名字（search 已轉小寫）', () => {
     const [e] = historyToEntries([wallAnn()], wallTemplates(), { ...opts, alertNameLabel: 'wall_alertname' }).entries;
-    expect(e!.search).toContain('kubelettoomanypods');
+    // ⚠️ 只斷言 `search` 含這個字串是**驗不到本票的**：`search` 把 `{labels}` 的每個值
+    // 都併進去，所以 `wall_alertname` 的值本來就在裡面 —— 名字沒換也會綠（QA 實測：
+    // 把取名改回規則名，這一條照樣過）。要釘住的是**句子裡的名字**搜得到，
+    // 所以關鍵字帶上句首那一段。
+    expect(e!.search).toContain('偵測到告警：kubelettoomanypods');
     // 篩選是 `search.includes(q.toLowerCase())`（MascotPanel），所以小寫的關鍵字要命中。
-    expect(e!.search.includes('kubelettoomanypods')).toBe(true);
+    expect(e!.search.includes('偵測到告警：kubelettoomanypods')).toBe(true);
+    // 總規則的名字不該還留在句子裡（eks-infra#1210 的症狀）。
+    expect(e!.search).not.toContain('偵測到告警：augurwall');
   });
 
   test('AC-3：指定的 label 不存在、是空字串、或只有空白時，退回規則名', () => {
