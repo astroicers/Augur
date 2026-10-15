@@ -26,11 +26,13 @@
 不修改 `gaze.ts` / `AvatarController.ts` / `core/emotion.ts` / `core/types.ts` 的既有語意。
 
 **SP-0.2** 素材為兩張 3×3 精靈圖，對應兩個 panel option `directionsImgUrl` / `reactionsImgUrl`。
-⚠️ **這兩個 option 目前不存在** —— 實查全樹（排除 `node_modules`/`.git`/`dist`）零命中，
-`MascotPanelOptions` 只有 `minSeverity` / `repeatFiringMin` / `fallbackSeverity` /
-`alertLang` / `enableTTS` / `ttsVoice` 六個欄位。P5 需新增，工作項見 SP-8.4。
-✅ **2026-10-02 已新增**（ROADMAP B2-8）—— 上面那句是當時的實況，保留作背景。
-兩者留空時使用 plugin 內建的預設素材。
+✅ **這兩個 option 已存在**（2026-10-02 新增，ROADMAP B2-8）：型別與預設值在
+`src/panelOptions.ts`、`.addTextInput` 在 `src/module.ts`，兩者留空時使用 plugin 內建的預設素材
+（預設值必須是空字串而非路徑，理由見 SP-8.4 的 `[hash][ext]`）。
+> 【歷史】本規格 v1 寫這一條時兩個 option 還不存在（實查全樹零命中，`MascotPanelOptions`
+> 當時只有 `minSeverity` / `repeatFiringMin` / `fallbackSeverity` / `alertLang` /
+> `enableTTS` / `ttsVoice` 六個欄位），故原文寫「P5 需新增，工作項見 SP-8.4」。
+> 現在的 `MascotPanelOptions` 有 12 個欄位，清單見 `docs/ARCHITECTURE.md`〈設定〉。
 
 **SP-0.3** `live2d/_archive/live2d-template-spec-v1.md` §3 的**絕對像素**錨點
 （畫布 768×1376、臉中軸 X≈384、眼線 Y≈285、瞳距≈100、頭高≈335）對本素材**作廢** ——

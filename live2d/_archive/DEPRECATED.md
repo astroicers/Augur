@@ -1,6 +1,13 @@
-# ⚠️ DEPRECATED — Live2D(2D)路線已封存
+# ⚠️ 已被 ADR-004 取代 — Live2D(2D)路線已封存
 
-**2026-06-23 起,Augur 角色改走 VRM(3D),廢除 Live2D。** 現行路線見 [`../../avatar/VRM-RUNBOOK.md`](../../avatar/VRM-RUNBOOK.md)。
+> **已被 ADR-004 取代(Accepted 2026-09-18):Augur 現在是 Grafana panel plugin,角色是 2D 精靈圖。**
+> 本檔原本把讀者導向 VRM(3D)路線,而那條路線**也已被 ADR-004 取代** ——
+> `../../avatar/VRM-RUNBOOK.md` 同樣只是歷史。現況見
+> `../../docs/adr/ADR-004-grafana-panel-plugin-mascot.md` 與 `../../docs/ARCHITECTURE.md`,
+> 素材規格見 `../../docs/sprite/sprite-sheet-spec.md`。
+> 下面那行封存決定(Live2D → VRM)原文保留,它記的是 2026-06-23 的另一次裁定,不是本次。
+
+**2026-06-23 起,Augur 角色改走 VRM(3D),廢除 Live2D。** 現行路線見 [`../../avatar/VRM-RUNBOOK.md`](../../avatar/VRM-RUNBOOK.md)（**該路線亦已被 ADR-004 取代**）。
 
 ## 為什麼廢除
 

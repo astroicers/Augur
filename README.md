@@ -1,8 +1,14 @@
 # Augur — `augur-mascot-panel`
 
 一個 Grafana panel plugin：2D 精靈圖吉祥物住在 dashboard 裡，把本面板的告警念出來。
-它會追蹤滑鼠視線、對點擊有反應、依嚴重度換表情，用瀏覽器內建的 Web Speech API 發聲。
+它對點擊有反應、依嚴重度換表情、說話會動嘴與眨眼，用瀏覽器內建的 Web Speech API 發聲
+（也可選填外部語音服務，ADR-005），旁邊的清單是讀 Grafana 自己存的告警狀態歷史當**播報紀錄**（ADR-006）。
 不需要後端，也不用跑任何常駐服務。
+
+> 視線追蹤的計算在（`gaze.ts` 九格、兩層防抖），但**定稿素材不畫視線**
+> （`features.gaze = false`，SP-0.10：眼睛半閉、虹膜只露約 6px，在顯示尺寸下看不出方向），
+> 所以畫面上看不到眼睛跟著游標跑；降級用的 `DiagnosticAvatar` 仍會顯示視線格。
+> 有視線的素材列在 `docs/ROADMAP.md` 的 P11。
 
 > 本專案做過一次方向反轉。它原本是 `airi-ops-bridge`：一條
 > 「Grafana webhook → Node 導播 → Edge TTS → WebSocket → 自架 React 頁的 3D VRM avatar」的推播管線。
@@ -15,20 +21,25 @@
 P2–P4 已完成：腳手架併入、`src/core/` 遷入、舊管線刪除、來源層與語音層接通、
 跨 panel 互動層與 `AvatarController` 介面就位，5 個 POC gate 全數 PASS。
 
-目前有 189 個 jest 測試（13 個 suite）、13 條 tts-server 邏輯測試、167 條 sprite 工具自測。commit 閘共 11 道：
+P8 已完成並發了三版：`v0.1.0`（首個 panel plugin 版本）、`v0.2.0`（播報紀錄，ADR-006）、
+`v0.2.1`（看的人自己的語音開關）。逐條見 `CHANGELOG.md`。
+
+本地檢查電池共 11 道（`bash tools/asp-test.sh`）：
 typecheck / lint / .js 後綴 / monitoring 設定 / bundle 相依 / sprite 驗收 / sprite 工具自測 / 描邊估計器電池 / Grafana 版本 / tts-server 邏輯 / jest。
-CI 跑同樣這 11 道，另外還有 build 與 e2e。
+CI（`.github/workflows/ci.yml`）跑同樣這些，另外還有 build 與 e2e。
+**測試數不寫在文件裡**（寫死就會漂，2026-10-14 的稽核裡三個數字全是錯的）——
+現值看 `bash tools/asp-test.sh` 的輸出；`MIN_TESTS` 是閘門用的下限，增刪測試時要同步更新。
 
 P5 已完成。角色是「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿）：專案主人用 Google Gemini 生成的原圖，
-經 BiRefNet 去背、`tools/sprite-gen/face-edits.py` 改出閉嘴／張嘴／閉眼，再由 `tools/sprite-gen/assemble.mjs` 組成兩張精靈圖，
+經 BiRefNet 去背、`python3 tools/sprite-gen/face-edits.py` 改出閉嘴／張嘴／閉眼，再由 `tools/sprite-gen/assemble.mjs` 組成兩張精靈圖，
 通過整條 SP-7 機械驗收。會說話動嘴、眨眼，並依告警嚴重度換表情（汗滴、怒筋、腮紅、閃光）；視線格未畫（規格 SP-0.10，`features.gaze = false`）。
 出處（含 prompt 原文與對第三方角色的揭露）見 `docs/asset-provenance.md` 與 `docs/sprite/SOURCE-PROMPTS.md`。
 
-> ⚠️ 驗收鏈現在每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
-> 不再走 `NOT-DELIVERED`。但暫定圖是照規格「畫給檢查看」的，跟它一起長大的合成假人
-> （`tools/lib/syntheticSheet.mjs`）也是。真正的考驗是第一批手繪素材：
-> 覆蓋率與 128px 眉線對比目前只發 warn，門檻還沒用手繪圖校準；體積（SP-7.8）已經是硬失敗，
-> 預算同樣沒對手繪圖驗過；描邊估計器的偏差也要用同一批素材重量。
+> ⚠️ 驗收鏈每次提交都會對 `src/img/sprite/` 的兩張圖真的跑一遍（摘要寫「sprites: 通過」），
+> 不再走 `NOT-DELIVERED`。腳本畫的暫定圖（`tools/sprite-gen/whale-boy.mjs`）已隨定稿素材刪除；
+> 檢查自己的回歸測試仍用合成假人（`tools/lib/syntheticSheet.mjs`）。
+> **但三個門檻還沒用定稿素材校準**：格內覆蓋率與 128px 眉線對比目前只發 warn；
+> 體積（SP-7.8）已經是硬失敗，但預算本身沒對真素材驗過；描邊估計器的偏差也要用同一批素材重量。
 > 先校準，再當門檻用（`docs/ROADMAP.md`〈未完成項目〉B2-4、B2-6）。
 
 avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，底層是視線格，
@@ -40,14 +51,11 @@ avatar 預設是 `SpriteController`：四層 `<div>` 疊在方形 stage 上，�
 
 ## ADR（決策權威，`docs/adr/`）
 
-| ADR | 主題 | 狀態 |
-|---|---|---|
-| **ADR-004** | **改為 Grafana Panel Plugin**（2D 精靈圖 + Web Speech，零後端） | **Accepted**（2026-09-18） |
-| ADR-005 | 選填的外部語音服務（Qwen3-TTS 年輕男聲）；修訂 ADR-004 決策 4，Web Speech 保留為預設與降級 | **Accepted**（2026-10-06） |
-| ADR-006 | 播報紀錄：以 Grafana 告警狀態歷史當吉祥物的持久紀錄（唯讀、零後端）；修訂 ADR-004 決策 2 | **Accepted**（2026-10-14） |
-| ADR-001 | SOC 播報架構（Node 導播 + WS + VRM avatar） | Superseded |
-| ADR-002 | 表情導播 + lip-sync + `AvatarController` 介面 | Superseded |
-| ADR-003 | 前端 visual-web-stack | Superseded |
+**索引在 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 的〈ADR 索引〉那一節** ——
+主題、狀態與日期只在那一處維護（本 repo 沒有 `docs/adr/README.md`）。
+決策內文一律以 `docs/adr/` 的檔案為權威。
+
+下面兩段是這份索引**不該複製**、但 repo 開發者需要知道的事：
 
 ADR-004 是在 5 個 POC gate 全數 PASS 之後才升 Accepted。在那之前它刻意停在 `FIRM`，
 不讓「POC 一個都還沒跑」被狀態值蓋過去。機械證據回填在該檔的 Verification Evidence。
@@ -75,7 +83,8 @@ ADR-002 有兩個抽象被 ADR-004 明文繼承，不隨 supersede 作廢：
    （或向專案要現成的檔案）。
 2. 解壓到 Grafana 的 plugins 目錄（預設 `/var/lib/grafana/plugins`）：
    ```bash
-   unzip augur-mascot-panel-0.1.0.zip -d /var/lib/grafana/plugins/
+   # <版本> 以 package.json 的 version 為準（目前 0.2.1）
+   unzip augur-mascot-panel-<版本>.zip -d /var/lib/grafana/plugins/
    ```
    解出來的目錄名就是 plugin id（`augur-mascot-panel/`），不要改名。
 3. 允許載入未簽署的 plugin，兩種寫法擇一：
@@ -126,7 +135,7 @@ npm run package      # 產出可安裝的 zip
 
 # sprite 交付相關（素材還沒進來也都能跑）
 npm run check:sprites           # SP-7 素材驗收（manifest 不存在時印 NOT-DELIVERED 並回 0）
-node tools/sprite-gen/face-edits.py <原圖> <輸出目錄>  # 從原圖改出嘴、眼與表情（python3；原圖不進版控）
+python3 tools/sprite-gen/face-edits.py <原圖> <輸出目錄>  # 從原圖改出嘴、眼與表情（原圖不進版控）
 node tools/sprite-gen/assemble.mjs   # 由 assets/sprite-src/ 的母圖與變體組成兩張圖（原始檔不進版控）
 npm run check:sprites:selftest  # 上面那支自己的回歸測試（合成基準 + 逐條變異體）
 npm run blindtest               # SP-V.1 方向辨識盲測頁 → http://localhost:8787/
@@ -183,12 +192,12 @@ npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身
 
 | 目錄 | 是什麼 |
 |---|---|
-| `src/core/` | 來源中立的核心邏輯：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。不依賴瀏覽器或 Node，從舊架構整包繼承（之後 `dedup.ts` 為修 bug 加過 `forget()` 與 `setWindow()`）。 |
+| `src/core/` | 來源中立的核心邏輯：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。不依賴瀏覽器或 Node，從舊架構整包繼承、`ParsedAlert` 這條邊界沒動——但**不是「零修改」**：`dedup.ts` 為兩次真實的永久靜音缺陷加過 `forget()` 與 `setWindow()`，`severity.ts` 補過缺值收斂。別再寫死行數。 |
 | `monitoring/` | docker-compose 開發環境 + 8 條 Windows 主機 alert rule（3 條效能、5 條 Loki 事件），另有 2 條 POC 用的合成規則 |
 | ~~`assets/`~~ | 已於 2026-09-21 退出版控：出處查不到，依 `docs/asset-provenance.md` 自訂的規則移除。角色定義改由 `live2d-template-spec-v1.md` §7 的文字描述 + `sprite-sheet-spec.md` SP-6.0 的色票表承擔，兩者都是本專案自己的產物。 |
 | `live2d/_archive/` | 已廢棄的 Live2D 路線。但 `live2d-template-spec-v1.md` §6 仍在用：它定義了 calm/warning/critical/resolved 四個表情的視覺語意，是 sprite 反應圖的內容大綱。 |
 | `avatar/` | VRM / THA 選型研究備忘錄（歷史，已不在關鍵路徑上） |
-| `tools/` | `asp-test.sh`（11 道 commit 閘）；閘門用的 `check-js-suffix.sh`、`check-monitoring.mjs`、`check-bundle-deps.mjs`、`stroke-battery.mjs`；`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）與它的 selftest；`lib/`（手寫 PNG / GIF 編解碼、檢查邏輯、合成假人）；`blind-test/`（SP-V.1 盲測頁）；`check-server.sh`（`npm run server` 的註冊確認）；`tts-server/`（ADR-005 的外部語音服務參考實作：Qwen3-TTS 年輕男聲，Python，不進 plugin）；`package.sh`（打包 zip）；`jest/fileMock.js`（jest 的圖片 stub，`jest.config.js` 引用） |
+| `tools/` | `asp-test.sh`（11 道本地檢查電池）；它呼叫的 `check-js-suffix.sh`、`check-monitoring.mjs`、`check-bundle-deps.mjs`、`stroke-battery.mjs`；`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）與它的 selftest；`lib/`（手寫 PNG / GIF 編解碼、檢查邏輯、合成假人）；`blind-test/`（SP-V.1 盲測頁）；`check-server.sh`（`npm run server` 的註冊確認）；`tts-server/`（ADR-005 的外部語音服務參考實作：Qwen3-TTS 年輕男聲，Python，不進 plugin）；`sprite-gen/`（`face-edits.py` 改臉、`assemble.mjs` 組圖，定稿素材的產製鏈）；`package.sh`（打包 zip）；`jest/fileMock.js`（jest 的圖片 stub，`jest.config.js` 引用） |
 | `docs/sprite/` | 精靈圖規格（`sprite-sheet-spec.md`）、製作 SOP、manifest 樣板。發包給畫師時給這三份。 |
 | `docs/handoff/` | 歷史交接文件。`remaining-plan.md` 已於 2026-10-02 退役，仍有效的項目在 `docs/ROADMAP.md`〈未完成項目〉 |
 
@@ -209,12 +218,31 @@ webpack 的 `resolve.extensions` 沒有 `extensionAlias`，jest 的 `moduleNameM
 
 `tools/check-sprite-sheets.mjs` 與它的 lib 不得呼叫任何 git 指令。
 `git` 的任何一個子指令都會刷新 `.git/index` 的 mtime，
-而 ASP 閘門的判定是「`.asp-test-result.json` 不得比 `.git/index` 舊」。
+而 v4 ship-gate hook 的判定是「`.asp-test-result.json` 不得比 `.git/index` 舊」——
 sprite 檢查很容易想用 `git ls-files` 去找素材，那會讓整個 commit 閘無聲失效。
 `check-sprite-sheets.selftest.mjs` 有一條測試在釘這件事（剝掉註解後 grep）。
+那支 hook 已於 2026-10-10 移除（見〈治理〉），所以這條禁令現在護的是**歷史判定**；
+約束仍然保留——重新接上任何讀 mtime 的閘門時它就又生效，而且測試已經在釘了。
 
 ## 治理
 
-本 repo 受 ASP 治理。提交前的測試痕跡由 `tools/asp-test.sh` 產生，
-順序不能換：`git add -A` → `bash tools/asp-test.sh` → 立刻 `git commit`。
-中間插入任何 `git status` / `git diff` 都會刷新 `.git/index` 的 mtime，讓閘門判定失效。
+本 repo 是 **asp-ng 的消費端**（2026-10-10 接入，`chore(asp): 接入 asp-ng 消費端…`）。
+三個入口：
+
+| 檔案 | 是什麼 |
+|---|---|
+| `asp-gate.yaml` | **單一事實源**。目前兩道 blocker：`gitleaks`（規則庫 vendored 自 asp-ng）與 `commit-format`（Conventional Commits）。 |
+| `.asp/gate.sh`、`.asp/ci.sh`、`.github/workflows/asp-ci.yml` | 由 `asp render` 從上面那份產生的**渲染物，勿手改**（檔頭有 source / renderer 的 sha256）。本機 gate 與 CI 跑同一份，判定一致由構造保證。 |
+| `AGENTS.md` | PR 與 commit 慣例：`Closes #<票號>`、AC 逐條對照、Conventional Commits、本 repo 的測試指令是 `npm run test:unit`。 |
+
+型別、lint、測試、建置與 e2e 不在 asp 這一側——由本 repo 既有的
+`.github/workflows/ci.yml` 在每個 PR 上跑。移除 `asp-gate.yaml`、`.asp/`、
+`.github/workflows/asp-ci.yml`、`.mega-linter.yml` 即卸載。
+
+**v4 的 ship-gate hook 已於 2026-10-10 移除**（`.claude/settings.json` 內指向
+`~/.claude/asp/hooks` 的三支）。所以 `tools/asp-test.sh` 現在是**本機自願跑的完整檢查電池**
+（上面〈狀態〉列的 11 道），不再有 hook 讀它寫出的 `.asp-test-result.json`；
+那條「`git add -A` → `bash tools/asp-test.sh` → 立刻 `git commit`，中間不要插
+`git status` / `git diff`」的順序要求，是為了那個已移除的 hook 比對
+`.git/index` 與結果檔的 mtime —— 腳本與 `tools/` 底下的註解仍以它為背景在寫，
+讀的時候把它當歷史脈絡。

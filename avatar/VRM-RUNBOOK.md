@@ -1,5 +1,13 @@
-# Augur 角色 — VRM Runbook（VRoid → AIRI）
+# ⚠️ 已被 ADR-004 取代 — Augur 角色 VRM Runbook（VRoid → AIRI）
 
+> **已被 ADR-004 取代（Accepted 2026-09-18）。保留作歷史,不再維護。**
+> Augur 現在是 Grafana panel plugin,角色是 **2D 精靈圖**、語音走瀏覽器 Web Speech、零後端;
+> VRM(3D)與 AIRI 這條路線連同它依賴的 WS 推播管線都已不在架構裡
+> (程式碼已刪除,見 `git log`)。現況見 `docs/adr/ADR-004-grafana-panel-plugin-mascot.md`
+> 與 `docs/ARCHITECTURE.md`;素材規格見 `docs/sprite/sprite-sheet-spec.md`。
+> 本檔的 VRM 選型研究、授權查證與工具行情仍有參考價值,所以沒刪。
+
+> **以下是 2026-06-23 當時的原文,僅供參考:**
 > **現行角色路線(2026-06-23 起)。** Live2D(2D)已廢除封存(見 `../live2d/_archive/DEPRECATED.md`)。
 > 目標 v1:一個 3D 角色出現在 AIRI,會**對嘴 + 眨眼 + idle + 髮擺**,唸出 Augur 的告警。
 
