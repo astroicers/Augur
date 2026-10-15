@@ -13,7 +13,7 @@ import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type Hist
 import { fetchPanelHistory } from '../sources/historyFetcher';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
-import { probeDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
+import { watchDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
 import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import { CLICK_REACTION_MS, SpriteController } from '../avatar/SpriteController';
 import type { AvatarController } from '../avatar/AvatarController';
@@ -484,19 +484,17 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => window.clearTimeout(h);
   }, [emotion, feed]);
 
-  // ---- 互動層：能力偵測 + 漸進降級 ----
+  // ---- 互動層：能力偵測 + 漸進降級（降級後可恢復）----
+  //
+  // 偵測**不是**一次性的。mount 當下照的那張快照常常是暫時的（其他 panel 還沒 render 完、
+  // 使用者等一下才展開收起來的 row），只探一次會把它變成永久判決：明明看得到別人了，
+  // 卻永遠停在「限本 panel」。重試政策連同理由住在 dashboardPanels.ts 的 watchDashboardDom。
+  //
+  // ⚠️ 升回時**顯示與 listener target 必須一起換**，所以兩者都只在 `apply()` 裡動。
+  // 分頭更新的話會出現「chip 寫全頁追蹤、事件卻仍只來自自己容器」——
+  // 那比單純降級更糟：畫面在說謊，而 G-ADR004-4 要驗的就是這個 chip。
   useEffect(() => {
     const host = hostRef.current;
-    const dom = probeDashboardDom(host);
-    domRef.current = dom;
-    setScope({ cross: dom.crossPanel, reason: dom.reason });
-
-    // 降級的全部內容就是這一行：監聽 document 還是只監聽自己的容器。
-    // 其餘邏輯完全相同 —— 這是「壞掉時少一個功能，而不是整個 plugin 炸掉」的關鍵。
-    const target: Document | HTMLElement | null = dom.crossPanel ? document : host;
-    if (!target) {
-      return;
-    }
 
     let raf = 0;
     let px = 0;
@@ -510,6 +508,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       }
       raf = requestAnimationFrame(() => {
         raf = 0;
+        // 降級中順手重探一次。游標在動代表畫面活著，是最便宜的「要不要再看一眼」訊號；
+        // 計時器的有界重試窗（6 秒）過了之後，這條就是唯一的升回途徑。
+        // 節流有兩層：這裡本來就只有一 frame 一次，watcher 自己還有時間窗。
+        watcher.recheck();
         const el = hostRef.current;
         if (!el) {
           return;
@@ -535,10 +537,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
     const onClick = (ev: Event) => {
       const e = ev as PointerEvent;
-      const hit = dom.panelAt(e.clientX, e.clientY);
+      // ⚠️ 讀 domRef 而不是閉包變數：升回時換的是 domRef 裡那一份。
+      // 閉包版會讓 listener 永遠用 mount 當下那份能力 —— 升回後 panelAt 仍固定回 null，
+      // 於是「全頁追蹤」的 chip 底下，點別的 panel 顯示的還是「已降級」。
+      const dom = domRef.current;
+      const hit = dom?.panelAt(e.clientX, e.clientY) ?? null;
       if (hit) {
         setLastClick(`${hit.key}${hit.pluginId ? ` · ${hit.pluginId}` : ''}`);
-      } else if (!dom.crossPanel) {
+      } else if (!dom?.crossPanel) {
         setLastClick('本 panel（已降級，看不到其他 panel）');
       } else {
         return;
@@ -551,12 +557,39 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       clickTimerRef.current = window.setTimeout(() => setClicking(false), CLICK_REACTION_MS);
     };
 
-    target.addEventListener('pointermove', onMove, { passive: true });
-    target.addEventListener('click', onClick, { passive: true });
+    // 降級的全部內容就是這裡的 target：監聽 document 還是只監聽自己的容器。
+    // 其餘邏輯完全相同 —— 這是「壞掉時少一個功能，而不是整個 plugin 炸掉」的關鍵。
+    let target: Document | HTMLElement | null = null;
+    const bind = (next: Document | HTMLElement | null) => {
+      if (next === target) {
+        return;
+      }
+      if (target) {
+        target.removeEventListener('pointermove', onMove);
+        target.removeEventListener('click', onClick);
+      }
+      target = next;
+      target?.addEventListener('pointermove', onMove, { passive: true });
+      target?.addEventListener('click', onClick, { passive: true });
+    };
+
+    /** 能力 → 顯示 ＋ listener target。這兩件事只在這裡動，就不可能不同步。 */
+    const apply = (dom: DashboardDom) => {
+      domRef.current = dom;
+      setScope({ cross: dom.crossPanel, reason: dom.reason });
+      bind(dom.crossPanel ? document : host);
+    };
+
+    const watcher = watchDashboardDom(host, apply);
+    apply(watcher.current());
+
     return () => {
+      // 三種東西都要清：計時器（watcher 的重試 ＋ click 的回饋）、raf、以及**目前**綁著的
+      // listener。`bind(null)` 而不是對 host／document 各 remove 一次 —— 綁在哪由 bind 記著，
+      // 升回過的那次就是綁在 document 上。
+      watcher.stop();
       cancelAnimationFrame(raf);
-      target.removeEventListener('pointermove', onMove);
-      target.removeEventListener('click', onClick);
+      bind(null);
       window.clearTimeout(clickTimerRef.current);
       domRef.current = null;
     };

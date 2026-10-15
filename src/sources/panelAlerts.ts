@@ -21,6 +21,7 @@
  *     這讓 dedup 既有語意（6 個測試）原封不動就是對的。
  */
 import type { ParsedAlert } from '../core/types';
+import { panelRulesOf } from './panelRules';
 
 /** `props.data.alertState` 的結構型別。
  *
@@ -88,53 +89,43 @@ export interface PanelAlertSource {
   episodeCount(): number;
 }
 
-/** 把 rules 端點的原始回應攤平成 RuleDetail[]。回應形狀見 .asp-fact-check.md。 */
+/** 把 rules 端點的原始回應攤平成 RuleDetail[]。回應形狀見 .asp-fact-check.md。
+ *
+ * 走訪與「綁在本 panel 嗎」的比對在 `panelRules.ts`（三個 parser 共用）；這裡只負責
+ * 從一條規則取出 ParsedAlert 要的欄位。
+ */
 export function parseRulesResponse(raw: unknown, dashboardUid: string, panelId: number): RuleDetail[] {
-  const groups = (raw as { data?: { groups?: unknown[] } })?.data?.groups;
-  if (!Array.isArray(groups)) {
-    return [];
-  }
   const out: RuleDetail[] = [];
-  for (const g of groups) {
-    const rules = (g as { rules?: unknown[] })?.rules;
-    if (!Array.isArray(rules)) {
-      continue;
-    }
-    for (const r of rules) {
-      const rule = r as {
-        name?: string;
-        annotations?: Record<string, string>;
-        labels?: Record<string, string>;
-        alerts?: Array<{
-          state?: string;
-          labels?: Record<string, string>;
-          annotations?: Record<string, string>;
-          value?: string;
-          activeAt?: string;
-        }>;
-      };
-      const ann = rule.annotations ?? {};
-      // 端點支援 dashboard_uid/panel_id 過濾，但再比對一次：過濾參數若被忽略，
-      // 我們會把整個 dashboard 的告警都念出來。
-      if (ann['__dashboardUid__'] !== dashboardUid || ann['__panelId__'] !== String(panelId)) {
-        continue;
-      }
-      const firing = (rule.alerts ?? []).filter((a) => String(a.state ?? '').toLowerCase() === 'alerting');
-      for (const a of firing) {
-        const labels = a.labels ?? rule.labels ?? {};
-        const aAnn = a.annotations ?? ann;
-        out.push({
-          alertname: labels['alertname'] ?? rule.name ?? 'unknown',
-          severity: labels['severity'] ?? 'unknown',
-          ...(aAnn['summary'] !== undefined ? { summary: aAnn['summary'] } : {}),
-          // ⚠️ value 是**字串科學記號**（實測 "1e+00"），不是數字。
-          ...(toNumber(a.value) !== undefined ? { value: toNumber(a.value)! } : {}),
-          ...(a.activeAt !== undefined ? { activeAt: a.activeAt } : {}),
-        });
-      }
+  for (const { rule, annotations: ann } of panelRulesOf<FiringRule>(raw, dashboardUid, panelId)) {
+    const firing = (rule.alerts ?? []).filter((a) => String(a.state ?? '').toLowerCase() === 'alerting');
+    for (const a of firing) {
+      const labels = a.labels ?? rule.labels ?? {};
+      const aAnn = a.annotations ?? ann;
+      out.push({
+        alertname: labels['alertname'] ?? rule.name ?? 'unknown',
+        severity: labels['severity'] ?? 'unknown',
+        ...(aAnn['summary'] !== undefined ? { summary: aAnn['summary'] } : {}),
+        // ⚠️ value 是**字串科學記號**（實測 "1e+00"），不是數字。
+        ...(toNumber(a.value) !== undefined ? { value: toNumber(a.value)! } : {}),
+        ...(a.activeAt !== undefined ? { activeAt: a.activeAt } : {}),
+      });
     }
   }
   return out;
+}
+
+/** `parseRulesResponse` 讀得到的欄位（rules 端點回應無型別保證，形狀宣告留在用它的地方）。 */
+interface FiringRule {
+  name?: string;
+  annotations?: Record<string, string>;
+  labels?: Record<string, string>;
+  alerts?: Array<{
+    state?: string;
+    labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+    value?: string;
+    activeAt?: string;
+  }>;
 }
 
 function toNumber(v: string | undefined): number | undefined {
@@ -227,7 +218,7 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
       const nowIso = new Date(now()).toISOString();
 
       if (!detail.length) {
-        // 降級路徑：rules 端點取不到（失敗、或規則沒帶 __dashboardUid__/__panelId__ 註解）。
+        // 降級路徑：rules 端點取不到（失敗、或規則沒帶綁定本 panel 的註解，見 panelRules.ts）。
         // 仍然播報，只是內容是泛用的 —— 有聲音比沉默好。
         const fp = `alert:panel:${opts.panelId}`;
         const existing = episodes.get(fp);

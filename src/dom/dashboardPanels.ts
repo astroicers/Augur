@@ -106,3 +106,108 @@ export function probeDashboardDom(self: Element | null): DashboardDom {
     },
   };
 }
+
+/**
+ * 降級後的重試政策（附錄-7）。
+ *
+ * 為什麼要重試：`probeDashboardDom` 在 mount 當下照一張快照，而 dashboard 的 DOM 在
+ * mount 之後還會長出東西 —— 其他 panel 還沒 render 完、使用者展開一個收起來的 row、
+ * 或本 panel 被加進一個原本只有它自己的 dashboard。只探一次的話那張快照會變成永久判決：
+ * 明明看得到別人了，chip 仍停在「限本 panel」。
+ *
+ * 兩條觸發來源刻意分開，因為它們補的洞不同：
+ *  - **有界的計時器重試**（`LIMIT` 次 × `INTERVAL_MS`，共 6 秒）：補「使用者完全不動滑鼠」
+ *    的情況。有界是因為超過這個窗還看不到別人，絕大多數是真的只有一個 panel 或 sandbox
+ *    開著 —— 那不是暫時狀態，無限輪詢只是每隔幾秒燒一次 `querySelectorAll` 卻永遠得到同一個答案。
+ *  - **事件驅動的 `recheck()`**（由呼叫端在 pointermove 裡呼叫，節流 `RECHECK_MIN_INTERVAL_MS`）：
+ *    補「6 秒之後才出現其他 panel」的情況。這條不設次數上限 —— 它只在使用者真的在動游標時
+ *    才跑，且每次就是一個 `querySelectorAll`，成本上界由節流窗而非次數決定。
+ *
+ * 只升不降：升回之後 watcher 就停了。偵測到別人之後又「看不到」只可能是 panel 被移除，
+ * 而那種情況下 `panelAt` 自己會回 null，不需要把能力再降一級（降級會牽動 listener 的
+ * target 重綁，為一個不會發生的狀態付複雜度）。
+ */
+export const DOM_PROBE_RETRY_LIMIT = 4;
+export const DOM_PROBE_RETRY_INTERVAL_MS = 1500;
+export const DOM_PROBE_RECHECK_MIN_INTERVAL_MS = 1000;
+
+export interface DashboardDomWatcher {
+  /** 目前的能力。升回之後回的是新的那一份。 */
+  current(): DashboardDom;
+  /** 外部事件（例：pointermove）觸發的即時重探。節流窗內直接回 false。回傳「這次有沒有升回」。 */
+  recheck(): boolean;
+  /** 還剩幾次計時器重試（診斷與測試用）。 */
+  retriesLeft(): number;
+  /** 清掉計時器。呼叫端的 unmount 一定要叫。 */
+  stop(): void;
+}
+
+/**
+ * 包一層「會重試的能力偵測」。`self` 與 `probeDashboardDom` 同義。
+ *
+ * `onUpgrade` 只會被呼叫**至多一次**，且只在降級 → 升回時。
+ * 呼叫端必須在這個 callback 裡**同時**更新顯示與重綁 listener target ——
+ * 兩者分開更新就會出現「chip 說全頁追蹤、事件卻只來自自己容器」。
+ */
+export function watchDashboardDom(
+  self: Element | null,
+  onUpgrade: (dom: DashboardDom) => void,
+  opts: { limit?: number; intervalMs?: number; minRecheckIntervalMs?: number } = {}
+): DashboardDomWatcher {
+  const limit = opts.limit ?? DOM_PROBE_RETRY_LIMIT;
+  const intervalMs = opts.intervalMs ?? DOM_PROBE_RETRY_INTERVAL_MS;
+  const minRecheckIntervalMs = opts.minRecheckIntervalMs ?? DOM_PROBE_RECHECK_MIN_INTERVAL_MS;
+
+  let dom = probeDashboardDom(self);
+  let timer = 0;
+  let left = dom.crossPanel ? 0 : limit;
+  let lastProbeAt = Date.now();
+
+  const stop = () => {
+    left = 0;
+    if (timer) {
+      window.clearTimeout(timer);
+      timer = 0;
+    }
+  };
+
+  /** 重探一次。只有升回才改狀態 —— 還是降級時連 reason 都不換，省掉一次沒有意義的 re-render。 */
+  const probe = (): boolean => {
+    lastProbeAt = Date.now();
+    const next = probeDashboardDom(self);
+    if (!next.crossPanel) {
+      return false;
+    }
+    dom = next;
+    stop();
+    onUpgrade(next);
+    return true;
+  };
+
+  const schedule = () => {
+    if (left <= 0) {
+      return;
+    }
+    timer = window.setTimeout(() => {
+      timer = 0;
+      left--;
+      if (!probe()) {
+        schedule();
+      }
+    }, intervalMs);
+  };
+
+  schedule();
+
+  return {
+    current: () => dom,
+    recheck: () => {
+      if (dom.crossPanel || Date.now() - lastProbeAt < minRecheckIntervalMs) {
+        return false;
+      }
+      return probe();
+    },
+    retriesLeft: () => left,
+    stop,
+  };
+}

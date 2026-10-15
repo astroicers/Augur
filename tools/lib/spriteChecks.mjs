@@ -1153,7 +1153,13 @@ function fillHoles(mask, cellPx) {
  *
  * 用遮罩而不是矩形，是因為「框減去三個視窗」不是矩形，用矩形表達不出來。
  */
-function ownershipMask(code, manifest) {
+/*
+ * ⚠️ **必須保持 export。** `tools/check-sprite-sheets.mjs` 的洋紅 diff 圖原本
+ * 因為這裡沒有 export 而「用同一組規則重建」了一份 `ownershipMaskFor`——
+ * 兩份規則改一份忘一份，產權檢查與 diff 圖就會各說各話（報表說越界、圖上卻乾淨）。
+ * 本函式是唯一的一份，見 selftest 第 [3f] 節的黃金摘要。
+ */
+export function ownershipMask(code, manifest) {
   const { cellPx } = manifest.sheet;
   const mask = new Uint8Array(cellPx * cellPx);
   const E = windowRect(manifest.windows.E, cellPx);

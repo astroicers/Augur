@@ -1665,6 +1665,158 @@ console.log('\n[3b] SP-2.14 的 warn 級（runAll 只回 error，warn 要另外�
 }
 
 // ===========================================================================
+console.log('\n[3f] ownershipMask 只有一份（#33）');
+// ---------------------------------------------------------------------------
+// ⚠️ `check-sprite-sheets.mjs` 曾經「因為 `spriteChecks` 的 `ownershipMask` 沒 export，
+// 就用同一組規則重建一份」。兩份規則的後果不是「程式碼比較醜」，是**產權檢查與洋紅
+// diff 圖會各說各話** —— 報表（spriteChecks 那份）說格 1 越界，而給畫師看的那張圖
+// （重建那份）上面乾淨，或者反過來。改一份忘一份就會變成這樣。
+//
+// 下面的黃金摘要**是用被刪掉的那一份算出來的**（19fbf2f 的 [3f] 節逐位元證明過兩份等價，
+// 摘要在那之後才凍結）。所以它們釘住的不是「現在這份自己算的結果」，
+// 而是「收斂之後的行為仍等於收斂之前的兩份」。
+//
+// 幾何故意寫成字面值而不是 `buildManifest()`：黃金摘要要能永久有效，
+// 不能隨 fixture 的視窗座標一起漂。
+{
+  const toolsDir = path.join(ROOT, 'tools');
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      return e.isDirectory() ? (e.name === 'node_modules' ? [] : walk(full)) : [full];
+    });
+  const sources = walk(toolsDir).filter((f) => /\.(mjs|js|cjs|ts|sh)$/.test(f));
+  // ⚠️ needle 要在執行期拼起來，不可寫成字面值 —— 連註解裡也不行。
+  // #33 的驗收手法是在 `tools/` 底下 grep「function 」接函式名的那串字、要求只有一筆；
+  // 本檔（或本註解）若把那串字原樣寫出來，自己就會變成第二筆，
+  // 讓驗收指令與這條斷言雙雙對著一個不存在的重複報警。
+  const DEF = ['function', 'ownershipMask'].join(' ');
+  // ⚠️ 數的是**行**而不是檔。只數檔的話，第二份實作如果就放在 `lib/spriteChecks.mjs`
+  // 自己裡面（換個名字就行，needle 是前綴比對），命中檔數仍是 1 且仍指向這個檔，
+  // 這條就綠著放行 —— 而 AC-1 那條 grep 會回兩筆。實測過：同檔補一份就是這個結果。
+  const defs = sources.flatMap((f) => {
+    const rel = path.relative(ROOT, f);
+    return fs
+      .readFileSync(f, 'utf8')
+      .split('\n')
+      .flatMap((line, i) => (line.includes(DEF) ? [`${rel}:${i + 1}`] : []));
+  });
+  ok('tools/ 底下只有一份 ownershipMask 實作（逐行計數，同檔第二份也要抓到）',
+    defs.length === 1 && defs[0].startsWith('tools/lib/spriteChecks.mjs:'),
+    defs.join(', ') || '一份都沒有');
+  const cliSrc = fs.readFileSync(path.join(ROOT, 'tools/check-sprite-sheets.mjs'), 'utf8');
+  ok('check-sprite-sheets.mjs 匯入它而不是自己重建一份',
+    /^\s*ownershipMask,$/m.test(cliSrc) && /from '\.\/lib\/spriteChecks\.mjs'/.test(cliSrc) && !/ownershipMaskFor/.test(cliSrc));
+  ok('ownershipMask 保持 export（沒 export 就是上一次重建的起因）',
+    fs.readFileSync(path.join(ROOT, 'tools/lib/spriteChecks.mjs'), 'utf8').includes(`export ${DEF}(`));
+
+  const SUBSETS = [];
+  for (let bits = 0; bits < 16; bits++) {
+    SUBSETS.push(['E', 'B', 'M', 'K'].filter((_, i) => bits & (1 << i)).join(''));
+  }
+  // 大小寫、順序、重複與不認識的字母 —— `includes` 的語意要一起釘住。
+  const OWNERSHIP_CODES = [...SUBSETS, 'KMBE', 'ebmk', 'X', 'EEE', 'E B M'];
+  const WIN = {
+    E: { x0: 0.28, x1: 0.72, y0: 0.33, y1: 0.445 },
+    B: { x0: 0.28, x1: 0.72, y0: 0.255, y1: 0.33 },
+    M: { x0: 0.395, x1: 0.605, y0: 0.475, y1: 0.585 },
+  };
+  const geom = (cellPx, windows, silhouetteBox) => ({ sheet: { cellPx }, windows, margins: { silhouetteBox } });
+  // 這八組不是隨手挑的：被刪掉那份與留下那份的差異，驗證時實測只有「視窗被推出格外」
+  // 那一組抓得到（把 `add()` 的邊界夾取拿掉，實交付與合成 manifest 全綠）。
+  // 只掃現有 manifest 的九格證不出等價，所以刁難的幾何要留著。
+  const GOLDEN = [
+    ['實交付比例（cellPx 64）', geom(64, WIN, [0.04, 0.96]), 'fc37bbe41f8ff34ba4854341fa76e1fdf3aba2bbf9ee6189ac8d06c57f6ca81d'],
+    ['安全框＝整格（K 吃到邊界像素）', geom(64, WIN, [0, 1]), '622019fcc33e47e66fb8936f2bb523e20cf6a645ab773232fade945802fd689f'],
+    ['安全框小於視窗（E/B/M 凸出框外）', geom(64, WIN, [0.3, 0.5]), '76d7e296e855f1ebe80b767e6b206913cb77d3b3707b10c20230973867353fc0'],
+    ['視窗被推出格外（需要夾取）', geom(64, { E: { x0: -0.1, x1: 0.3, y0: -0.2, y1: 0.2 }, B: { x0: 0.8, x1: 1.4, y0: 0.1, y1: 0.3 }, M: WIN.M }, [0.04, 0.96]), '2380413bb04c5555707feed346af02942c5d93defbb9740dc444ce57a145e8cc'],
+    ['零面積視窗（x0 === x1）', geom(64, { E: { x0: 0.5, x1: 0.5, y0: 0.4, y1: 0.4 }, B: WIN.B, M: WIN.M }, [0.04, 0.96]), 'be572b2f89d66a80bca1829162ac8b9f2d8cd238e13ee38ce5c3db381ef541b6'],
+    ['視窗互相重疊（SP-2.11 被違反）', geom(64, { E: { x0: 0.2, x1: 0.8, y0: 0.2, y1: 0.6 }, B: { x0: 0.3, x1: 0.7, y0: 0.25, y1: 0.5 }, M: { x0: 0.4, x1: 0.6, y0: 0.3, y1: 0.55 } }, [0.04, 0.96]), '0451c00fefa6883578d623d8d51ba4bdf5f4510480d4cc3430fd45921bf382de'],
+    ['奇數 cellPx 65（四捨五入的邊界）', geom(65, WIN, [0.04, 0.96]), 'e6f723eb03ab4978b987b9a5b4b35f4faac6bb4275e64c5b17544630da319171'],
+    ['極小 cellPx 7（視窗塌成一兩個像素）', geom(7, WIN, [0.04, 0.96]), '8b975bee0c7b0e6b7c36b171573451432f4d809558dc4019958782b06afe0b45'],
+  ];
+  const stale = [];
+  for (const [label, g, want] of GOLDEN) {
+    const h = crypto.createHash('sha256');
+    for (const code of OWNERSHIP_CODES) {
+      h.update(code).update(Buffer.from(C.ownershipMask(code, g)));
+    }
+    const got = h.digest('hex');
+    if (got !== want) {
+      stale.push(`${label}: ${got.slice(0, 12)} ≠ ${want.slice(0, 12)}`);
+    }
+  }
+  ok(`${OWNERSHIP_CODES.length} 個產權碼 × ${GOLDEN.length} 組幾何的遮罩等於收斂前的黃金摘要`,
+    stale.length === 0, stale.join(' | '));
+
+  // 黃金摘要擋得住「行為變了」，擋不住「兩份一起錯」—— 規則本身也要有語意斷言。
+  // 餵的是實交付 manifest（AC-2 逐字要求的那一組）與合成 manifest 的真實九格。
+  const deliveredPath = path.join(ROOT, 'src/img/sprite/sprite-manifest.json');
+  const delivered = fs.existsSync(deliveredPath) ? JSON.parse(fs.readFileSync(deliveredPath, 'utf8')) : null;
+  // manifest 未交付時（SP-7.14 的關閘狀態）不能把斷言數掉下來 —— MIN_SELFTEST 是**下限**，
+  // 「素材還沒進版控」不該長得像「測試被刪了」。改拿合成 manifest 頂上並在名稱說清楚。
+  const CASES = [
+    [delivered ? '實交付 manifest' : '實交付 manifest 未交付，改用合成 manifest', delivered ?? buildManifest()],
+    ['合成 manifest', buildManifest()],
+    // 刻意違規的 fixture：遮罩只看 manifest 不看像素，所以「違規」要從 manifest 這一側給
+    // ——九格換成會讓現有 fixture 紅的產權碼組合（含空碼）。
+    ['刻意違規的產權碼組合', buildManifest({ reactionOwnership: ['', 'E', 'K', 'EBMK', 'EB', 'BM', 'MK', 'EM', 'BK'] })],
+  ];
+  const bad = { win: [], k: [], mono: [], empty: [] };
+  for (const [label, m] of CASES) {
+    const { cellPx } = m.sheet;
+    const rects = { E: C.windowRect(m.windows.E, cellPx), B: C.windowRect(m.windows.B, cellPx), M: C.windowRect(m.windows.M, cellPx) };
+    const area = (r) => Math.max(0, Math.min(r.x1, cellPx) - Math.max(r.x0, 0)) * Math.max(0, Math.min(r.y1, cellPx) - Math.max(r.y0, 0));
+    const popcount = (mask) => mask.reduce((n, v) => n + v, 0);
+    for (let c = 0; c < CELL_COUNT; c++) {
+      const code = m.reactionOwnership[c];
+      const mask = C.ownershipMask(code, m);
+      const where = `${label} 格${c}（${JSON.stringify(code)}）`;
+      // 單一視窗碼 → 遮罩正好是那個視窗（夾取後的面積）
+      for (const k of ['E', 'B', 'M']) {
+        if (code === k && popcount(C.ownershipMask(k, m)) !== area(rects[k])) {
+          bad.win.push(`${where}: ${popcount(C.ownershipMask(k, m))} ≠ ${area(rects[k])}`);
+        }
+      }
+      // SP-2.12 的 K ＝「安全框內、E ∪ B ∪ M 以外」。把 K 展成整個安全框的後果是
+      // `'BMK'` 四格的產權悄悄包含眼窗 E —— SP-7.3 存在的理由會被毀掉，而 A–H 全綠。
+      if (code === 'K') {
+        const kMask = C.ownershipMask('K', m);
+        for (const k of ['E', 'B', 'M']) {
+          const r = rects[k];
+          for (let y = Math.max(0, r.y0); y < Math.min(cellPx, r.y1); y++) {
+            for (let x = Math.max(0, r.x0); x < Math.min(cellPx, r.x1); x++) {
+              if (kMask[y * cellPx + x]) {
+                bad.k.push(`${where}: ${k} 視窗內的 (${x},${y}) 被 K 放行`);
+              }
+            }
+          }
+        }
+      }
+      // 加字母只能放寬不能收緊（遮罩是聯集）
+      for (const k of ['E', 'B', 'M', 'K']) {
+        if (code.includes(k)) {
+          continue;
+        }
+        const wider = C.ownershipMask(code + k, m);
+        if (mask.some((v, i) => v && !wider[i])) {
+          bad.mono.push(`${where} + ${k} 反而收緊了`);
+        }
+      }
+    }
+    const emptyMask = C.ownershipMask('', m);
+    if (!emptyMask.every((v) => v === 0)) {
+      bad.empty.push(`${label}: ${emptyMask.reduce((n, v) => n + v, 0)} 個像素被放行`);
+    }
+  }
+  ok('單一視窗碼的遮罩面積正好等於該視窗（實交付／合成／違規三組的九格）', bad.win.length === 0, bad.win.slice(0, 3).join(' | '));
+  ok('K 不含 E／B／M 任何一個像素（SP-2.12：安全框減三個視窗）', bad.k.length === 0, `${bad.k.length} 個像素，例如 ${bad.k[0] ?? '-'}`);
+  ok('產權碼加一個字母只會放寬不會收緊', bad.mono.length === 0, bad.mono.slice(0, 3).join(' | '));
+  // 空碼弄反（全放行）的話 SP-7.4 永不觸發，而那是黃金摘要與等價證明都看不出來的方向。
+  ok('空產權碼 → 全不允許（不是全允許）', bad.empty.length === 0, bad.empty.join(' | '));
+}
+
+// ===========================================================================
 console.log('\n[4] 驗收 (d)：行列顛倒 —— A/B/D 全綠而 C 必須紅');
 // ---------------------------------------------------------------------------
 {
