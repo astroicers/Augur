@@ -231,7 +231,7 @@ test('AC-1：resolved 時 name 髒值一樣換成替代詞，整句釘死（兩�
   }
 });
 
-test('AC-1：name 髒值不改變句型——子句數與乾淨輸入相同（兩種語言）', () => {
+test('AC-1：name 髒值時名稱子句不被省略——子句數與乾淨輸入相同（兩種語言）', () => {
   const cleanZh = formatAlert(mk()).split('，').length;
   const cleanEn = formatAlert(mk(), 'en').split(', ').length;
   for (const [label, v] of DIRTY_FIELD) {
