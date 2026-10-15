@@ -51,11 +51,30 @@ describe('panelRulesOf（Prometheus rules 端點形狀）', () => {
     expect(got.map((p) => p.rule.name)).toEqual(['Mine', 'MineToo']);
   });
 
-  test('annotations 一併吐出，缺就是空物件（呼叫端不必再 ?? 一次）', () => {
+  /**
+   * ⚠️ 這條原本叫「annotations 一併吐出，缺就是空物件（呼叫端不必再 ?? 一次）」，
+   * 但斷言看不到「缺就是空物件」：`annotations` 缺席的規則**永遠通不過 `boundToPanel`**
+   * （`{}` 上兩個註解鍵都是 undefined），所以它不可能被 yield 出來、呼叫端也不可能
+   * 收到那個空物件。名稱宣稱的是輸出形狀，斷言量到的只是「被濾掉了」。
+   *
+   * 處置：名稱改成如實描述，**並補上真的觀察得到 `?? {}` 的斷言**——
+   * 它唯一的可觀察效果是「不丟例外」：少了 `?? {}`，`boundToPanel(undefined, …)`
+   * 會在第一個屬性存取上丟 TypeError，而整支走訪是「形狀不對一律跳過」的語意。
+   */
+  test('annotations 一併吐出；缺 annotations 的規則走 `?? {}` → 不丟例外、直接濾掉', () => {
     const got = [...panelRulesOf<{ name?: string }>(raw(), DASH, PANEL)];
     expect(got[0]!.annotations['summary']).toBe('s');
     expect(got[1]!.annotations).toEqual(BOUND);
-    expect([...panelRulesOf({ data: { groups: [{ rules: [{ name: 'x' }] }] } }, DASH, PANEL)]).toEqual([]);
+
+    // `?? {}` 唯一觀察得到的地方：拿掉它這行會丟 TypeError 而不是回空陣列。
+    const noAnnotations = { data: { groups: [{ rules: [{ name: 'x' }] }] } };
+    expect(() => [...panelRulesOf(noAnnotations, DASH, PANEL)]).not.toThrow();
+    expect([...panelRulesOf(noAnnotations, DASH, PANEL)]).toEqual([]);
+
+    // 同一條路也要蓋到 annotations 不是物件的情況（Grafana 回 null 時最常見）。
+    const nullAnnotations = { data: { groups: [{ rules: [{ name: 'x', annotations: null }] }] } };
+    expect(() => [...panelRulesOf(nullAnnotations, DASH, PANEL)]).not.toThrow();
+    expect([...panelRulesOf(nullAnnotations, DASH, PANEL)]).toEqual([]);
   });
 
   test('形狀不對一律跳過而不丟例外', () => {

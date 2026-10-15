@@ -1763,37 +1763,65 @@ console.log('\n[3f] ownershipMask 只有一份（#33）');
     ['刻意違規的產權碼組合', buildManifest({ reactionOwnership: ['', 'E', 'K', 'EBMK', 'EB', 'BM', 'MK', 'EM', 'BK'] })],
   ];
   const bad = { win: [], k: [], mono: [], empty: [] };
+  /** 已實量過的「manifest × 單一視窗碼」，用來證明下面那條斷言沒有空轉。 */
+  const winMeasured = [];
+
+  /**
+   * 「單一視窗碼 E／B／M → 遮罩正好是那個視窗（夾取後的面積）」。
+   *
+   * ⚠️ **這條原本寫在九格的迴圈裡、條件是 `code === k`。** 於是它實際驗到幾個碼
+   * 完全由測試資料決定：九格的 `reactionOwnership` 裡沒有單碼 `'B'`，B 窗就一次
+   * 都沒被量過 —— 而實交付的九格是 `'BMK'` 這類組合碼，三個單碼**一個都不在裡面**，
+   * 這條斷言在實交付那一組上整個空轉（#47 AC-1）。
+   * 現在三個碼各自直接問一次，與 `reactionOwnership` 無關。
+   *
+   * `maskOf` 可替換是為了本節末那條反證：把 B 窗的遮罩做壞一處，這裡必須抓到。
+   */
+  const singleWindowMismatches = (maskOf, label, m) => {
+    const { cellPx } = m.sheet;
+    const clampedArea = (r) =>
+      Math.max(0, Math.min(r.x1, cellPx) - Math.max(r.x0, 0)) * Math.max(0, Math.min(r.y1, cellPx) - Math.max(r.y0, 0));
+    const mismatches = [];
+    const measured = [];
+    for (const k of ['E', 'B', 'M']) {
+      const want = clampedArea(C.windowRect(m.windows[k], cellPx));
+      const got = maskOf(k, m).reduce((n, v) => n + v, 0);
+      measured.push(`${label}/${k}`);
+      if (got !== want) {
+        mismatches.push(`${label} 碼 ${JSON.stringify(k)}: ${got} ≠ ${want}`);
+      }
+    }
+    return { mismatches, measured };
+  };
+
   for (const [label, m] of CASES) {
     const { cellPx } = m.sheet;
     const rects = { E: C.windowRect(m.windows.E, cellPx), B: C.windowRect(m.windows.B, cellPx), M: C.windowRect(m.windows.M, cellPx) };
-    const area = (r) => Math.max(0, Math.min(r.x1, cellPx) - Math.max(r.x0, 0)) * Math.max(0, Math.min(r.y1, cellPx) - Math.max(r.y0, 0));
-    const popcount = (mask) => mask.reduce((n, v) => n + v, 0);
+
+    const win = singleWindowMismatches(C.ownershipMask, label, m);
+    bad.win.push(...win.mismatches);
+    winMeasured.push(...win.measured);
+
+    // SP-2.12 的 K ＝「安全框內、E ∪ B ∪ M 以外」。把 K 展成整個安全框的後果是
+    // `'BMK'` 四格的產權悄悄包含眼窗 E —— SP-7.3 存在的理由會被毀掉，而 A–H 全綠。
+    // 這條同樣**不綁九格**：理由與上面那條一模一樣（九格裡沒有單碼 `'K'` 就一次都不跑）。
+    const kMask = C.ownershipMask('K', m);
+    for (const k of ['E', 'B', 'M']) {
+      const r = rects[k];
+      for (let y = Math.max(0, r.y0); y < Math.min(cellPx, r.y1); y++) {
+        for (let x = Math.max(0, r.x0); x < Math.min(cellPx, r.x1); x++) {
+          if (kMask[y * cellPx + x]) {
+            bad.k.push(`${label} 碼 "K"：${k} 視窗內的 (${x},${y}) 被 K 放行`);
+          }
+        }
+      }
+    }
+
     for (let c = 0; c < CELL_COUNT; c++) {
       const code = m.reactionOwnership[c];
       const mask = C.ownershipMask(code, m);
       const where = `${label} 格${c}（${JSON.stringify(code)}）`;
-      // 單一視窗碼 → 遮罩正好是那個視窗（夾取後的面積）
-      for (const k of ['E', 'B', 'M']) {
-        if (code === k && popcount(C.ownershipMask(k, m)) !== area(rects[k])) {
-          bad.win.push(`${where}: ${popcount(C.ownershipMask(k, m))} ≠ ${area(rects[k])}`);
-        }
-      }
-      // SP-2.12 的 K ＝「安全框內、E ∪ B ∪ M 以外」。把 K 展成整個安全框的後果是
-      // `'BMK'` 四格的產權悄悄包含眼窗 E —— SP-7.3 存在的理由會被毀掉，而 A–H 全綠。
-      if (code === 'K') {
-        const kMask = C.ownershipMask('K', m);
-        for (const k of ['E', 'B', 'M']) {
-          const r = rects[k];
-          for (let y = Math.max(0, r.y0); y < Math.min(cellPx, r.y1); y++) {
-            for (let x = Math.max(0, r.x0); x < Math.min(cellPx, r.x1); x++) {
-              if (kMask[y * cellPx + x]) {
-                bad.k.push(`${where}: ${k} 視窗內的 (${x},${y}) 被 K 放行`);
-              }
-            }
-          }
-        }
-      }
-      // 加字母只能放寬不能收緊（遮罩是聯集）
+      // 加字母只能放寬不能收緊（遮罩是聯集）。這條**要**走九格：量的是實際交付的那些組合碼。
       for (const k of ['E', 'B', 'M', 'K']) {
         if (code.includes(k)) {
           continue;
@@ -1809,7 +1837,34 @@ console.log('\n[3f] ownershipMask 只有一份（#33）');
       bad.empty.push(`${label}: ${emptyMask.reduce((n, v) => n + v, 0)} 個像素被放行`);
     }
   }
-  ok('單一視窗碼的遮罩面積正好等於該視窗（實交付／合成／違規三組的九格）', bad.win.length === 0, bad.win.slice(0, 3).join(' | '));
+  // 斷言裡一併釘住**實量次數**：條件被改回九格裡去（或任何一個碼被跳過）時這裡會紅，
+  // 不會變成「全綠但什麼都沒量」。
+  ok(`單一視窗碼的遮罩面積正好等於該視窗（E／B／M 三個碼 × ${CASES.length} 組 manifest 各實量一次）`,
+    bad.win.length === 0 && winMeasured.length === 3 * CASES.length,
+    bad.win.slice(0, 3).join(' | ') || `只實量了 ${winMeasured.length} 次：${winMeasured.join(', ')}`);
+
+  // 反證：上面那條真的看得到「B 窗的遮罩不等於 B 窗」。
+  // 做壞一處且只動 B —— 把 B 窗最上面那一列挖掉，面積少 `x1 - x0` 個像素。
+  // 這是可能的最小偏差：連這個都抓不到，就等於整條斷言在量別的東西。
+  const [mutantLabel, mutantManifest] = CASES[0];
+  const brokenBMask = (code, m) => {
+    const mask = C.ownershipMask(code, m);
+    if (!code.includes('B')) {
+      return mask;
+    }
+    const { cellPx } = m.sheet;
+    const r = C.windowRect(m.windows.B, cellPx);
+    const y = Math.max(0, r.y0);
+    for (let x = Math.max(0, r.x0); x < Math.min(cellPx, r.x1); x++) {
+      mask[y * cellPx + x] = 0;
+    }
+    return mask;
+  };
+  const caught = singleWindowMismatches(brokenBMask, `${mutantLabel}（B 窗做壞一列）`, mutantManifest);
+  ok('刻意把 B 窗的遮罩做壞一列 → 上面那條轉紅，而且只紅 B（E／M 維持綠）',
+    caught.mismatches.length === 1 && caught.mismatches[0].includes('"B"'),
+    caught.mismatches.join(' | ') || '一條都沒抓到——那條斷言看不到 B 窗');
+
   ok('K 不含 E／B／M 任何一個像素（SP-2.12：安全框減三個視窗）', bad.k.length === 0, `${bad.k.length} 個像素，例如 ${bad.k[0] ?? '-'}`);
   ok('產權碼加一個字母只會放寬不會收緊', bad.mono.length === 0, bad.mono.slice(0, 3).join(' | '));
   // 空碼弄反（全放行）的話 SP-7.4 永不觸發，而那是黃金摘要與等價證明都看不出來的方向。
