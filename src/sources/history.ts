@@ -13,6 +13,7 @@
 import { buildBroadcastPlan } from '../core/format';
 import { meetsMin } from '../core/severity';
 import type { AlertLang, BroadcastPlan, ParsedAlert } from '../core/types';
+import { panelRulerRulesOf, panelRulesOf } from './panelRules';
 
 /** feed 一次最多顯示幾條（ADR-006 決策 4）。 */
 export const HISTORY_DISPLAY_LIMIT = 200;
@@ -144,30 +145,19 @@ export function renderSummary(
  */
 export function parseRuleTemplates(raw: unknown, dashboardUid: string, panelId: number): Map<string, RuleTemplate> {
   const out = new Map<string, RuleTemplate>();
-  const groups = (raw as { data?: { groups?: unknown[] } })?.data?.groups;
-  if (!Array.isArray(groups)) {
-    return out;
-  }
-  for (const g of groups) {
-    const rules = (g as { rules?: unknown[] })?.rules;
-    if (!Array.isArray(rules)) {
+  type TemplateRule = { name?: string; labels?: Record<string, string> };
+  // 走訪與綁定比對共用 `panelRules.ts`；這裡只決定「從一條規則取什麼」。
+  for (const { rule, annotations: ann } of panelRulesOf<TemplateRule>(raw, dashboardUid, panelId)) {
+    if (!rule.name) {
       continue;
     }
-    for (const r of rules) {
-      const rule = r as { name?: string; labels?: Record<string, string>; annotations?: Record<string, string> };
-      const ann = rule.annotations ?? {};
-      // 同 parseRulesResponse：端點的過濾參數萬一被忽略，這裡再比對一次。
-      if (!rule.name || ann['__dashboardUid__'] !== dashboardUid || ann['__panelId__'] !== String(panelId)) {
-        continue;
-      }
-      const severity = rule.labels?.['severity'];
-      const summary = ann['summary'];
-      out.set(rule.name, {
-        ...(severity !== undefined ? { severity } : {}),
-        ...(summary !== undefined ? { summary } : {}),
-        ...(rule.labels ? { ruleLabels: Object.keys(rule.labels) } : {}),
-      });
-    }
+    const severity = rule.labels?.['severity'];
+    const summary = ann['summary'];
+    out.set(rule.name, {
+      ...(severity !== undefined ? { severity } : {}),
+      ...(summary !== undefined ? { summary } : {}),
+      ...(rule.labels ? { ruleLabels: Object.keys(rule.labels) } : {}),
+    });
   }
   return out;
 }
@@ -178,29 +168,14 @@ export function parseRuleTemplates(raw: unknown, dashboardUid: string, panelId: 
  */
 export function parseRulerConditions(raw: unknown, dashboardUid: string, panelId: number): Map<string, string> {
   const out = new Map<string, string>();
-  if (!raw || typeof raw !== 'object') {
-    return out;
-  }
-  for (const groups of Object.values(raw as Record<string, unknown>)) {
-    if (!Array.isArray(groups)) {
+  type RulerRule = { grafana_alert?: { title?: string; condition?: string } };
+  for (const { rule } of panelRulerRulesOf<RulerRule>(raw, dashboardUid, panelId)) {
+    const title = rule.grafana_alert?.title;
+    const condition = rule.grafana_alert?.condition;
+    if (!title || !condition) {
       continue;
     }
-    for (const g of groups) {
-      const rules = (g as { rules?: unknown[] })?.rules;
-      if (!Array.isArray(rules)) {
-        continue;
-      }
-      for (const r of rules) {
-        const rule = r as { annotations?: Record<string, string>; grafana_alert?: { title?: string; condition?: string } };
-        const ann = rule.annotations ?? {};
-        const title = rule.grafana_alert?.title;
-        const condition = rule.grafana_alert?.condition;
-        if (!title || !condition || ann['__dashboardUid__'] !== dashboardUid || ann['__panelId__'] !== String(panelId)) {
-          continue;
-        }
-        out.set(title, condition);
-      }
-    }
+    out.set(title, condition);
   }
   return out;
 }
