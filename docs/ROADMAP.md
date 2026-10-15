@@ -7,7 +7,7 @@
 > 更要緊的是：那份計畫裡有一條與已 Accepted 的 ADR-004 **正面衝突**，
 > 而衝突的兩造先前不在同一個地方，誰都看不出有矛盾。下面〈已裁定的衝突〉把兩造並列（2026-10-02 經 ADR 訂正裁定）。
 
-## 階段與現況（2026-10-14）
+## 階段與現況（2026-10-15）
 
 | 階段 | 內容 | 現況 |
 |---|---|---|
@@ -43,14 +43,14 @@ P3: 開發環境（Grafana 升版、plugin 掛載、provisioned dashboard）；�
 P4: plugin 實作（來源層、語音層、跨 panel 互動、`AvatarController`）。
 P5: sprite 素材 2026-10-05 定稿（`src/img/sprite/` 兩張圖與 manifest、`docs/sprite/SOURCE-PROMPTS.md`，`SPRITE-CHECK: PASS`，視線不做）。原判準的 SP-V.1 方向盲測在 `features.gaze = false` 下不適用，作廢；規格凍結、門檻改硬限、logo 三項收尾移到 P7。
 P6: 根 README、`src/README.md`、CHANGELOG 對齊現況（2026-09-21）。
-P8: ADR-005 外部語音（Accepted 2026-10-06）、ADR-006 播報紀錄（Accepted 2026-10-14）、語音開關（#25，v0.2.1）；發版 v0.1.0、v0.2.0、v0.2.1。語音開關的設計決策補進 ADR → #32。
+P8: ADR-005 外部語音（Accepted 2026-10-06）、ADR-006 播報紀錄（Accepted 2026-10-14）、語音開關（#25，v0.2.1）；發版 v0.1.0、v0.2.0、v0.2.1。語音開關的設計決策補進 ADR-007（Retrospective）→ #32，由 PR #52 完成（2026-10-15）。
 
 ## now — P7 未完成項目收斂 / P9 播報強化 / P10 結構重構
-P7: 〈未完成項目〉「不卡人」那一類逐條收斂，含 `src/core/` 的缺陷修補與文件同步。已開票：`emotion.ts` 同類缺陷 → #30；文件與程式現況對齊 → #31；ADR-007 語音開關（Draft）→ #32。其餘不卡人的條目（A0-1、A0-6、A0-7、散落-2、散落-3、asset、A2-1、A2-3、A5-2、B7-6、B3-4，以及 P5 移來的 B2-1 凍結、B2-6 門檻、logo）由主管層逐批開票。「卡在人」那一類移到 P12。
+P7: 〈未完成項目〉「不卡人」那一類逐條收斂，含 `src/core/` 的缺陷修補與文件同步。第一批已完成（2026-10-14～15）：`emotion.ts` 同類缺陷 → #30；文件與程式現況對齊 → #31；ADR-007 語音開關（Retrospective）→ #32（PR #52）；`format.ts` 會念出 undefined → #39；同類缺陷擴及其他欄位 → #46；獨立複審留下的測試與邊界缺口 → #47。已知待開票的小項：`format.test.ts` 的「髒嚴重度不改變句型」名稱只驗子句數（#39 留下，同 #46 的處理）、`docs/ARCHITECTURE.md` 說 `speakableSeverity`「只正規化大小寫」不精確、`src/plugin.json` 描述仍寫 watches the cursor（併 P11 的 metadata）。其餘不卡人的條目（A0-1、A0-6、A0-7、散落-2、散落-3、asset、A2-1、A2-3、A5-2、B7-6、B3-4，以及 P5 移來的 B2-1 凍結、B2-6 門檻、logo）由主管層逐批開票。「卡在人」那一類移到 P12。
 P7 判準: 〈未完成項目〉每一條都有處置——完成、作廢附理由，或移到 P11 / P12；每張票的 `npm run typecheck`、`npm run lint`、`npm run test:unit`、`npm run build` 全綠。
-P9: 播報強化——只靠 jest 單元測試、typecheck、lint、build 就能驗收，不新增相依、維持零後端（ADR-004）。第一批：嚴重度別名對應 → #35；跨 panel 偵測降級後可恢復（附錄-7）→ #36。第二批（第一批合入後開票）：靜音／值班時段、播報紀錄篩選與匯出、抖動告警（flapping）抑制。
+P9: 播報強化——只靠 jest 單元測試、typecheck、lint、build 就能驗收，不新增相依、維持零後端（ADR-004）。第一批已完成（2026-10-15）：嚴重度別名對應 → #35，逾時後以 #51 重開（PR #55）；跨 panel 偵測降級後可恢復（附錄-7）→ #36。第二批（待開票）：靜音／值班時段、播報紀錄篩選與匯出、抖動告警（flapping）抑制、別名設定寫錯時在面板上提示（#51 的 `describeSkippedAliases` 目前沒有 UI 使用者）。
 P9 判準: 每項功能都有可觀察的行為（panel 選項或畫面狀態）與單元測試；選項留空時行為與現在完全相同；`src/README.md` 與 `docs/ARCHITECTURE.md` 同步。
-P10: 結構重構——對外行為與既有測試不變。第一批：`ownershipMask` 只留一份 → #33；Grafana rules 回應的 panel 走訪三份合一 → #34。第二批（第一批合入後依序開票，避免同時改 `MascotPanel.tsx` 互撞）：導播收成深模組（`BroadcastDirector`）、樣式與工具函式移出、紀錄合併抽成純函式、語音開關抽成 hook 與補念佇列、斷句規則集中（先寫 golden 測試）。
+P10: 結構重構——對外行為與既有測試不變。第一批已完成（2026-10-15）：`ownershipMask` 只留一份 → #33；Grafana rules 回應的 panel 走訪三份合一 → #34。第二批（待依序開票，避免同時改 `MascotPanel.tsx` 互撞）：導播收成深模組（`BroadcastDirector`）、樣式與工具函式移出、紀錄合併抽成純函式、語音開關抽成 hook 與補念佇列、斷句規則集中（先寫 golden 測試）。
 P10 判準: 每張票的既有測試不修改且全綠；以可機械驗證的數字收尾（例：`MascotPanel.tsx` 行數與 `useEffect` 數、重複實作只剩一處的 `grep` 結果）。
 
 ## next — P11 1.0 準備
