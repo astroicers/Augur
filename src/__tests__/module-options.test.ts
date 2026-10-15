@@ -11,6 +11,9 @@
  * 所以這裡跑的是真的 `PanelOptionsEditorBuilder`,斷言打在註冊結果上,
  * 而不是讀 `module.ts` 的原始碼字串。
  */
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { PanelOptionsEditorBuilder, standardEditorsRegistry } from '@grafana/data';
 import { plugin } from '../module';
 import { DEFAULT_OPTIONS, type MascotPanelOptions } from '../panelOptions';
@@ -110,4 +113,40 @@ test('#63：quietAllowCritical 只在設了時段且開著語音時顯示（沒�
   expect(showIf({ ...base, quietHours: '   ' })).toBeFalsy();
   expect(showIf({ ...base })).toBeFalsy();
   expect(showIf({ ...base, quietHours: '22:00-07:00', enableTTS: false })).toBeFalsy();
+});
+
+test('#69 AC-1：alertNameLabel 註冊在編輯器上，預設是空字串（= 照舊用 alertname）', () => {
+  const opt = registeredOptions().find((o) => o.path === 'alertNameLabel');
+  expect(opt).toBeDefined();
+  expect(opt!.defaultValue).toBe('');
+  expect(DEFAULT_OPTIONS.alertNameLabel).toBe('');
+});
+
+test('#69 AC-6：alertNameLabel 的說明舉 wall_alertname 當例子，並寫明 label 不存在時退回 alertname', () => {
+  const description = registeredOptions().find((o) => o.path === 'alertNameLabel')?.description ?? '';
+  expect(description).toContain('wall_alertname');
+  expect(description).toContain('label 不存在時退回 alertname');
+  // 留空的語意（AC-1 的使用者可見面）。
+  expect(description).toContain('留空');
+});
+
+/**
+ * #69 AC-6：文件裡的「選項總數」與實際註冊數一致。
+ *
+ * `docs/ARCHITECTURE.md` 的維護規則寫著「不要寫死會漂的數字」，而〈設定〉那一節
+ * 偏偏寫死了一個 —— 本專案在 ROADMAP 的引用規則、#36 與 #58 的 AC 上已經各犯過一次。
+ * 數字留著（AC-6 明文要求「選項總數也要更新」），但改成**機械比對**：
+ * 加減選項而忘了動文件時這條會紅，不必靠下一次稽核才發現。
+ * 同時比對檔案表那一欄的每個 option 名 —— 新增選項時漏掉一列的失敗形態同樣是沉默的。
+ */
+test('#69 AC-6：docs/ARCHITECTURE.md〈設定〉的選項總數與每一列都跟註冊面一致', () => {
+  const doc = fs.readFileSync(path.resolve(__dirname, '..', '..', 'docs', 'ARCHITECTURE.md'), 'utf8');
+  const total = /Panel options 共 \*\*(\d+) 個\*\*/.exec(doc);
+  expect(total).not.toBeNull();
+
+  const paths = registeredOptions().map((o) => o.path);
+  expect(Number(total![1])).toBe(paths.length);
+  for (const p of paths) {
+    expect(doc).toContain(`| \`${p}\` |`);
+  }
 });

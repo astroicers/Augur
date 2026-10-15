@@ -38,6 +38,16 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         defaultValue: DEFAULT_OPTIONS.severityAliases ?? '',
         settings: { placeholder: 'P1=critical, sev2=warning' },
       })
+      .addTextInput({
+        // #69。Grafana 會用規則名覆蓋每個 instance 的 alertname，所以「一條總規則查整面
+        // 值班牆」時每則告警的名字都一樣、去重後只念第一則（eks-infra#1210 實測）。
+        path: 'alertNameLabel',
+        name: '告警名稱取自哪個 label',
+        description:
+          '留空 = 用 alertname（與沒有這個選項時完全相同）。填一個 label 名稱，面板就改用每個 instance 的那個 label 當告警名與去重單位，於是一條總規則底下同時燒的每則告警各自播報，而不是只念第一則。用在「一條 Grafana 規則查整面值班牆（ALERTS{alertstate="firing"}）」的情形：Grafana 會用規則名覆蓋每個 instance 的 alertname，查詢端先用 label_replace(…, "wall_alertname", "$1", "alertname", "(.*)") 把原名保留成 instance label，這裡就填 wall_alertname。label 不存在時退回 alertname（連 alertname 也沒有才用規則名）—— 空字串與只有空白的值也一樣退回，所以同一條規則裡帶與不帶這個 label 的 instance 可以並存。改了這一欄要等下一輪 panel 重新整理才生效。',
+        defaultValue: DEFAULT_OPTIONS.alertNameLabel ?? '',
+        settings: { placeholder: 'wall_alertname' },
+      })
       .addNumberInput({
         path: 'repeatFiringMin',
         name: '重播間隔（分鐘）',
