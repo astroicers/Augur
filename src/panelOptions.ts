@@ -32,6 +32,23 @@ export interface MascotPanelOptions {
   fallbackSeverity: string;
   /** 播報語言。 */
   alertLang: AlertLang;
+  /**
+   * 播報句要不要帶「目前數值 N」子句（#71）。預設**開**（念）。
+   *
+   * 關掉的場景是「條件只是 0／1 或查 `ALERTS` 時，數值沒有意義」：查 `ALERTS` 的
+   * 總規則值恆為 1，每一則都念「目前數值 1」只是把播報拖長。關掉只少那一段，
+   * 其餘子句（名稱、嚴重度、受影響對象、摘要、恢復句）逐字不變。
+   *
+   * 播報與**播報紀錄**（ADR-006）吃同一個值：兩邊都走 `buildBroadcastPlan`，
+   * 所以紀錄句與念出來的句子仍然逐字相同（G-ADR006-2）。`BroadcastPlan.value`
+   * 欄位不受影響 —— 那是給 feed／除錯讀的原值，不是念出來的那一段。
+   *
+   * **選填（`?`）而非必填**，理由同 `severityAliases`：舊 dashboard 存下來的 panel JSON
+   * 沒有這個鍵，宣告成必填會讓既有的 `MascotPanelOptions` 字面值（含測試 fixture）
+   * 全部得補一行，而 AC-1 要的正是「既有測試不改」。讀的那一側一律 `?? true`，
+   * 所以缺鍵 = 開著 = 與沒有這個選項時完全相同。
+   */
+  speakValue?: boolean;
   /** 關掉就只更新畫面不發聲。 */
   enableTTS: boolean;
   /**
@@ -90,6 +107,7 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   repeatFiringMin: 0,
   fallbackSeverity: 'critical',
   alertLang: 'zh',
+  speakValue: true,
   enableTTS: true,
   quietHours: '',
   quietAllowCritical: false,

@@ -68,6 +68,15 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         },
       })
       .addBooleanSwitch({
+        // #71。刻意**不**加 `showIf: enableTTS`：關掉語音後播報紀錄（ADR-006）照樣
+        // 顯示句子，這個開關對那些句子一樣生效，藏起來會讓人以為它只管語音。
+        path: 'speakValue',
+        name: '念出目前數值',
+        description:
+          '播報句與播報紀錄要不要帶「目前數值 N」這一段。條件只是 0／1 或查 ALERTS 時，數值沒有意義（查 ALERTS 的總規則值恆為 1，每一則都念「目前數值 1」只會把播報拖長），這時關掉。關掉只少這一段，其餘（名稱、嚴重度、受影響對象、摘要、恢復句）逐字不變。預設開著。',
+        defaultValue: DEFAULT_OPTIONS.speakValue ?? true,
+      })
+      .addBooleanSwitch({
         path: 'enableTTS',
         name: '開啟語音',
         description: '關掉就只更新畫面不發聲。',

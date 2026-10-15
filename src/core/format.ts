@@ -11,8 +11,27 @@ import { severityToEmotion } from './emotion'
 import { normalize } from './severity'
 import { resolveSeverity, type SeverityAliasMap } from './severityAliases'
 
-export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
-  return lang === 'en' ? formatEn(a) : formatZh(a)
+/**
+ * 組句的開關（#71）。目前只有一顆，收成物件而不是一個位置參數：這一族旋鈕
+ * 「哪些子句要念」預期會再長（組句入口已有 `lang`／`aliases` 兩個位置參數，
+ * 再疊一個布林會變成 `buildBroadcastPlan(a, lang, aliases, false)` 這種讀不出
+ * 意思的呼叫）。整個物件省略 → 與沒有這些開關時完全相同。
+ */
+export interface FormatOptions {
+  /**
+   * 是否念「目前數值 N」子句（#71）。預設（省略／`undefined`／`true`）**念**，
+   * 與先前完全相同；`false` 時整個子句省略，其餘子句逐字不變。
+   *
+   * 關掉的理由不是「數值不重要」而是「有些規則的數值沒有資訊量」：查 `ALERTS`
+   * 的總規則值恆為 1，條件只是 0／1 的規則也一樣 —— 每一則都念一次「目前數值 1」
+   * 只是把播報拖長。選「省略整個子句」而不是「念別的字」，與 `instance`／`summary`
+   * 缺值時的既有行為同一條路（見 `speakableText`）。
+   */
+  speakValue?: boolean
+}
+
+export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh', opts?: FormatOptions): string {
+  return lang === 'en' ? formatEn(a, opts) : formatZh(a, opts)
 }
 
 /**
@@ -31,14 +50,20 @@ export function formatAlert(a: ParsedAlert, lang: AlertLang = 'zh'): string {
  * `text` 與 `severity` 照舊帶**原始** label（經 `speakableSeverity` 正規化）：告警上
  * 寫的是 `P1`，念成 `critical` 會讓聽到的人對不上 Grafana 裡看到的那一則。
  * 省略或空表 → 與先前完全相同。
+ *
+ * `opts`（#71，選填）是組句開關，原樣轉給 `formatAlert`，所以**播報與紀錄共用同一套句子**
+ * （ADR-006 的 G-ADR006-2：紀錄句與播報句逐字相同）。它**只影響 `text`**：
+ * `value` 欄位照舊在有值時帶上 —— 那一欄是給 feed／除錯讀原值的，不是念出來的那一段
+ * （同 `severity` 與唸出的嚴重度分開記的理由）。
  */
 export function buildBroadcastPlan(
   a: ParsedAlert,
   lang: AlertLang = 'zh',
-  aliases?: SeverityAliasMap
+  aliases?: SeverityAliasMap,
+  opts?: FormatOptions
 ): BroadcastPlan {
   return {
-    text: formatAlert(a, lang),
+    text: formatAlert(a, lang, opts),
     severity: speakableSeverity(a.severity),
     emotion: severityToEmotion(resolveSeverity(a.severity, aliases), a.status),
     name: a.name,
@@ -122,11 +147,25 @@ function speakableNumber(v: unknown): string | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? formatNumber(v) : undefined
 }
 
-function formatZh(a: ParsedAlert): string {
+/**
+ * 要念的數值 → 字串，`speakValue` 關掉或念不出來時 `undefined`（#71）。
+ *
+ * 關掉的判斷放在這一層、**中英兩套共用**，不是各自在 `if (value !== undefined)`
+ * 旁邊再加一個條件：兩邊各寫一次的話，只改到一邊就會變成「中文不念、英文照念」，
+ * 而那正是 AC-2 要釘住的「其餘子句逐字相同」會漏掉的縫。
+ *
+ * 只比 `=== false`（不是 `!opts?.speakValue`）：舊 dashboard 存的 panel JSON 沒有這個鍵，
+ * 讀到的是 `undefined`，必須與「開著」同義（AC-1 的預設行為完全相同）。
+ */
+function spokenValue(v: unknown, opts?: FormatOptions): string | undefined {
+  return opts?.speakValue === false ? undefined : speakableNumber(v)
+}
+
+function formatZh(a: ParsedAlert, opts?: FormatOptions): string {
   const parts: string[] = []
   const name = speakableText(a.name) ?? UNNAMED_ZH
   const instance = speakableText(a.instance)
-  const value = speakableNumber(a.value)
+  const value = spokenValue(a.value, opts)
   const summary = speakableText(a.summary)
 
   if (a.status === 'resolved') {
@@ -143,11 +182,11 @@ function formatZh(a: ParsedAlert): string {
   return `${parts.join('，')}。`
 }
 
-function formatEn(a: ParsedAlert): string {
+function formatEn(a: ParsedAlert, opts?: FormatOptions): string {
   const parts: string[] = []
   const name = speakableText(a.name) ?? UNNAMED_EN
   const instance = speakableText(a.instance)
-  const value = speakableNumber(a.value)
+  const value = spokenValue(a.value, opts)
   const summary = speakableText(a.summary)
 
   if (a.status === 'resolved') {

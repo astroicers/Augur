@@ -322,6 +322,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // （重新評估、重新打 history 端點）。D10 那條「一律 useRef 而非 useMemo」擋的是
   // 有狀態的物件；這裡連 memo 都不需要，解析是幾次 split，一輪評估跑一次就好。
   const severityAliasSpec = options.severityAliases ?? '';
+  // 「目前數值」子句（#71）。舊 dashboard 的 JSON 沒有這個鍵 → `?? true` → 與沒有這個選項時
+  // 完全相同。判斷不在這裡：元件只把它原樣帶進導播的每一輪設定與紀錄的參數，
+  // 真正決定要不要組那一段的是 `core/format.ts`（播報與紀錄因此共用同一份判斷）。
+  const speakValue = options.speakValue ?? true;
   // 值班靜音時段（#63）。**判斷不在這裡** —— 時段的解析與「現在算不算時段內」都在導播裡
   // （`parseQuietHours` / `isQuietAt`，以注入的時鐘判斷），本檔只負責把這兩個選項原樣帶進
   // 每一輪的設定。放進 effect 裡自己算的話，同一條交付閘門就會有兩個住處：
@@ -775,11 +779,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // 放進 deps 只會讓「在編輯面板裡改那幾個選項」各多打一次 rules 端點。
     // 代價是改了它們要等下一輪 refresh 才生效，而靜音時段的邊界本來就只在
     // refresh 當下才被看一眼（時段結束不補念，所以沒有「錯過一輪」這回事）。
+    // `speakValue`（#71）**在** deps 裡，與 `alertLang` 同一類：它改的是句子本身，
+    // 在編輯面板裡撥了之後要能立刻看到新句子（紀錄那個 effect 同理）。
     const settings: DirectorSettings = {
       minSeverity,
       repeatFiringMin,
       fallbackSeverity,
       alertLang,
+      speakValue,
       severityAliasSpec,
       quietHours,
       quietAllowCritical,
@@ -813,7 +820,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, id, minSeverity, alertLang, severityAliasSpec, directorFor]);
+  }, [data, id, minSeverity, alertLang, speakValue, severityAliasSpec, directorFor]);
 
   // ADR-006：每次 panel data 刷新就重讀一次這個 panel 的告警歷史。
   // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進播報器、也不經導播**（決策 5）——
@@ -842,6 +849,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         historyToEntries(h.raw, h.templates, {
           minSeverity,
           lang: alertLang,
+          speakValue,
           aliases: parseSeverityAliases(severityAliasSpec).aliases,
         })
       )
@@ -865,7 +873,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => {
       cancelled = true;
     };
-  }, [data, id, minSeverity, alertLang, severityAliasSpec]);
+  }, [data, id, minSeverity, alertLang, speakValue, severityAliasSpec]);
 
   // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
   // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。

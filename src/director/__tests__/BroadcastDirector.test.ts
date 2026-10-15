@@ -611,3 +611,26 @@ test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 
   await h.run([alert({ fingerprint: 'fp-c' })], { quietHours: NIGHT });
   expect(h.spoken).toHaveLength(1);
 });
+
+// ---------------------------------------------------------------------------
+// #71：speakValue 隨每一輪的設定帶進來（不變量 1 的同一條：設定不經 ref）
+
+test('#71 AC-1：不帶 speakValue 的設定（既有 fixture）念出的句子含數值子句', async () => {
+  const h = harness();
+  await h.run([alert()]);
+  expect(h.spoken[0]!.text).toContain('目前數值 93');
+});
+
+test('#71 AC-2：speakValue: false 的那一輪不念數值子句，其餘子句不變', async () => {
+  const h = harness();
+  await h.run([alert({ fingerprint: 'fp-on' })]);
+  await h.run([alert({ fingerprint: 'fp-off' })], { speakValue: false });
+  expect(h.spoken).toHaveLength(2);
+  expect(h.spoken[0]!.text).toBe('偵測到告警：CPU，嚴重度 critical，目前數值 93，CPU 過高。');
+  expect(h.spoken[1]!.text).toBe('偵測到告警：CPU，嚴重度 critical，CPU 過高。');
+  // 撥回去的下一輪又念 —— 設定隨呼叫帶進來，沒有被記在任何 ref 裡。
+  await h.run([alert({ fingerprint: 'fp-back' })], { speakValue: true });
+  expect(h.spoken[2]!.text).toContain('目前數值 93');
+  // plan 的 value 欄位不受影響（feed／除錯讀的是它）。
+  expect(h.spoken[1]!.value).toBe(93);
+});
