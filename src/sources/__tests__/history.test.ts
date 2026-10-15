@@ -363,3 +363,142 @@ describe('historyToEntries 的嚴重度別名', () => {
     expect(out.entries[0]!.text).toContain('嚴重度 p1');
   });
 });
+
+/**
+ * #70：紀錄的名字也跟著 `alertNameLabel`（選項本身由 #69 新增）。
+ *
+ * 為什麼要有這一組：名字會進句子，而句子正是 `MascotPanel` 判斷「這一則紀錄裡有了嗎」的依據。
+ * 播報端換了名字而紀錄端沒換，同一則告警在兩邊叫不同名字 —— 一條總規則底下所有告警的紀錄
+ * 都顯示同一個規則名（eks-infra#1210 的症狀），而且清單上還會各列兩次。
+ */
+describe('#70：紀錄的名字跟著 alertNameLabel', () => {
+  const opts = { minSeverity: '', lang: 'zh' as const };
+
+  /** AC-2 指定的形狀：`{labels}` 段裡有 `wall_alertname`，而規則名是那條總規則的名字。 */
+  const WALL_TEXT = 'AugurWall {alertname=AugurWall, wall_alertname=KubeletTooManyPods, severity=warning} - B=1';
+
+  function wallAnn(over: Record<string, unknown> = {}) {
+    return ann({ id: 7, alertName: 'AugurWall', text: WALL_TEXT, data: { values: { B: 1 } }, ...over });
+  }
+
+  /** 總規則的樣板：鍵是**規則名**（AC-4 的受測對象）。 */
+  const wallTemplates = (extra: Partial<RuleTemplate> = {}) =>
+    new Map<string, RuleTemplate>([
+      ['AugurWall', { severity: 'critical', summary: '{{ $labels.wall_alertname }} 在燒', condition: 'B', ...extra }],
+    ]);
+
+  test('AC-1：留空、只有空白、或填 alertname 時，結果與沒給這個選項時逐字相同', () => {
+    const raw = [ann({}), ann({ id: 2, time: 2, prevState: 'Alerting', newState: 'Normal' })];
+    const base = historyToEntries(raw, templates(), opts);
+    // 連 key、plan、search 都比 —— 名字進得了這三個欄位，只比 text 會漏掉。
+    expect(historyToEntries(raw, templates(), { ...opts, alertNameLabel: '' })).toEqual(base);
+    expect(historyToEntries(raw, templates(), { ...opts, alertNameLabel: '   ' })).toEqual(base);
+    // Grafana 會用規則名覆蓋每個 instance 的 alertname，所以明寫 `alertname` 也是同一個值。
+    expect(historyToEntries(raw, templates(), { ...opts, alertNameLabel: 'alertname' })).toEqual(base);
+  });
+
+  test('AC-2：指定 wall_alertname 時，名字是 label 值，而句子照舊由 buildBroadcastPlan 組', () => {
+    const [e] = historyToEntries([wallAnn()], wallTemplates(), { ...opts, alertNameLabel: 'wall_alertname' }).entries;
+    expect(e!.plan.name).toBe('KubeletTooManyPods');
+    // 不另寫措辭：拿同一則 ParsedAlert 餵 buildBroadcastPlan，句子要逐字相同。
+    expect(e!.text).toBe(
+      buildBroadcastPlan(
+        {
+          status: 'firing',
+          source: 'grafana-history',
+          name: 'KubeletTooManyPods',
+          severity: 'warning',
+          startsAt: new Date(e!.time).toISOString(),
+          fingerprint: 'alert:KubeletTooManyPods',
+          summary: 'KubeletTooManyPods 在燒',
+          value: 1,
+        },
+        'zh'
+      ).text
+    );
+    expect(e!.text).toContain('偵測到告警：KubeletTooManyPods，');
+  });
+
+  test('AC-2：篩選框搜得到 label 值當成的名字（search 已轉小寫）', () => {
+    const [e] = historyToEntries([wallAnn()], wallTemplates(), { ...opts, alertNameLabel: 'wall_alertname' }).entries;
+    expect(e!.search).toContain('kubelettoomanypods');
+    // 篩選是 `search.includes(q.toLowerCase())`（MascotPanel），所以小寫的關鍵字要命中。
+    expect(e!.search.includes('kubelettoomanypods')).toBe(true);
+  });
+
+  test('AC-3：指定的 label 不存在、是空字串、或只有空白時，退回規則名', () => {
+    const missing = historyToEntries([wallAnn()], wallTemplates(), { ...opts, alertNameLabel: 'nope' }).entries[0]!;
+    expect(missing.plan.name).toBe('AugurWall');
+
+    const empty = historyToEntries([wallAnn({ text: WALL_TEXT.replace('wall_alertname=KubeletTooManyPods', 'wall_alertname=') })], wallTemplates(), {
+      ...opts,
+      alertNameLabel: 'wall_alertname',
+    }).entries[0]!;
+    expect(empty.plan.name).toBe('AugurWall');
+
+    const blank = historyToEntries([wallAnn({ text: WALL_TEXT.replace('=KubeletTooManyPods', '=   ') })], wallTemplates(), {
+      ...opts,
+      alertNameLabel: 'wall_alertname',
+    }).entries[0]!;
+    expect(blank.plan.name).toBe('AugurWall');
+  });
+
+  test('AC-3：整串 annotation 文字都認不得（parse 回 null）時也退回規則名，不留空名', () => {
+    const [e] = historyToEntries([wallAnn({ text: 'something else entirely' })], wallTemplates(), {
+      ...opts,
+      alertNameLabel: 'wall_alertname',
+    }).entries;
+    expect(e!.plan.name).toBe('AugurWall');
+  });
+
+  /**
+   * AC-4：念名與規則身分是兩件事。樣板、條件欄、規則層嚴重度都只有**規則名**那個鍵查得到；
+   * 拿 label 值去查會整組查不到，症狀是摘要與數值一起消失、嚴重度掉成 unknown ——
+   * 而那是**靜默**的（句子還是組得出來，只是少三段）。
+   */
+  test('AC-4：查樣板仍用規則名 —— 摘要、條件欄的數值、規則層嚴重度都還在', () => {
+    const [e] = historyToEntries(
+      // 這一筆的 `{labels}` 段沒有 severity，嚴重度只能從規則層的樣板拿。
+      [wallAnn({ text: 'AugurWall {alertname=AugurWall, wall_alertname=KubeletTooManyPods} - B=1', data: { values: { A: 9, B: 1 } } })],
+      wallTemplates(),
+      { ...opts, alertNameLabel: 'wall_alertname' }
+    ).entries;
+    expect(e!.text).toContain('KubeletTooManyPods 在燒'); // 摘要樣板（鍵＝規則名）填到了
+    expect(e!.text).toContain('目前數值 1'); // 條件欄 B，不是 A 的 9
+    expect(e!.text).toContain('嚴重度 critical'); // 規則層嚴重度
+  });
+
+  test('AC-4：templates 只有 label 值那個鍵時查不到 —— 反過來證明查的是規則名', () => {
+    const wrong = new Map<string, RuleTemplate>([
+      ['KubeletTooManyPods', { severity: 'critical', summary: '不該被填到', condition: 'B' }],
+    ]);
+    const [e] = historyToEntries([wallAnn()], wrong, { ...opts, alertNameLabel: 'wall_alertname' }).entries;
+    expect(e!.text).not.toContain('不該被填到');
+  });
+
+  /**
+   * 複審（asp-ng-supervisor-legacy 的留言）：label 值可以含 `,`、`=`、空白，而這條路徑的產物
+   * 會被念出來。`parseAnnotationText` 的格式沒有文件保證，所以**明文釘住**三種值的實際行為，
+   * 不讓它靠讀程式推。
+   */
+  describe('label 值裡的特殊字元', () => {
+    const nameOf = (text: string) =>
+      historyToEntries([wallAnn({ text })], wallTemplates(), { ...opts, alertNameLabel: 'wall_alertname' }).entries[0]!
+        .plan.name;
+
+    test('值裡有空白或 `=`：完整取到（`(.*)` 吃到該段結尾）', () => {
+      expect(nameOf('AugurWall {wall_alertname=Kubelet Too Many Pods, severity=warning} - B=1')).toBe('Kubelet Too Many Pods');
+      expect(nameOf('AugurWall {wall_alertname=a=b=c, severity=warning} - B=1')).toBe('a=b=c');
+    });
+
+    test('值裡有 `, <合法 label 名>=`：已知會拆錯，名字被截斷到那裡為止（不是空名、不丟例外）', () => {
+      // 這是 `parseAnnotationText` 在 docstring 裡標明的代價：拆出來的 `wall_alertname` 是 `x`，
+      // 而 `y=1` 被當成另一個 label。值非空，所以**不會**走 AC-3 的退路 —— 失敗形態是念錯名字。
+      expect(nameOf('AugurWall {wall_alertname=x, y=1, severity=warning} - B=1')).toBe('x');
+    });
+
+    test('值裡有 `,` 但後面不是 `<label 名>=`：不受影響，整段都是值', () => {
+      expect(nameOf('AugurWall {wall_alertname=a, b, severity=warning} - B=1')).toBe('a, b');
+    });
+  });
+});

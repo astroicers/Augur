@@ -1694,3 +1694,79 @@ test('#69 AC-5：一條總規則底下的兩則被擋下後按一下，兩則都
   expect(spoken.slice(before).map((p) => p.text)).toEqual(blocked.map((p) => p.text));
   await settle();
 });
+
+// ─── #70：播報紀錄的名字也跟著 alertNameLabel ───────────────────────────────────
+//
+// 取名本身在 `sources/history.ts`（`historyAlertNameOf`，由 `history.test.ts` 釘住）。
+// 這裡看的是**接線**與接線之後的下游：選項有沒有進到紀錄計算，以及兩邊同名之後
+// sessionOnly 的合併會不會把同一則列兩次（AC-5）。
+
+/** AC-5 的兩端：rules 端點（播報）與狀態歷史（紀錄）講同一則告警，句子要逐字相同。 */
+const WALL_SENTENCE = '偵測到告警：KubeletTooManyPods，嚴重度 critical，pod 數量過多。';
+
+function wallHistory(over: Record<string, unknown> = {}) {
+  return {
+    raw: [
+      {
+        id: 21,
+        alertName: 'AugurWall',
+        prevState: 'Normal',
+        newState: 'Alerting',
+        // 落在 SESSION_MATCH_WINDOW_MS（10 分）內，所以合併的時間條件成立。
+        time: Date.now(),
+        text: 'AugurWall {alertname=AugurWall, wall_alertname=KubeletTooManyPods, severity=critical} - ',
+        data: { values: {} },
+        ...over,
+      },
+    ],
+    // 鍵是**規則名**（AC-4）：摘要是純文字，所以紀錄句與 rules 端點給的渲染結果逐字相同。
+    templates: new Map([['AugurWall', { severity: 'critical', summary: 'pod 數量過多' }]]),
+  };
+}
+
+test('#70 AC-5：兩邊都用 label 值當名字 —— 同一則告警在清單上只出現一次', async () => {
+  mockedHistory.mockResolvedValue(wallHistory());
+  mockedFetch.mockResolvedValue([{ alertname: 'KubeletTooManyPods', severity: 'critical', summary: 'pod 數量過多' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options: { alertNameLabel: 'wall_alertname' } })} />);
+
+  // 先確定兩端都真的到了：念過（播報端）＋已在紀錄模式（紀錄端讀成功）。
+  await waitFor(() => expect(spoken.map((p) => p.text)).toContain(WALL_SENTENCE));
+  await waitFor(() => expect(view.queryByPlaceholderText(/篩選紀錄/)).not.toBeNull());
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin="history"]').length).toBe(1));
+
+  const rows = Array.from(view.container.querySelectorAll('[data-origin]'));
+  const hit = rows.filter((r) => r.textContent?.includes(WALL_SENTENCE));
+  // 紀錄端若還用規則名，這一則的紀錄句會是「…：AugurWall…」而對不上本分頁念過的句子，
+  // sessionOnly 就會把同一則再補一列（L3 的那條測試證明對不上時真的會多一列）。
+  expect(hit.map((r) => r.getAttribute('data-origin'))).toEqual(['history']);
+  // eks-infra#1210 的症狀：清單上不該出現總規則的名字。
+  expect(view.container.textContent).not.toContain('AugurWall');
+  await settle();
+});
+
+test('#70 AC-5 對照組：這一筆沒有那個 label 時退回規則名，於是兩邊不同名、各列一列', async () => {
+  // AC-3 的退路（label 不存在）確實會讓兩邊不同名 —— 那不是本票要修的事，
+  // 而是這個合併條件本來的語意（同文字才算同一則）。列出來才看得見，不會靜默吃掉一則。
+  mockedHistory.mockResolvedValue(wallHistory({ text: 'AugurWall {alertname=AugurWall, severity=critical} - ' }));
+  mockedFetch.mockResolvedValue([{ alertname: 'KubeletTooManyPods', severity: 'critical', summary: 'pod 數量過多' }]);
+
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options: { alertNameLabel: 'wall_alertname' } })} />);
+
+  await waitFor(() => expect(spoken.map((p) => p.text)).toContain(WALL_SENTENCE));
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin="history"]').length).toBe(1));
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin="session"]').length).toBe(1));
+  expect(view.container.textContent).toContain('偵測到告警：AugurWall，');
+  await settle();
+});
+
+test('#70 AC-1：沒設這個選項時紀錄的名字照舊是規則名', async () => {
+  mockedHistory.mockResolvedValue(wallHistory());
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+
+  await waitFor(() => expect(view.container.textContent).toContain('偵測到告警：AugurWall，'));
+  expect(view.container.textContent).not.toContain('KubeletTooManyPods');
+  await settle();
+});

@@ -849,6 +849,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           minSeverity,
           lang: alertLang,
           aliases: parseSeverityAliases(severityAliasSpec).aliases,
+          alertNameLabel,
         })
       )
       .then(
@@ -871,6 +872,13 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     return () => {
       cancelled = true;
     };
+    // 下面的 eslint-disable 指的是 `alertNameLabel`（#70）。它刻意**不**進相依陣列，
+    // 理由與導播 effect 那五個同一條，而且這裡還多一層：紀錄端與播報端讀這個選項的
+    // 時機必須一致。放進來的話，在編輯面板改這一欄會讓紀錄立刻換名、而本分頁已念過的
+    // 句子還是舊名 —— 下一輪 refresh 之前，sessionOnly 的合併（比對句子）就會把同一則
+    // 列兩次，也就是 #70 AC-5 要擋的那件事。兩邊都只在 `data` 刷新時讀，換名於是同進同退；
+    // 代價是改了要等下一輪 refresh 生效（與 #69 在 README 與編輯器說明裡寫的那句一致）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, id, minSeverity, alertLang, severityAliasSpec]);
 
   // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。

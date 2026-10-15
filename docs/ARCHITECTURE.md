@@ -2,10 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
+> 最後更新：2026-10-15（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
+> 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
+> 前一次是 2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
 > 去重單位，一條總規則底下的每則告警各自播報）。
-> 前一次是 2026-10-15（#63：新增 `quietHours`／`quietAllowCritical` 兩個選項——
-> dashboard 層級的值班靜音時段，判斷在導播的交付閘門上）。
 
 ## 一句話
 
@@ -76,6 +76,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                                  ▼  HistoryEntry[]（顯示上限 200，取 500 筆原始紀錄）
                       MascotPanel 的 feed —— 組句走同一支 buildBroadcastPlan，
                       所以紀錄句與播報句逐字相同；**永不進語音佇列**（決策 5）
+                      名字跟著 `alertNameLabel`（#70），與播報端同一個選項
 ```
 
 ## 檔案
@@ -88,7 +89,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
-| `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
+| `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、取名（`historyAlertNameOf`，跟著 `alertNameLabel`，#70）、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
 | `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報 |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
@@ -141,7 +142,7 @@ Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
-| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報。label 不存在、空字串或只有空白時，**那一個 instance** 退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同 |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
@@ -169,11 +170,22 @@ Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`，所以「一條總規則查整面值班牆
 （`ALERTS{alertstate="firing"}`）」時每則告警的名字都一樣、只念得到第一則（eks-infra#1210 實測）；
 查詢端用 `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` 把原名保留成 instance
-label，這個選項再指定去讀它。取名是**逐 instance** 的（`sources/panelAlerts.ts` 的 `alertNameOf`，
-唯一一處），所以同一條規則裡帶與不帶那個 label 的 instance 可以並存，各自成為一個 episode、
+label，這個選項再指定去讀它。取名是**逐 instance** 的（`sources/panelAlerts.ts` 的 `alertNameOf`），
+所以同一條規則裡帶與不帶那個 label 的 instance 可以並存，各自成為一個 episode、
 各自恢復。`MascotPanel.tsx` 與導播都只是把這個字串原樣往下帶，不解析也不判斷。
 改這一欄會讓既有 episode 的 fingerprint 失效，所以來源層把它們當**被取代**（`onSupersede`，
 不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
+
+**播報紀錄（ADR-006）也吃同一個選項**（#70）：紀錄端的取名是 `sources/history.ts` 的
+`historyAlertNameOf`，讀的是 annotation 自由文字 `RuleName {labels} - values` 裡 `{labels}` 段的
+那個 label（`parseAnnotationText` 拆出來的），取不到就退回規則名。**取名是取名，查樣板是查樣板**：
+摘要樣板、條件欄與規則層嚴重度一律用**規則名**查（`templates.get(ruleName)`），念名與規則身分
+是兩件事，拿 label 值去查只會整組查不到而靜默掉摘要與數值。紀錄端與播報端讀這個選項的
+**時機也一致**（兩個 effect 都只在 `data` 刷新時讀，所以 `alertNameLabel` 刻意不進紀錄 effect 的
+相依陣列）—— 不一致的那個瞬間，同一則告警在兩邊叫不同名字，`MascotPanel` 合併 sessionOnly 列
+是比對**句子**，於是會把同一則列兩次。代價是改了這一欄要等下一輪 refresh 才生效。
+⚠️ `{labels}` 段的格式沒有文件保證：label 值裡含 `, <名稱>=` 時 `parseAnnotationText` 會拆錯，
+念出來的名字可能被截斷（含 `=` 或空白的值不受影響）。三種值的實際行為由 `history.test.ts` 釘住。
 
 `quietHours`（#63）的解析與「現在算不算時段內」是 `director/BroadcastDirector.ts` 裡的純函式
 （`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`；不碰 DOM、時刻由注入的時鐘帶進來），
