@@ -158,6 +158,25 @@ test('isQuietAt：超出 0–1439 的分鐘數先收斂回當天（不會因為�
 // 時刻 → 當天的第幾分鐘（**瀏覽器本地時間**）
 // ---------------------------------------------------------------------------
 
+test('AC-2：minuteOfDayAt 讀本地鐘點（getHours／getMinutes），不是 UTC 鐘點', () => {
+  // jest.config.js 把 TZ 固定成 UTC，在那之下 getHours() 與 getUTCHours() 恆等 ——
+  // 實作若誤用 UTC，下面那支與導播／元件的測試全都照綠，上線後 UTC+8 的螢幕會在
+  // 本地 06:00–15:00 靜音。執行中改 process.env.TZ 在 jest 的測試環境裡不生效，
+  // 所以這裡讓本地鐘點與 UTC 鐘點回不同的值（模擬台北：本地 22:30 = UTC 14:30），
+  // 斷言結果跟著本地那一組走。
+  const spies = [
+    jest.spyOn(Date.prototype, 'getHours').mockReturnValue(22),
+    jest.spyOn(Date.prototype, 'getMinutes').mockReturnValue(30),
+    jest.spyOn(Date.prototype, 'getUTCHours').mockReturnValue(14),
+    jest.spyOn(Date.prototype, 'getUTCMinutes').mockReturnValue(30),
+  ];
+  try {
+    expect(minuteOfDayAt(Date.UTC(2026, 9, 15, 14, 30))).toBe(min(22, 30));
+  } finally {
+    spies.forEach((s) => s.mockRestore());
+  }
+});
+
 test('AC-2：minuteOfDayAt 用的是瀏覽器本地時間', () => {
   // 本地時間的建構式 → 不論 TZ 設成什麼都成立。
   expect(minuteOfDayAt(new Date(2026, 9, 15, 22, 30, 15).getTime())).toBe(min(22, 30));

@@ -1634,7 +1634,7 @@ test('#63 AC-3：quietAllowCritical 開著時，時段內只有 critical 念得�
   expect(spoken[0]!.emotion).toBe('critical');
 });
 
-test('#63 AC-1：quietHours 留空時行為與沒有這個選項時完全相同', async () => {
+test('#63 AC-1：quietHours 留空時照常念出', async () => {
   mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '照念' }]);
   render(<MascotPanel {...props({ alertState: ALERTING, options: { quietHours: '' } })} />);
   await waitFor(() => expect(spoken.length).toBeGreaterThan(0));

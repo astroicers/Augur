@@ -541,7 +541,7 @@ test('#63 AC-3：quietAllowCritical 關著（預設）時，時段內的 critica
   expect(h.spoken).toHaveLength(0);
 });
 
-test('#63 AC-3：破靜音的嚴重度判斷吃同一份別名解析結果（P1 要有別名才破得了）', async () => {
+test('#63 AC-3：破靜音的嚴重度判斷會套別名（P1 要有別名才破得了）', async () => {
   const h = harness();
   h.setClock(at(15, 22, 30));
   // minSeverity 留空 → P1 過得了門檻、進得到交付閘門；但沒有別名時它的排名是 0。
@@ -590,7 +590,7 @@ test('#63 AC-6：每瀏覽器靜音勝過 quietAllowCritical —— 觀看者按
   expect(h.spoken).toHaveLength(0);
 });
 
-test('#63 AC-1 / AC-4：留空或格式錯誤時行為與沒有這個選項時完全相同', async () => {
+test('#63 AC-1 / AC-4：留空或格式錯誤時照常交付（不靜音）', async () => {
   const h = harness();
   h.setClock(at(15, 22, 30));
   for (const [i, spec] of ['', '   ', '亂寫', '25:00-07:00', '22:00-22:00'].entries()) {
