@@ -22,6 +22,7 @@ import type { MascotPanelOptions } from '../../panelOptions';
 import type { BroadcastPlan } from '../../core/types';
 import type { SpeakerEvents } from '../../speech/speaker';
 import { fetchPanelRules } from '../../sources/rulesFetcher';
+import { parseRulesResponse } from '../../sources/panelAlerts';
 import { fetchPanelHistory } from '../../sources/historyFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
@@ -1639,6 +1640,88 @@ test('#63 AC-1：quietHours 留空時照常念出', async () => {
   render(<MascotPanel {...props({ alertState: ALERTING, options: { quietHours: '' } })} />);
   await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
   expect(spoken).toHaveLength(1);
+});
+
+// ─── #69：告警名稱取自哪個 label ─────────────────────────────────────────────
+//
+// 取名本身在 `sources/panelAlerts.ts`（`alertNameOf`，由 `panelAlerts.test.ts` 釘住），
+// 而 `fetchPanelRules` 在本檔是 mock —— 所以這裡看的是**接線**與**接線之後的下游**：
+// 選項有沒有一路傳到 rules fetcher，以及兩個名字不同的告警在補念那一段會不會被當成同一則。
+
+test('#69：alertNameLabel 原樣（修掉前後空白）傳給 rules fetcher', async () => {
+  mockedFetch.mockResolvedValue([]);
+  render(<MascotPanel {...props({ alertState: ALERTING, options: { alertNameLabel: '  wall_alertname  ' } })} />);
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+  // 第三個參數就是這個選項 —— 少傳它不會讓 typecheck 紅（參數是選填的），
+  // 症狀是使用者設了選項卻完全沒反應。
+  expect(mockedFetch).toHaveBeenCalledWith('dash-1', 7, 'wall_alertname');
+  await settle();
+});
+
+test('#69 AC-1：沒設這個選項時連第三個參數都不傳 —— 呼叫形狀與這個選項不存在時逐字相同', async () => {
+  mockedFetch.mockResolvedValue([]);
+  render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
+  // `toHaveBeenCalledWith` 連參數個數都算，所以這條就是「留空 = 完全相同」的機械保證
+  // （既有的 dashboard uid 後備測試也是這麼寫的，一行沒改）。
+  expect(mockedFetch).toHaveBeenCalledWith('dash-1', 7);
+  await settle();
+});
+
+test('#69 AC-5：一條總規則底下的兩則被擋下後按一下，兩則都補念（補念去重是按名字）', async () => {
+  // AC-2 之後這兩則的 `name` 不同（取自各自的 `wall_alertname`），所以 ADR-007 決策 3
+  // 那條「同一個 BroadcastPlan.name 只補最後狀態」不會把它們併成一則。
+  // 假 fetcher 跑**真的** `parseRulesResponse`，並吃元件傳進來的第三個參數（label）：
+  // 選項沒接到 fetcher 的話，兩則都會叫 OncallWall、被併成一則，這支測試會紅。
+  const wallRaw = {
+    data: {
+      groups: [
+        {
+          rules: [
+            {
+              name: 'OncallWall',
+              state: 'firing',
+              labels: { severity: 'critical' },
+              annotations: { __dashboardUid__: 'dash-1', __panelId__: '7', summary: '總規則的摘要' },
+              alerts: [
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'Watchdog', severity: 'critical' },
+                  annotations: { summary: '看門狗還活著' },
+                },
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'KubeletTooManyPods', severity: 'critical' },
+                  annotations: { summary: 'pod 數量過多' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  mockedFetch.mockImplementation((uid: string, panelId: number, label?: string) =>
+    Promise.resolve(parseRulesResponse(wallRaw, uid, panelId, label))
+  );
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options: { alertNameLabel: 'wall_alertname' } })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThanOrEqual(2));
+  const blocked = spoken.slice(0, 2);
+  expect(blocked.map((p) => p.name)).toEqual(['Watchdog', 'KubeletTooManyPods']);
+
+  // 瀏覽器兩則都擋下
+  act(() => {
+    for (const plan of blocked) {
+      capturedEvents?.onError?.('not-allowed', plan);
+    }
+  });
+  expect(view.getByTestId('voice-toggle').textContent).toContain('點一下啟用語音');
+
+  const before = spoken.length;
+  fireEvent.click(view.getByTestId('voice-toggle'));
+  expect(spoken.slice(before).map((p) => p.name)).toEqual(['Watchdog', 'KubeletTooManyPods']);
+  expect(spoken.slice(before).map((p) => p.text)).toEqual(blocked.map((p) => p.text));
+  await settle();
 });
 
 // ---------------------------------------------------------------------------

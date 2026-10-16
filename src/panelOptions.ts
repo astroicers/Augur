@@ -24,6 +24,26 @@ export interface MascotPanelOptions {
    */
   severityAliases?: string;
   /**
+   * 用哪個 instance label 當**告警名與去重單位**（#69）：`wall_alertname`。
+   * 空字串 = 用 `alertname`，行為與沒有這個選項時完全相同。
+   *
+   * 為什麼需要它：Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`，所以
+   * 「一條總規則查整面值班牆（`ALERTS{alertstate="firing"}`）」時每則告警的名字都一樣，
+   * 而去重 key 是 `alert:${名字}` —— 一條規則底下不管燒幾則**只念第一則**
+   * （eks-infra#1210 實測）。查詢端用
+   * `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` 把原名保留成
+   * instance label 之後，這一欄填上那個 label 名就能逐則播報。
+   *
+   * 指定的 label 在某個 instance 上不存在、是空字串或只有空白時，**那一個 instance**
+   * 退回 `labels.alertname ?? 規則名`；同一條規則裡帶與不帶的可以並存。
+   * 解析（其實只有取值與修剪空白）在 `sources/panelAlerts.ts` 的 `alertNameOf`。
+   *
+   * **選填（`?`）而非必填**，理由同 `severityAliases`：舊 dashboard 存下來的 panel JSON
+   * 沒有這個鍵，宣告成必填會讓既有的 `MascotPanelOptions` 字面值（含測試 fixture）
+   * 全部得補一行，而 #69 AC-1 要的正是「既有測試不改」。讀的那一側一律 `?? ''`。
+   */
+  alertNameLabel?: string;
+  /**
    * 同一則告警持續燒時，每隔幾分鐘重播一次。0 = 永不重播。
    * 這把 ADR-004 決策 4 宣告「放棄」的 Grafana repeat_interval 補了回來。
    */
@@ -111,6 +131,7 @@ export interface MascotPanelOptions {
 export const DEFAULT_OPTIONS: MascotPanelOptions = {
   minSeverity: '',
   severityAliases: '',
+  alertNameLabel: '',
   repeatFiringMin: 0,
   fallbackSeverity: 'critical',
   alertLang: 'zh',

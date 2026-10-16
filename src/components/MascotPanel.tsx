@@ -322,6 +322,11 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // （重新評估、重新打 history 端點）。D10 那條「一律 useRef 而非 useMemo」擋的是
   // 有狀態的物件；這裡連 memo 都不需要，解析是幾次 split，一輪評估跑一次就好。
   const severityAliasSpec = options.severityAliases ?? '';
+  // 告警名稱取自哪個 label（#69）。**純接線**：名字與 fingerprint 是來源層的職責
+  // （`sources/panelAlerts.ts` 的 `alertNameOf`），本檔只負責把這個字串原樣帶進每一輪的設定。
+  // 前後空白在這裡就修掉 —— 編輯器裡貼 label 名稱很容易帶到空白，而一個帶空白的
+  // label 名永遠比對不中任何 label，症狀是「填了卻完全沒反應」（退回 alertname）。
+  const alertNameLabel = (options.alertNameLabel ?? '').trim();
   // 值班靜音時段（#63）。**判斷不在這裡** —— 時段的解析與「現在算不算時段內」都在導播裡
   // （`parseQuietHours` / `isQuietAt`，以注入的時鐘判斷），本檔只負責把這兩個選項原樣帶進
   // 每一輪的設定。放進 effect 裡自己算的話，同一條交付閘門就會有兩個住處：
@@ -778,9 +783,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
     // 設定**隨呼叫帶進去**，不經任何 ref 或另一個 effect 同步：這一輪讀到的
     // 一定是本次 commit 的選項值。相依陣列刻意不含 `repeatFiringMin`、
-    // `fallbackSeverity`、#63 的 `quietHours`／`quietAllowCritical` 與
-    // #64 的 `flappingThreshold`／`flappingWindowMin`
-    // （下方 eslint-disable 指的就是這六個）—— 它們只在這個
+    // `fallbackSeverity`、#63 的 `quietHours`／`quietAllowCritical`、
+    // #64 的 `flappingThreshold`／`flappingWindowMin` 與 #69 的 `alertNameLabel`
+    // （下方 eslint-disable 指的就是這七個）—— 它們只在這個
     // effect 真的跑的時候才被讀，而那一刻讀的是最新一輪 render 的閉包；
     // 放進 deps 只會讓「在編輯面板裡改那幾個選項」各多打一次 rules 端點。
     // 代價是改了它們要等下一輪 refresh 才生效，而靜音時段的邊界本來就只在
@@ -789,6 +794,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       minSeverity,
       repeatFiringMin,
       fallbackSeverity,
+      alertNameLabel,
       alertLang,
       severityAliasSpec,
       quietHours,

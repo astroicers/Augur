@@ -613,6 +613,28 @@ test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 
 });
 
 // ---------------------------------------------------------------------------
+// 告警名稱取自哪個 label（#69）—— 導播只是**原樣轉給來源層**，不解析也不判斷。
+// 名字與 fingerprint 是來源層的職責（`sources/panelAlerts.ts` 的 `alertNameOf`），
+// 這裡要釘住的只有一件事：來源層在**評估當下**讀到的是本輪設定帶進來的值。
+// ---------------------------------------------------------------------------
+
+test('#69：來源層讀到的 alertNameLabel 是本輪設定的值，且不必為了換它重建 source', async () => {
+  const h = harness();
+  await h.run([alert()], { alertNameLabel: 'wall_alertname' });
+  expect(h.hooks().alertNameLabel()).toBe('wall_alertname');
+
+  // 換值：source 不得重建（重建會清空 episodes —— 第 2 條不變量擋的就是這件事）。
+  await h.run([alert()], { alertNameLabel: 'other_label' });
+  expect(h.hooks().alertNameLabel()).toBe('other_label');
+  expect(h.sourceCreated()).toBe(1);
+
+  // 缺鍵（舊 dashboard 存下來的 panel JSON 沒有這一欄）= 空字串 = 照舊用 alertname。
+  await h.run([alert()]);
+  expect(h.hooks().alertNameLabel()).toBe('');
+  h.dispose();
+});
+
+// ---------------------------------------------------------------------------
 // 抖動抑制（#64）—— 同樣全部以**注入的時鐘**驅動，不必真的等 10 分鐘。
 // 解析與狀態機由 `flapping.test.ts` 單獨釘住；這一段看的是導播的閘門本身，
 // 以及它與 dedup、嚴重度門檻、兩種靜音的互動（AC-5 與 collaborator 留言的兩件事）。
