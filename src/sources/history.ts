@@ -9,6 +9,9 @@
  *  - 組句一律走 `buildBroadcastPlan`，不在這裡另寫一套措辭。
  *  - 欄位的取捨跟 `panelAlerts.ts` 一致：不填 `instance`、resolved 不帶數值、
  *    嚴重度門檻與播報同一個 `meetsMin`。
+ *  - **名字跟著 `alertNameLabel`**（#70）：播報端取名改讀某個 instance label 時，紀錄端
+ *    要一起改，否則同一則告警在兩邊叫不同名字 —— 句子因此不同，`MascotPanel` 的
+ *    sessionOnly 合併（比對句子）就會把同一則列兩次。取名見 `historyAlertNameOf`。
  */
 import { buildBroadcastPlan } from '../core/format';
 import { meetsMin } from '../core/severity';
@@ -93,6 +96,8 @@ export function historyBackendProblem(backend: unknown): string | null {
  * ⚠️ 這個格式**沒有文件保證**（ADR-006〈接受的代價〉）。認不得就回 null ——
  * 呼叫端照樣列出這一條，只是不帶摘要。label 值裡含 `, <名稱>=` 這種樣子時會拆錯，
  * 那也只會讓摘要填錯或消失，規則名、嚴重度、數值、時間不受影響。
+ * （#70 起多一個受影響面：`alertNameLabel` 指到的 label 若是這種值，念出來的名字會被截斷 ——
+ * 詳見 `historyAlertNameOf`。值裡含 `=` 或空白不受影響：`(.*)` 吃到該段結尾。）
  */
 export function parseAnnotationText(text: string): { title: string; labels: Record<string, string> } | null {
   const m = /^(.*?) \{(.*)\} - (.*)$/s.exec(text);
@@ -199,11 +204,18 @@ interface RawAnnotation {
 export function historyToEntries(
   raw: unknown,
   templates: Map<string, RuleTemplate>,
-  opts: { minSeverity: string; lang: AlertLang; aliases?: SeverityAliasMap; speakValue?: boolean }
+  opts: {
+    minSeverity: string;
+    lang: AlertLang;
+    aliases?: SeverityAliasMap;
+    speakValue?: boolean;
+    alertNameLabel?: string;
+  }
 ): HistoryResult {
   if (!Array.isArray(raw)) {
     throw new Error('告警歷史的回應不是清單');
   }
+  const nameLabel = (opts.alertNameLabel ?? '').trim();
   const sorted = [...(raw as RawAnnotation[])].sort((a, b) => (b.time ?? 0) - (a.time ?? 0));
   const entries: HistoryEntry[] = [];
   for (const a of sorted) {
@@ -224,8 +236,11 @@ export function historyToEntries(
       continue;
     }
     const parsed = parseAnnotationText(String(a.text ?? ''));
-    const name = a.alertName ?? parsed?.title ?? 'unknown';
-    const tpl = templates.get(name);
+    // 規則名與念出來的名字是**兩件事**（#70 AC-4）：規則樣板、條件欄、規則層嚴重度一律用
+    // 規則名查（`alertNameLabel` 設了也一樣，拿 label 值去查只會查不到而掉摘要與數值）。
+    const ruleName = a.alertName ?? parsed?.title ?? 'unknown';
+    const tpl = templates.get(ruleName);
+    const name = historyAlertNameOf(parsed?.labels, ruleName, nameLabel);
     const severity = parsed?.labels['severity'] ?? tpl?.severity ?? 'unknown';
     // 與播報同一個門檻，也與播報同一張別名表（#51）：門檻在兩邊判得不一樣的話，
     // 紀錄清單會出現「播過但紀錄裡沒有」或反之。`aliases` 省略 → 恆等，行為照舊。
@@ -264,6 +279,32 @@ export function historyToEntries(
     entries: entries.slice(0, HISTORY_DISPLAY_LIMIT),
     truncated: raw.length >= HISTORY_FETCH_LIMIT ? 'fetch' : entries.length > HISTORY_DISPLAY_LIMIT ? 'display' : null,
   };
+}
+
+/**
+ * 一筆紀錄念出來的名字（#70）。播報端的對應物是 `panelAlerts.ts` 的 `alertNameOf` ——
+ * 兩邊**必須同進同退**：名字進句子，句子是 `MascotPanel` 判斷「這一則紀錄裡有了嗎」的依據。
+ *
+ * 三條規則，與播報端同一個形狀（只有退路不同：這裡沒有 rules 端點的 instance labels，
+ * 退的是紀錄自己的規則名，也就是這個函式不存在時那一行運算式的值）：
+ *  1. `nameLabel` 為空 → 回 `ruleName`，與沒有這個選項時**逐字相同**（AC-1 的機械保證）。
+ *  2. 指定的 label 在**這一筆**的 `{labels}` 段裡有非空白的值 → 用它（修剪前後空白）。
+ *  3. 不存在、空字串或只有空白 → 退回第 1 條（AC-3）。**不留空名**：空名會讓句子念成
+ *     「偵測到告警：」後面一片空白（#19→#30→#39→#46 同一族的缺值坑）。
+ *
+ * ⚠️ **只支援 `parseAnnotationText` 拆得出來的那種形狀。** label 值裡含 `, <名稱>=` 時那支會
+ * 拆錯（它的 docstring 已標明，格式本身沒有文件保證），於是這裡可能取到被截斷的值而**不會**
+ * 走第 3 條 —— 失敗形態是念錯名字，不是空名或例外。含 `=` 與空白的值不受影響（`(.*)` 吃到底）。
+ * 這條路徑的產物會被念出來，所以行為由 `history.test.ts` 的三個 fixture 釘住，不靠讀程式推。
+ */
+function historyAlertNameOf(labels: Record<string, string> | undefined, ruleName: string, nameLabel: string): string {
+  if (!nameLabel) {
+    return ruleName;
+  }
+  // String() 而不是直接 .trim()：理由同播報端 —— 紀錄字串是自由文字，拆出來的值在
+  // runtime 沒有型別保證，而本層的契約是「拆不出來就少一段」，不丟例外。
+  const picked = String(labels?.[nameLabel] ?? '').trim();
+  return picked !== '' ? picked : ruleName;
 }
 
 /**
