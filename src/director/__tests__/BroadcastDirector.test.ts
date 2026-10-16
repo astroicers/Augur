@@ -867,7 +867,7 @@ test('#64 × #71：解除抑制時補念的那一句同樣吃 speakValue —— 
   await h.run([], over);
   expect(h.spoken).toHaveLength(7);
   expect(h.spoken[6]!.status).toBe('firing');
-  expect(h.spoken[6]!.text).not.toContain('目前數值');
+  expect(h.spoken[6]!.text).toBe('偵測到告警：CPU，嚴重度 critical，CPU 過高。');
 });
 
 test('#64：抑制中（最後是 firing）被取代 —— 解除時不補念，之後同一個 fingerprint 再燒起來念得出來', async () => {
