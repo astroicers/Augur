@@ -44,7 +44,7 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         path: 'alertNameLabel',
         name: '告警名稱取自哪個 label',
         description:
-          '留空 = 用 alertname（與沒有這個選項時完全相同）。填一個 label 名稱，面板就改用每個 instance 的那個 label 當告警名與去重單位，於是一條總規則底下同時燒的每則告警各自播報，而不是只念第一則。用在「一條 Grafana 規則查整面值班牆（ALERTS{alertstate="firing"}）」的情形：Grafana 會用規則名覆蓋每個 instance 的 alertname，查詢端先用 label_replace(…, "wall_alertname", "$1", "alertname", "(.*)") 把原名保留成 instance label，這裡就填 wall_alertname。label 不存在時退回 alertname（連 alertname 也沒有才用規則名）—— 空字串與只有空白的值也一樣退回，所以同一條規則裡帶與不帶這個 label 的 instance 可以並存。改了這一欄要等下一輪 panel 重新整理才生效。',
+          '留空 = 用 alertname（與沒有這個選項時完全相同）。填一個 label 名稱，面板就改用每個 instance 的那個 label 當告警名與去重單位，於是一條總規則底下同時燒的每則告警各自播報，而不是只念第一則。用在「一條 Grafana 規則查整面值班牆（ALERTS{alertstate="firing"}）」的情形：Grafana 會用規則名覆蓋每個 instance 的 alertname，查詢端先用 label_replace(…, "wall_alertname", "$1", "alertname", "(.*)") 把原名保留成 instance label，這裡就填 wall_alertname。label 不存在時退回 alertname（連 alertname 也沒有才用規則名）—— 空字串與只有空白的值也一樣退回，所以同一條規則裡帶與不帶這個 label 的 instance 可以並存。這個 label 的值必須能唯一識別一則告警：值相同的告警會被當成同一則（例如填 instance，同一台機器上的兩則不同告警只會念一則）。改了這一欄要等下一輪 panel 重新整理才生效，屆時正在燒的告警會全部重新播報一次（包括名字其實沒變的）。',
         defaultValue: DEFAULT_OPTIONS.alertNameLabel ?? '',
         settings: { placeholder: 'wall_alertname' },
       })
@@ -100,6 +100,25 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
           '開了之後，靜音時段內 critical 的告警照常念（其餘照舊只更新畫面）。嚴重度經「嚴重度別名」對映後判斷，與最低播報嚴重度吃同一份設定。恢復句不會念 —— 半夜只有需要有人起來處理的事才出聲。只對上面這個時段生效：標題列那顆靜音鈕按下去時，critical 也不會念。',
         defaultValue: DEFAULT_OPTIONS.quietAllowCritical ?? false,
         showIf: (c) => c.enableTTS && (c.quietHours ?? '').trim() !== '',
+      })
+      .addNumberInput({
+        // #64。命名注意：`src/avatar/flap.ts` 是嘴型開合，與這裡無關 —— 這一組一律 flapping。
+        path: 'flappingThreshold',
+        name: '抖動抑制：翻轉次數門檻',
+        description:
+          '同一則告警在下面那個窗長內 firing 與 resolved 之間翻幾次，就先不念它。例如門檻 4、窗長 10 分鐘：10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復，而且恢復時念的是當下的實際狀態（還在燒就念告警、已經好了就念恢復）。達到門檻的那一次仍會念出來，之後的翻轉才不念。抑制期間畫面與清單照常更新。0 或留空 = 關閉，行為與沒有這個選項時完全相同。被最低播報嚴重度擋下的告警不計入翻轉次數。',
+        defaultValue: DEFAULT_OPTIONS.flappingThreshold ?? 0,
+        settings: { min: 0, max: 100, step: 1, integer: true },
+        showIf: (c) => c.enableTTS,
+      })
+      .addNumberInput({
+        path: 'flappingWindowMin',
+        name: '抖動抑制：窗長（分鐘）',
+        description:
+          '翻轉次數在多長的窗內計算，同時也是「穩定多久就解除抑制」的長度。例如 10 = 10 分鐘內翻到門檻次數就先不念，之後維持同一個狀態滿 10 分鐘就解除。0、負數或留空 = 整個抖動抑制視同關閉（窗長 0 會讓「穩定滿窗」立刻成立，等於設了卻沒用）。',
+        defaultValue: DEFAULT_OPTIONS.flappingWindowMin ?? 10,
+        settings: { min: 1, max: 1440, step: 1, integer: true },
+        showIf: (c) => c.enableTTS && (c.flappingThreshold ?? 0) > 0,
       })
       .addTextInput({
         path: 'ttsVoice',

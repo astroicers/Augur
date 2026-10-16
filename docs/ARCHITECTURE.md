@@ -2,10 +2,11 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-15（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
+> 最後更新：2026-10-16（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
 > 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
 > 前一次是 2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
-> 去重單位，一條總規則底下的每則告警各自播報）。
+> 去重單位，一條總規則底下的每則告警各自播報；#64：新增 `flappingThreshold`／`flappingWindowMin`
+> 兩個選項——抖動抑制，判斷在導播的交付閘門上、排在值班靜音時段之前）。
 
 ## 一句話
 
@@ -41,9 +42,12 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                         ├ core/severity.ts   meetsMin 過濾（resolved 不受門檻影響）
                         ├ core/dedup.ts      shouldSpeak 防洪 + resolved 綁狀態
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
-                        交付閘門：每瀏覽器靜音（ADR-007）／值班靜音時段（#63，dashboard 層級，
-                          瀏覽器本地時間；quietAllowCritical 只放 critical 的 firing 過）
-                          任一個成立就不交給播報器 —— items 照回，清單與表情照常更新
+                        交付閘門（依序）：抖動抑制（#64，窗內翻太多次就先不念，穩定滿窗後
+                          解除並補念當下狀態）→ 值班靜音時段（#63，dashboard 層級，瀏覽器
+                          本地時間；quietAllowCritical 只放 critical 的 firing 過）
+                          → 每瀏覽器靜音（ADR-007，整輪的開關）
+                          任一個成立就不交給播報器 —— items 照回（前兩道會留 suppressed
+                          標記：'flapping'／'quiet'），清單與表情照常更新
                                  │  BroadcastItem[]（時間順序）
                       src/components/MascotPanel.tsx（接線＋呈現）
                         每輪 panel data 餵一次 evaluate(input, settings)
@@ -85,7 +89,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 |---|---|
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
-| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（每瀏覽器靜音與 #63 的值班靜音時段）也在這一支，連同時段解析的純函式（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`） |
+| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
 | `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
@@ -134,7 +138,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
+Panel options 共 **18 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
 `src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改。這個數字與下表的每一列
 由 `src/__tests__/module-options.test.ts` 對著註冊面機械比對（#69），漏改會紅：
 
@@ -142,13 +146,15 @@ Panel options 共 **16 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
-| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，正在燒的告警會全部重新播報一次，名字沒變的也一樣 |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
 | `enableTTS` | `true` | 關掉就只更新畫面不發聲（對所有觀看者生效；panel 標題列的語音開關只管自己這台瀏覽器） |
 | `quietHours` | `''`（無排程） | 值班靜音時段 `22:00-07:00`：時段內照樣更新畫面，只是不念（#63）。**起點含、終點不含**；跨午夜與不跨午夜都支援。留空或格式錯誤即與沒有這個選項時完全相同 |
 | `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing（恢復句不念）。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果 |
+| `flappingThreshold` | `0`（關閉） | 抖動抑制（#64）：同一則在窗內 firing↔resolved 翻幾次就先不念。例「10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復」。**達到門檻的那一次仍會念**，之後的翻轉才不念。`0` 或留空即與沒有這個選項時完全相同 |
+| `flappingWindowMin` | `10` | 抖動抑制的窗長（分），同時是「穩定多久就解除抑制」的長度。不是大於 0 的數字（含 `0`）→ 整個抖動抑制視同關閉 |
 | `ttsVoice` | `''`（自動） | 指名聲線，**可只填名稱的一段**；空字串優先挑 zh-TW 本機引擎 |
 | `ttsPitch` | `1` | 音高 0–2。拉到 1.4–1.7 讓男聲像小男孩；部分瀏覽器不支援 |
 | `ttsRate` | `1` | 語速 0.5–2。會送給外部服務，但 `tools/tts-server` 的語速由參考音決定 |
@@ -202,6 +208,27 @@ ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號�
 時段用的是**每個觀看者瀏覽器的本地時間**（`new Date(ms).getHours()`），
 代價是跨時區的觀看者各自落在不同的絕對時刻、日光節約轉換當天不保證 ——
 要全站同一個絕對時段得改成帶時區的設定，那是另一張票。
+
+`flappingThreshold`／`flappingWindowMin`（#64）的解析與整個狀態機也在
+`director/BroadcastDirector.ts`（`parseFlapping`／`describeFlapping`／`createFlappingTracker`；
+不碰 DOM、時鐘注入），判斷**不在** `MascotPanel.tsx` 的 effect 裡 —— 元件只把兩個數字原樣
+帶進每一輪的設定。**它與 dedup 是兩回事**：`core/dedup.ts` 管「持續燒的重播間隔」，
+而翻轉的每一次都是狀態真的變了，照 dedup 的語意本來就該放行；抖動抑制管的是「反覆翻」。
+⚠️ 命名：`src/avatar/flap.ts` 是**嘴型開合**，與這一組選項無關。
+
+交付閘門的順序寫在 `evaluate()` 的註解裡並由測試釘住：**逐則**判斷的兩道是
+**抖動抑制 → 值班靜音時段**（各自在 `items` 上留 `suppressed` 標記），**整輪**的開關
+（沒有播報器／每瀏覽器靜音）排在交付之前 —— 所以 `quietAllowCritical` 在結構上
+蓋不過觀看者自己按下的靜音鈕。抖動排在時段之前，所以兩者同時成立時標記是 `'flapping'`
+而不是 `'quiet'`，而且 `quietAllowCritical` 救不回一則正在抖動的 critical ——
+一則在 10 分鐘內翻 4 次的 critical 正是這個選項要安靜掉的噪音。
+抑制期間照樣經過 dedup（理由同靜音時段），但**解除**是三道閘門裡唯一會「多念一句」的：
+維持同一個狀態滿一個窗沒再翻轉就解除，而且**解除當下**就念當下的實際狀態
+（與抑制前最後念出去的那個狀態不同時）。不這樣做的話，抑制期間翻完、最後停在 resolved
+的那一則之後不會再有任何事件，「等下一次狀態變化」等於永遠不念那句恢復。
+那一句刻意**不走 `dedup.shouldSpeak()`**：預設 `repeatFiringMin: 0` → 防洪窗是 `Infinity`，
+它必定被擋下（`core/dedup.ts` 的 `forget()` 註解記著同一個坑），所以解除時由導播自己
+把 dedup 的狀態對回實際狀態。
 
 兩個 sprite URL 的預設**必須**是空字串而不是路徑：production 建置的檔名是 webpack 的
 `[hash][ext]`，空字串時由 `SpriteController` 改用 `spriteAssets.ts` 的 import 值。

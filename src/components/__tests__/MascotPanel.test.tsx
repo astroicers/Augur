@@ -22,6 +22,7 @@ import type { MascotPanelOptions } from '../../panelOptions';
 import type { BroadcastPlan } from '../../core/types';
 import type { SpeakerEvents } from '../../speech/speaker';
 import { fetchPanelRules } from '../../sources/rulesFetcher';
+import { parseRulesResponse } from '../../sources/panelAlerts';
 import { fetchPanelHistory } from '../../sources/historyFetcher';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
@@ -1670,11 +1671,39 @@ test('#69 AC-1：沒設這個選項時連第三個參數都不傳 —— 呼叫�
 test('#69 AC-5：一條總規則底下的兩則被擋下後按一下，兩則都補念（補念去重是按名字）', async () => {
   // AC-2 之後這兩則的 `name` 不同（取自各自的 `wall_alertname`），所以 ADR-007 決策 3
   // 那條「同一個 BroadcastPlan.name 只補最後狀態」不會把它們併成一則。
-  // fetchPanelRules 是 mock，名字就是 AC-2 取好的那兩個 —— 這正是 AC-5 的前提。
-  mockedFetch.mockResolvedValue([
-    { alertname: 'Watchdog', severity: 'critical', summary: '看門狗還活著' },
-    { alertname: 'KubeletTooManyPods', severity: 'critical', summary: 'pod 數量過多' },
-  ]);
+  // 假 fetcher 跑**真的** `parseRulesResponse`，並吃元件傳進來的第三個參數（label）：
+  // 選項沒接到 fetcher 的話，兩則都會叫 OncallWall、被併成一則，這支測試會紅。
+  const wallRaw = {
+    data: {
+      groups: [
+        {
+          rules: [
+            {
+              name: 'OncallWall',
+              state: 'firing',
+              labels: { severity: 'critical' },
+              annotations: { __dashboardUid__: 'dash-1', __panelId__: '7', summary: '總規則的摘要' },
+              alerts: [
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'Watchdog', severity: 'critical' },
+                  annotations: { summary: '看門狗還活著' },
+                },
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'KubeletTooManyPods', severity: 'critical' },
+                  annotations: { summary: 'pod 數量過多' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  mockedFetch.mockImplementation((uid: string, panelId: number, label?: string) =>
+    Promise.resolve(parseRulesResponse(wallRaw, uid, panelId, label))
+  );
   const view = render(<MascotPanel {...props({ alertState: ALERTING, options: { alertNameLabel: 'wall_alertname' } })} />);
   await waitFor(() => expect(spoken.length).toBeGreaterThanOrEqual(2));
   const blocked = spoken.slice(0, 2);
@@ -1769,4 +1798,55 @@ test('#70 AC-1：沒設這個選項時紀錄的名字照舊是規則名', async 
   await waitFor(() => expect(view.container.textContent).toContain('偵測到告警：AugurWall，'));
   expect(view.container.textContent).not.toContain('KubeletTooManyPods');
   await settle();
+});
+
+// ---------------------------------------------------------------------------
+// #64：抖動抑制的接線。判斷在導播裡（`BroadcastDirector.test.ts` 與 `flapping.test.ts`
+// 以注入的時鐘涵蓋門檻、解除與各種互動）；這一段看的是**兩個選項有沒有真的到導播**。
+// 選項只進了 panelOptions 而沒帶進 evaluate 的設定時，那邊照樣全綠而面板行為毫無變化。
+// ---------------------------------------------------------------------------
+
+/** 翻一次：ALERTING → OK（firing → resolved）或反向。每次都換一個新的 data 物件。 */
+async function flipPanel(
+  view: ReturnType<typeof render>,
+  states: unknown[],
+  options: Partial<MascotPanelOptions>
+): Promise<void> {
+  for (const alertState of states) {
+    view.rerender(<MascotPanel {...props({ alertState, options })} />);
+    await settle();
+  }
+}
+
+test('#64：門檻與窗長真的帶進導播 —— 門檻 1 時第三次狀態變化不念，清單照常更新', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '一直在翻' }]);
+  // 門檻 1 = 第 1 次翻轉就達標（達標那一次照念），所以第 2 次翻轉起不念。
+  const options = { flappingThreshold: 1, flappingWindowMin: 60 };
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  await flipPanel(view, [OK, { ...ALERTING }], options);
+
+  // firing（第 1 輪）與 resolved（第 1 次翻轉、達標那一次）念得出來，第 2 次翻轉不念。
+  expect(spoken.map((p) => p.status)).toEqual(['firing', 'resolved']);
+  // 清單照常更新：被抑制的那一則也進了 feed —— 三輪各一列（只念了兩句）。
+  // 用列數而不是 toContain：feed 會累積，第 1 輪之後 toContain 就恆真了。
+  expect((view.container.textContent ?? '').match(/一直在翻/g)).toHaveLength(3);
+});
+
+test('#64 AC-1：門檻 0（預設）時同一段翻轉一句都不少 —— 上一條的對照組', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '一直在翻' }]);
+  const options = { flappingThreshold: 0, flappingWindowMin: 60 };
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  await flipPanel(view, [OK, { ...ALERTING }], options);
+  expect(spoken.map((p) => p.status)).toEqual(['firing', 'resolved', 'firing']);
+});
+
+test('#64：窗長為 0（設定無效）時視同關閉 —— 門檻填了也照念', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '一直在翻' }]);
+  const options = { flappingThreshold: 1, flappingWindowMin: 0 };
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  await flipPanel(view, [OK, { ...ALERTING }], options);
+  expect(spoken.map((p) => p.status)).toEqual(['firing', 'resolved', 'firing']);
 });

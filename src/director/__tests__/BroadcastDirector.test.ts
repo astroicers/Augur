@@ -633,3 +633,352 @@ test('#69：來源層讀到的 alertNameLabel 是本輪設定的值，且不必�
   expect(h.hooks().alertNameLabel()).toBe('');
   h.dispose();
 });
+
+// ---------------------------------------------------------------------------
+// 抖動抑制（#64）—— 同樣全部以**注入的時鐘**驅動，不必真的等 10 分鐘。
+// 解析與狀態機由 `flapping.test.ts` 單獨釘住；這一段看的是導播的閘門本身，
+// 以及它與 dedup、嚴重度門檻、兩種靜音的互動（AC-5 與 collaborator 留言的兩件事）。
+// ---------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+/** 票文那句例子：10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復。 */
+const FLAPPING: Partial<DirectorSettings> = { flappingThreshold: 4, flappingWindowMin: 10 };
+
+/**
+ * 從 `t0` 起每分鐘餵一輪，狀態從 firing 開始交替（第 1 輪 firing、第 2 輪 resolved…），
+ * 所以 `rounds` 輪 = `rounds - 1` 次翻轉。回傳每一輪的結果。
+ */
+async function flipRounds(
+  h: Harness,
+  rounds: number,
+  over: Partial<DirectorSettings>,
+  t0 = 1_000_000,
+  alertOver: Partial<ParsedAlert> = { fingerprint: 'fp-flap' }
+): Promise<BroadcastRound[]> {
+  const out: BroadcastRound[] = [];
+  for (let i = 0; i < rounds; i++) {
+    h.setClock(t0 + i * MINUTE);
+    out.push(await h.run([alert({ ...alertOver, status: i % 2 === 0 ? 'firing' : 'resolved' })], over));
+  }
+  return out;
+}
+
+test('#64 AC-1：門檻缺鍵、0、負數，或窗長 0（設定無效）時翻幾次就念幾次，沒有任何一則被標 suppressed', async () => {
+  for (const over of [
+    {}, // 舊 dashboard 的 JSON 沒有這兩個鍵
+    { flappingThreshold: 0, flappingWindowMin: 10 },
+    { flappingThreshold: 4, flappingWindowMin: 0 },
+    { flappingThreshold: -1, flappingWindowMin: 10 },
+  ]) {
+    const h = harness();
+    const rounds = await flipRounds(h, 6, over);
+    expect(h.spoken).toHaveLength(6);
+    expect(rounds.flatMap((r) => r.items).filter((item) => item.suppressed !== undefined)).toEqual([]);
+  }
+});
+
+test('#64 AC-2：達到門檻之後的翻轉不交給播報器，但 items 照回並標 suppressed: flapping', async () => {
+  const h = harness();
+  const rounds = await flipRounds(h, 6, FLAPPING);
+  // 第 4 次翻轉（第 5 輪）是最後一次出聲；第 5 次（第 6 輪）起不念。
+  expect(h.spoken).toHaveLength(5);
+  const last = rounds[5]!;
+  expect(last.evaluated).toBe(true);
+  expect(last.items).toHaveLength(1);
+  expect(last.items[0]!.suppressed).toBe('flapping');
+  // 清單與表情照常更新 —— 與靜音時完全相同的語意。
+  expect(last.items[0]!.plan.emotion).toBe('resolved');
+  expect(last.pending).toBeNull();
+});
+
+test('#64 AC-2：未達門檻時一句都不少（門檻 4、只翻 3 次）', async () => {
+  const h = harness();
+  const rounds = await flipRounds(h, 4, FLAPPING);
+  expect(h.spoken).toHaveLength(4);
+  expect(rounds.flatMap((r) => r.items).filter((item) => item.suppressed !== undefined)).toEqual([]);
+});
+
+test('#64 AC-3：穩定滿窗後解除，念的是當下的實際狀態 —— 最後其實已經恢復', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING); // 第 6 輪（T0+5min、resolved）起被抑制
+  expect(h.spoken).toHaveLength(5);
+  expect(h.spoken[4]!.status).toBe('firing'); // 抑制前最後念出去的是「還在燒」
+
+  // 之後沒有再翻轉：resolved 的 episode 不會再有事件，所以這一輪 source 什麼都沒給 ——
+  // 「等下一次狀態變化」就是永遠不念那句恢復，AC-3 末段明文禁止的事。
+  h.setClock(1_000_000 + 15 * MINUTE);
+  const round = await h.run([], FLAPPING);
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+  expect(h.spoken[5]!.text).toContain('已恢復');
+  expect(round.items).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBeUndefined();
+  expect(round.pending).toBe(6);
+});
+
+test('#64 AC-3 / AC-5：解除時仍在燒就念 firing，而且不被 dedup 的防洪窗擋住', async () => {
+  const h = harness();
+  // 門檻 5：第 5 次翻轉（第 6 輪、resolved）是達標那一次（照念），第 7 輪的 firing 被抑制 ——
+  // 於是「最後念出去的是已恢復，而它其實還在燒」。
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  const rounds = await flipRounds(h, 7, over);
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+  expect(rounds[6]!.items[0]!.suppressed).toBe('flapping');
+
+  // 它一直燒著（每輪照樣回同一則 firing）。`repeatFiringMin: 0` → dedup 的窗是 Infinity，
+  // 而抑制期間那一次 firing 已經被 dedup 記成「播過」—— 沒有解除時的對帳
+  // （`forget()` + 重新記），這一句會永遠不出聲（AC-5 第二項）。
+  h.setClock(1_000_000 + 16 * MINUTE);
+  const round = await h.run([alert({ fingerprint: 'fp-flap' })], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+  // 同一輪不會念兩次：補念那一則已經把 dedup 重新記成「剛剛播過」。
+  expect(round.items).toHaveLength(1);
+});
+
+test('#64 AC-5：被嚴重度門檻擋下的告警不計入翻轉次數', async () => {
+  const h = harness();
+  // warning 的 firing 被門檻擋下，它的 resolved 則因為「從沒播過 firing」被 dedup 吞掉 ——
+  // 兩者都到不了抖動判斷。門檻 2 的話，翻 5 次早就該讓它閉嘴了。
+  const over = { flappingThreshold: 2, flappingWindowMin: 10, minSeverity: 'critical' };
+  const low: Partial<ParsedAlert> = { fingerprint: 'fp-low', severity: 'warning' };
+  const rounds = await flipRounds(h, 6, over, 1_000_000, low);
+  expect(h.spoken).toHaveLength(0);
+  expect(rounds.flatMap((r) => r.items)).toEqual([]);
+
+  // 門檻放寬之後的第一則照常念（翻轉次數是 0，不是 5）。
+  h.setClock(1_000_000 + 6 * MINUTE);
+  const after = await h.run([alert(low)], { ...over, minSeverity: '' });
+  expect(h.spoken).toHaveLength(1);
+  expect(after.items[0]!.suppressed).toBeUndefined();
+});
+
+test('#64 AC-5：靜音（每瀏覽器）時照樣計數 —— 解除靜音不會讓抑制失效', async () => {
+  const h = harness();
+  h.setMuted(true);
+  const rounds = await flipRounds(h, 6, FLAPPING);
+  expect(h.spoken).toHaveLength(0); // 靜音：一句都沒交付
+  expect(rounds[5]!.items[0]!.suppressed).toBe('flapping'); // 但翻轉照樣計數
+
+  h.setMuted(false);
+  h.setClock(1_000_000 + 6 * MINUTE);
+  const round = await h.run([alert({ fingerprint: 'fp-flap' })], FLAPPING);
+  expect(round.items[0]!.suppressed).toBe('flapping');
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#64：被靜音時段擋下的項目標 suppressed: quiet —— 與抖動用不同的標記', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT });
+  expect(round.items[0]!.suppressed).toBe('quiet');
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#64：每瀏覽器靜音不改變 quiet 標記（標的是「落在時段內」，不是誰按了鈕）', async () => {
+  const h = harness();
+  h.setMuted(true);
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert()], { quietHours: NIGHT });
+  expect(round.items[0]!.suppressed).toBe('quiet');
+  // 破得了靜音的那一則不標 quiet（它沒有被時段擋下，是被靜音鈕擋下的）。
+  const breaking = await h.run([alert({ fingerprint: 'fp-c' })], { quietHours: NIGHT, quietAllowCritical: true });
+  expect(breaking.items[0]!.suppressed).toBeUndefined();
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#64：抖動抑制在靜音閘門之前 —— 兩者同時成立時標記是 flapping，quietAllowCritical 也救不回來', async () => {
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10, quietHours: NIGHT, quietAllowCritical: true };
+  // 22:00 起每分鐘翻一次，全程落在靜音時段內。
+  const rounds = await flipRounds(h, 7, over, at(15, 22, 0));
+  // critical 的 firing 破靜音（第 1／3／5 輪），resolved 破不了 → 標 quiet。
+  expect(h.spoken.map((p) => p.status)).toEqual(['firing', 'firing', 'firing']);
+  expect(rounds[5]!.items[0]!.suppressed).toBe('quiet');
+  // 第 7 輪是 critical 的 firing（本來破得了靜音），但它正被抖動抑制 → 標 flapping、不出聲。
+  expect(rounds[6]!.items[0]!.alert.status).toBe('firing');
+  expect(rounds[6]!.items[0]!.suppressed).toBe('flapping');
+  expect(h.spoken).toHaveLength(3);
+});
+
+test('#64：抑制中的一則落在靜音時段內、而且破不了靜音 —— 標記是 flapping，不是 quiet', async () => {
+  // 主管層補的要求：兩者同時成立時以 flapping 為準。這裡沒有 quietAllowCritical，
+  // 所以第 7 輪若沒有被抖動抑制，本來會被靜音時段標成 quiet —— 兩個標記真的在競爭。
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10, quietHours: NIGHT };
+  const rounds = await flipRounds(h, 7, over, at(15, 22, 0));
+  expect(rounds[5]!.items[0]!.suppressed).toBe('quiet');
+  expect(rounds[6]!.items[0]!.suppressed).toBe('flapping');
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#64：被取代的 fingerprint 連抖動狀態一起忘掉 —— 解除時不補念一則已不存在的告警', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING); // 第 6 輪（resolved）被抑制；抑制前最後念出去的是 firing
+  expect(h.spoken).toHaveLength(5);
+  // 來源層取代了這個 episode（例：降級的泛用 episode 在 rules 端點恢復後被具名告警取代）。
+  h.hooks().onSupersede('fp-flap');
+  h.setClock(1_000_000 + 16 * MINUTE);
+  await h.run([], FLAPPING);
+  expect(h.spoken).toHaveLength(5);
+});
+
+test('#64：抑制中關掉抖動抑制，而當下狀態與最後念出去的相同 —— 不補念（不重複念使用者聽過的話）', async () => {
+  const h = harness();
+  await flipRounds(h, 7, FLAPPING); // 第 6、7 輪被抑制；第 7 輪 firing ＝ 抑制前最後念出去的 firing
+  expect(h.spoken).toHaveLength(5);
+  h.setClock(1_000_000 + 7 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], { ...FLAPPING, flappingThreshold: 0 });
+  expect(h.spoken).toHaveLength(5);
+});
+
+test('#64：抑制中（最後是 firing）被取代 —— 解除時不補念，之後同一個 fingerprint 再燒起來念得出來', async () => {
+  // 來源層正常只會取代「還在 episodes 裡」的那幾則，也就是最後吐的是 firing 的那幾則。
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  await flipRounds(h, 7, over); // 第 7 輪（firing）被抑制；抑制前最後念出去的是 resolved
+  expect(h.spoken).toHaveLength(6);
+  h.hooks().onSupersede('fp-flap');
+  h.setClock(1_000_000 + 16 * MINUTE);
+  await h.run([], over);
+  expect(h.spoken).toHaveLength(6); // 不補念一則已被取代的告警
+  // 沒有連抖動狀態一起忘的話，上一輪的補念會把 dedup 記回「播過 firing」，這一輪就被擋下。
+  h.setClock(1_000_000 + 17 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+});
+
+test('#64：抑制中關掉抖動抑制 —— 最後仍在燒而沒念過的那一則立刻補念，不會整段燒的過程都沒聲音', async () => {
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  await flipRounds(h, 7, over); // 第 7 輪（firing）被抑制；抑制前最後念出去的是 resolved
+  expect(h.spoken).toHaveLength(6);
+  h.setClock(1_000_000 + 7 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], { ...over, flappingThreshold: 0 });
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+});
+
+test('#64：抑制中關掉抖動抑制 —— 最後其實已經恢復的那一則立刻補念「已恢復」', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING); // 第 6 輪（resolved）被抑制；抑制前最後念出去的是 firing
+  expect(h.spoken).toHaveLength(5);
+  h.setClock(1_000_000 + 6 * MINUTE);
+  await h.run([], { ...FLAPPING, flappingThreshold: 0 });
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+});
+
+test('#64：不同 fingerprint 互不影響 —— 一則被抑制時同一輪的另一則照常交付', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING);
+  h.setClock(1_000_000 + 6 * MINUTE);
+  const round = await h.run(
+    [alert({ fingerprint: 'fp-flap' }), alert({ fingerprint: 'fp-calm', name: 'Disk', summary: '磁碟快滿' })],
+    FLAPPING
+  );
+  expect(round.items).toHaveLength(2);
+  expect(round.items[0]!.suppressed).toBe('flapping');
+  expect(round.items[1]!.suppressed).toBeUndefined();
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.name).toBe('Disk');
+});
+
+test('#64 AC-4：改窗長之後的下一輪就讀到新窗長（同一個時刻，只有設定不同）', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING); // 最後一次翻轉在 T0+5min，當下是 resolved
+  h.setClock(1_000_000 + 7 * MINUTE);
+  expect((await h.run([], FLAPPING)).items).toHaveLength(0); // 窗 10 分鐘：還沒穩定滿窗
+  expect(h.spoken).toHaveLength(5);
+
+  const released = await h.run([], { ...FLAPPING, flappingWindowMin: 1 }); // 窗 1 分鐘：已滿窗
+  expect(released.items).toHaveLength(1);
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+});
+
+test('#64 AC-4：改門檻之後的下一輪就讀到新門檻', async () => {
+  const h = harness();
+  const loose = { flappingThreshold: 10, flappingWindowMin: 10 };
+  await flipRounds(h, 5, loose); // 翻 4 次，門檻 10 → 全念
+  expect(h.spoken).toHaveLength(5);
+
+  h.setClock(1_000_000 + 5 * MINUTE);
+  const reaching = await h.run([alert({ fingerprint: 'fp-flap', status: 'resolved' })], {
+    ...loose,
+    flappingThreshold: 2,
+  });
+  expect(reaching.items[0]!.suppressed).toBeUndefined(); // 達標那一次照念
+  h.setClock(1_000_000 + 6 * MINUTE);
+  const after = await h.run([alert({ fingerprint: 'fp-flap' })], { ...loose, flappingThreshold: 2 });
+  expect(after.items[0]!.suppressed).toBe('flapping');
+  expect(h.spoken).toHaveLength(6);
+});
+
+test('#64 AC-1：抖動抑制關掉之後，先前的翻轉次數不再生效', async () => {
+  const h = harness();
+  await flipRounds(h, 6, FLAPPING);
+  expect(h.spoken).toHaveLength(5);
+
+  // 關掉（門檻 0）：抑制中被吞掉的「已恢復」先補念（審查 F3：關閉 = 立刻解除），
+  // 然後這一輪的 firing 照常念。主管層修正前這裡只念 firing（6 句），
+  // 使用者因此從沒聽過它在第 6 輪其實恢復過。
+  h.setClock(1_000_000 + 6 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], { ...FLAPPING, flappingThreshold: 0 });
+  expect(h.spoken.slice(5).map((p) => p.status)).toEqual(['resolved', 'firing']);
+
+  // 再開回來：翻轉次數從零開始算，所以下一次翻轉照常念。
+  h.setClock(1_000_000 + 7 * MINUTE);
+  const back = await h.run([alert({ fingerprint: 'fp-flap', status: 'resolved' })], FLAPPING);
+  expect(back.items[0]!.suppressed).toBeUndefined();
+  expect(h.spoken).toHaveLength(8);
+});
+
+test('#64：解除補念之後，重播間隔從補念的那一刻重新起算 —— 不會隔一分鐘又念一次', async () => {
+  const h = harness();
+  // `repeatFiringMin: 30` → dedup 的防洪窗是 30 分鐘（不是 Infinity），而且**比抖動的窗長**，
+  // 所以補念那一刻有沒有把 dedup 的時間戳對回來，差別看得見。
+  const over = { flappingThreshold: 5, flappingWindowMin: 10, repeatFiringMin: 30 };
+  await flipRounds(h, 7, over); // 第 7 輪（T0+6min、firing）被抑制
+  expect(h.spoken).toHaveLength(6);
+
+  h.setClock(1_000_000 + 16 * MINUTE);
+  await h.run([alert({ fingerprint: 'fp-flap' })], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+
+  // 補念的那一刻 dedup 被重新記成「剛剛播過」—— 沒有這一步的話，它記著的還是抑制期間
+  // 那次 firing 的時間戳（T0+6min），於是這一輪（距離補念才 21 分鐘）又念一次。
+  h.setClock(1_000_000 + 37 * MINUTE);
+  const round = await h.run([alert({ fingerprint: 'fp-flap' })], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(round.items).toHaveLength(0);
+});
+
+test('#64 AC-5：解除補念被嚴重度門檻擋下時也要 forget() —— 門檻調回來之後不會永久靜音', async () => {
+  const h = harness();
+  // 門檻 5：第 7 輪（T0+6min、firing）被抑制，而抑制前最後念出去的是「已恢復」。
+  // 抑制期間那一次 firing 照樣進了 dedup（記成「播過」），但它其實一句都沒出聲。
+  const over = { flappingThreshold: 5, flappingWindowMin: 10 };
+  const low: Partial<ParsedAlert> = { fingerprint: 'fp-flap', severity: 'warning' };
+  await flipRounds(h, 7, over, 1_000_000, low);
+  expect(h.spoken).toHaveLength(6);
+  expect(h.spoken[5]!.status).toBe('resolved');
+
+  // 解除的那一輪門檻被調高到 critical（這則是 warning）→ 補念要被擋下，不出聲。
+  h.setClock(1_000_000 + 16 * MINUTE);
+  const blocked = await h.run([alert(low)], { ...over, minSeverity: 'critical' });
+  expect(h.spoken).toHaveLength(6);
+  expect(blocked.items).toEqual([]);
+
+  // 門檻調回來，而它**仍在燒**：沒有上面那次 forget() 的話，dedup 記著抑制期間
+  // 那次 firing 的時間戳，預設窗是 Infinity → 這一則永久靜音（告警在燒而面板不吭聲）。
+  h.setClock(1_000_000 + 17 * MINUTE);
+  const after = await h.run([alert(low)], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+  expect(after.items).toHaveLength(1);
+  expect(after.items[0]!.suppressed).toBeUndefined();
+});

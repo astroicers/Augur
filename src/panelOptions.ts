@@ -80,6 +80,30 @@ export interface MascotPanelOptions {
    * critical 也不該念。`resolved` 不破靜音（半夜只有需要有人處理的事才出聲）。
    */
   quietAllowCritical?: boolean;
+  /**
+   * 抖動抑制（#64）：同一則告警在窗內 firing↔resolved 翻轉幾次就先不念。
+   * `0` 或留空 = **關閉**，行為與沒有這個選項時完全相同。
+   *
+   * 例：門檻 4、窗長 10 —— 10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復，
+   * 而且恢復時念的是**當下的實際狀態**（還在燒就念 firing、已經好了就念 resolved）。
+   *
+   * 判斷在 `director/BroadcastDirector.ts`（`parseFlapping`／`createFlappingTracker`，
+   * 以注入的時鐘），不在元件裡。抑制中的項目照樣進清單並帶 `suppressed: 'flapping'`。
+   *
+   * **選填（`?`）而非必填**，理由同 `quietHours`：舊 dashboard 存下來的 panel JSON
+   * 沒有這個鍵，宣告成必填會讓既有的字面值（含測試 fixture）全部得補一行，
+   * 而 #64 AC-1 要的正是「既有測試不改」。
+   */
+  flappingThreshold?: number;
+  /**
+   * 抖動抑制的窗長（分鐘），預設 10：翻轉次數在這個長度的窗內計算，
+   * 也是「穩定多久就解除抑制」的長度。
+   *
+   * 不是大於 0 的數字（`0`、負數、留空）→ **整個抖動抑制視同關閉**。窗長 0 會讓
+   * 「穩定滿窗」在定義上立即成立（抑制進得去、下一輪就解除），那不是任何人想要的設定，
+   * 所以不猜 —— 與 `quietHours` 的「格式錯誤視同沒設定」同一條規則。
+   */
+  flappingWindowMin?: number;
   /** 指名聲線；空字串 = 自動挑（優先 zh-TW 且為本機引擎）。 */
   ttsVoice: string;
   /** 音高 0–2，1 = 聲線原本的音高。拉高讓大人的聲線聽起來像小孩。 */
@@ -114,6 +138,8 @@ export const DEFAULT_OPTIONS: MascotPanelOptions = {
   enableTTS: true,
   quietHours: '',
   quietAllowCritical: false,
+  flappingThreshold: 0,
+  flappingWindowMin: 10,
   ttsVoice: '',
   ttsPitch: 1,
   ttsRate: 1,
