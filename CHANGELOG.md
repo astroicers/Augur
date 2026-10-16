@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.0 — 2026-10-16
+
+Every new option below is off or empty by default. Leaving them that way keeps the panel
+behaving exactly as in 0.2.1.
+
+### Speak every alert behind one rule
+
+- New option **告警名稱取自哪個 label** (`alertNameLabel`). One Grafana rule can watch a whole
+  on-call wall with `ALERTS{alertstate="firing"}`, but Grafana overwrites every instance's
+  `alertname` with the rule's name, so the mascot used to speak only the first alert. Keep the
+  original name with `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` and enter
+  `wall_alertname` here. Each alert is then spoken, deduplicated and recorded under its own name.
+  Instances without the label fall back to `alertname`.
+- New switch **念出目前數值** (`speakValue`, on by default). Turn it off when the value carries no
+  meaning, for example a rule on `ALERTS`, whose value is always 1. The spoken sentence and the
+  record both drop the "目前數值" part and keep everything else word for word.
+
+### Quieter when it should be
+
+- **值班靜音時段** (`quietHours`, e.g. `22:00-07:00`): during these hours the mascot keeps updating
+  but does not speak. With **靜音時段內仍念 critical** turned on, critical alerts are still spoken (not
+  their recoveries). Each viewer's own clock decides. The per-browser mute button still works
+  on its own.
+- **抖動抑制** (`flappingThreshold` / `flappingWindowMin`): an alert that flips between firing
+  and resolved too often within the window stops being spoken. Once it has stayed in one state
+  for a full window, the mascot speaks its current state.
+
+### Your own severity names
+
+- **嚴重度別名** (`severityAliases`, e.g. `P1=critical, sev2=warning, disaster=critical`) maps the
+  severity labels your organisation uses onto the standard levels. Thresholds and expressions
+  then work with them instead of treating them as unknown. Malformed entries are skipped.
+
+### Fixes
+
+- No more spoken "undefined" or "[object Object]" when an alert has missing or odd fields. An
+  empty or non-text severity no longer throws.
+- The mascot no longer gets stuck on "this panel only" when it loaded before the other panels.
+  It now switches to following the cursor across the whole dashboard once they appear.
+
+### Under the hood
+
+- The broadcast pipeline now lives in its own React-free module. Sentence splitting has a single
+  implementation, pinned by shared golden tests. Unit tests went from 258 to 632.
+
 ## 0.2.1 — 2026-10-14
 
 ### A voice button you can actually switch
