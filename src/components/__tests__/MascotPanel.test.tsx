@@ -1642,6 +1642,44 @@ test('#63 AC-1：quietHours 留空時照常念出', async () => {
   expect(spoken).toHaveLength(1);
 });
 
+// ---------------------------------------------------------------------------
+// #71：speakValue 的接線。這支檔案是導播與播報紀錄兩條路唯一的匯流處 ——
+// 選項若只進了 core/ 而沒接上這兩個 effect，core 的測試照樣全綠而面板毫無變化。
+// ---------------------------------------------------------------------------
+
+test('#71 AC-1：既有的選項 fixture（沒有 speakValue 這個鍵）照舊念出數值', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '照念', value: 1 }]);
+  render(<MascotPanel {...props({ alertState: ALERTING })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken[0]!.text).toBe('偵測到告警：CPU，嚴重度 critical，目前數值 1，照念。');
+});
+
+test('#71 AC-2：speakValue 關掉後念出的句子不含數值子句（導播那一側的接線）', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '照念', value: 1 }]);
+  render(<MascotPanel {...props({ alertState: ALERTING, options: { speakValue: false } })} />);
+  await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
+  expect(spoken[0]!.text).toBe('偵測到告警：CPU，嚴重度 critical，照念。');
+  // 欄位照舊帶原值 —— 關掉的是念出來的那一段，不是資料。
+  expect(spoken[0]!.value).toBe(1);
+});
+
+test('#71 AC-3：speakValue 關掉後播報紀錄的句子也不含數值子句（history 那一側的接線）', async () => {
+  // 這一條守的是「念的沒有數值、紀錄裡卻有」：若只把選項傳給導播 effect 而漏了
+  // history effect，上面那條測試照樣全綠（ADR-006 要的是兩邊逐字相同）。
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+
+  const view = render(<MascotPanel {...props({ alertState: OK, options: { speakValue: false } })} />);
+
+  await waitFor(() =>
+    expect(view.container.textContent).toContain('偵測到告警：MerakContainerMemoryHigh，嚴重度 warning，api-7f9c 記憶體過高。')
+  );
+  expect(view.container.textContent).not.toContain('目前數值');
+  // 紀錄一句都不念（ADR-006 決策 5）—— 這個選項不改那條分界。
+  await settle();
+  expect(spoken).toEqual([]);
+});
+
 // ─── #69：告警名稱取自哪個 label ─────────────────────────────────────────────
 //
 // 取名本身在 `sources/panelAlerts.ts`（`alertNameOf`，由 `panelAlerts.test.ts` 釘住），

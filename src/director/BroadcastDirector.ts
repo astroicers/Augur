@@ -111,6 +111,15 @@ export interface DirectorSettings {
   /** 組句語言。 */
   alertLang: AlertLang;
   /**
+   * 播報句要不要帶「目前數值」子句（#71）。缺鍵／`undefined` = **帶**，
+   * 與沒有這個設定時完全相同（判斷在 `core/format.ts` 的 `spokenValue`，
+   * 本檔只原樣轉手，與 `alertLang` 一樣不在這裡解讀）。
+   *
+   * **選填（`?`）而非必填**，理由同 `quietHours`：既有的 `DirectorSettings` 字面值
+   * （含測試 fixture）不必補一行，而 #71 AC-1 要的正是「既有測試不改」。
+   */
+  speakValue?: boolean;
+  /**
    * 嚴重度別名的**設定字串**（不是解析好的 `Map`）。
    *
    * 刻意收字串：解析結果是 `Map`，每次呼叫都是新的物件參考，交給 React 的相依陣列
@@ -860,7 +869,8 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         }
         const released: BroadcastItem = {
           alert: pendingAlert,
-          plan: buildBroadcastPlan(pendingAlert, round.alertLang, aliases),
+          // 補念的句子與主迴圈吃同一個 `speakValue`（#71）——解除抑制那一句不能偷偷多念數值。
+          plan: buildBroadcastPlan(pendingAlert, round.alertLang, aliases, { speakValue: round.speakValue }),
           at: now(),
         };
         items.push(released);
@@ -913,7 +923,13 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         if (!dedup.shouldSpeak(alert)) {
           continue;
         }
-        const item: BroadcastItem = { alert, plan: buildBroadcastPlan(alert, round.alertLang, aliases), at: now() };
+        // `speakValue`（#71）原樣轉給組句層：`undefined` 在那裡與 `true` 同義，
+        // 所以舊 dashboard（沒有這個鍵）的句子逐字不變。
+        const item: BroadcastItem = {
+          alert,
+          plan: buildBroadcastPlan(alert, round.alertLang, aliases, { speakValue: round.speakValue }),
+          at: now(),
+        };
         items.push(item);
         // 抖動抑制（#64）在 **dedup 之後、靜音閘門之前**。三段都刻意：
         //

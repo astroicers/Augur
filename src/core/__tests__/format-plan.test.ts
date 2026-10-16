@@ -142,3 +142,38 @@ test('#46：髒值不讓 undefined / null / [object Object] 進到 plan.text', (
     }
   }
 });
+
+test('#71 AC-1：第四個參數省略／空物件／true 時，整個 plan 與先前完全相同', () => {
+  const a = mk();
+  const baseline = buildBroadcastPlan(a, 'zh');
+  expect(buildBroadcastPlan(a, 'zh', undefined, undefined)).toEqual(baseline);
+  expect(buildBroadcastPlan(a, 'zh', undefined, {})).toEqual(baseline);
+  expect(buildBroadcastPlan(a, 'zh', undefined, { speakValue: true })).toEqual(baseline);
+  expect(baseline.text).toContain('目前數值 95.20');
+});
+
+test('#71 AC-2：speakValue 關掉時 plan.text 不含數值子句（兩種語言）', () => {
+  expect(buildBroadcastPlan(mk(), 'zh', undefined, { speakValue: false }).text).toBe(
+    '偵測到告警：HighCPU，嚴重度 critical，受影響對象 host-1，CPU high。',
+  );
+  expect(buildBroadcastPlan(mk(), 'en', undefined, { speakValue: false }).text).toBe(
+    'Alert firing: HighCPU, severity critical, on host-1, CPU high.',
+  );
+});
+
+test('#71：speakValue 只影響 text —— value 欄位照舊帶原值（feed／除錯讀的是它）', () => {
+  const plan = buildBroadcastPlan(mk(), 'en', undefined, { speakValue: false });
+  expect(plan.value).toBe(95.2);
+  // 其餘欄位與開著時逐字／逐值相同。
+  const { text: _on, ...onRest } = buildBroadcastPlan(mk(), 'en');
+  const { text: _off, ...offRest } = plan;
+  expect(offRest).toEqual(onRest);
+});
+
+test('#71 × #51：speakValue 與別名表互不干擾（emotion 吃別名、text 照樣不念數值）', () => {
+  const aliases = new Map([['p1', 'critical']]);
+  const plan = buildBroadcastPlan(mk({ severity: 'P1' }), 'zh', aliases, { speakValue: false });
+  expect(plan.emotion).toBe(severityToEmotion('critical', 'firing'));
+  expect(plan.severity).toBe('p1');
+  expect(plan.text).toBe('偵測到告警：HighCPU，嚴重度 p1，受影響對象 host-1，CPU high。');
+});

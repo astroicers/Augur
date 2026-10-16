@@ -374,3 +374,101 @@ test('AC-3：name/instance/summary 是一般字串時整句與修補前逐字相
     'Alert firing: DiskFull, severity critical, on db-7, current value 95.20, disk almost full.',
   );
 });
+
+// ---- #71：speakValue 關掉時不念「目前數值」子句 ----
+
+/**
+ * 把開著時的句子裡那一段數值子句**整段**切掉（含一側的分隔符），當成 AC-2 的期望值。
+ * 它可能在句中（後面接分隔符）也可能是最後一段（前面接分隔符、後面是句末符號）。
+ */
+function dropValueClause(sentence: string, lang: 'zh' | 'en', value: string): string {
+  const clause = lang === 'zh' ? `目前數值 ${value}` : `current value ${value}`;
+  const sep = lang === 'zh' ? '，' : ', ';
+  expect(sentence).toContain(clause);
+  return sentence.includes(`${clause}${sep}`)
+    ? sentence.replace(`${clause}${sep}`, '')
+    : sentence.replace(`${sep}${clause}`, '');
+}
+
+test('#71 AC-1：省略 opts、傳 undefined、傳 true 三者與預設逐字相同', () => {
+  for (const lang of ['zh', 'en'] as const) {
+    for (const status of ['firing', 'resolved'] as const) {
+      const a = mk({ status });
+      const baseline = formatAlert(a, lang);
+      expect([lang, status, formatAlert(a, lang, undefined)]).toEqual([lang, status, baseline]);
+      expect([lang, status, formatAlert(a, lang, {})]).toEqual([lang, status, baseline]);
+      expect([lang, status, formatAlert(a, lang, { speakValue: undefined })]).toEqual([lang, status, baseline]);
+      expect([lang, status, formatAlert(a, lang, { speakValue: true })]).toEqual([lang, status, baseline]);
+      // 開著時數值照念（AC-1 的「行為完全相同」有這一半才是成立的）。
+      expect(baseline).toContain(lang === 'zh' ? '目前數值 95.20' : 'current value 95.20');
+    }
+  }
+});
+
+test('#71 AC-2：關掉後中英兩套都不含數值子句，整句就是開著時少掉那一段', () => {
+  expect(formatAlert(mk(), 'zh', { speakValue: false })).toBe(
+    '偵測到告警：HighCPU，嚴重度 critical，受影響對象 host-1，CPU high。',
+  );
+  expect(formatAlert(mk(), 'en', { speakValue: false })).toBe(
+    'Alert firing: HighCPU, severity critical, on host-1, CPU high.',
+  );
+  const resolved = mk({ status: 'resolved' });
+  expect(formatAlert(resolved, 'zh', { speakValue: false })).toBe(
+    '告警已恢復：HighCPU，受影響對象 host-1，CPU high。',
+  );
+  expect(formatAlert(resolved, 'en', { speakValue: false })).toBe('Alert resolved: HighCPU, on host-1, CPU high.');
+});
+
+test('#71 AC-2：各種句型下，其餘子句（名稱、嚴重度、摘要、恢復句）與開著時逐字相同', () => {
+  // 刻意涵蓋「少掉別的子句」的句型：數值子句的前後鄰居不同，切掉它的位置也不同。
+  const shapes: Array<[string, ParsedAlert, string]> = [
+    ['完整', mk(), '95.20'],
+    ['沒有對象', mk({ instance: undefined }), '95.20'],
+    ['沒有摘要（數值是最後一段）', mk({ summary: undefined }), '95.20'],
+    ['只有名稱與數值', mk({ instance: undefined, summary: undefined }), '95.20'],
+    ['恢復句', mk({ status: 'resolved' }), '95.20'],
+    ['恢復句只有數值', mk({ status: 'resolved', instance: undefined, summary: undefined }), '95.20'],
+    ['名稱缺值（念替代詞）', mk({ name: undefined as unknown as string }), '95.20'],
+    ['嚴重度缺值（念 unknown）', mk({ severity: undefined as unknown as string }), '95.20'],
+    ['整數數值', mk({ value: 1 }), '1'],
+    ['極大數值', mk({ value: 1e21 }), '1000000000000000000000'],
+  ];
+  for (const [label, a, spoken] of shapes) {
+    for (const lang of ['zh', 'en'] as const) {
+      const on = formatAlert(a, lang);
+      const off = formatAlert(a, lang, { speakValue: false });
+      expect([label, lang, off]).toEqual([label, lang, dropValueClause(on, lang, spoken)]);
+      expect(off).not.toContain(lang === 'zh' ? '目前數值' : 'current value');
+    }
+  }
+});
+
+test('#71 AC-2：沒有可念數值時，關與開逐字相同（關掉不是「少一個子句」而是「本來就沒有」）', () => {
+  // `value` 缺值／念不出來時本來就沒有那一段（#46），關掉不該讓句子再變一次。
+  const noValue: Array<[string, unknown]> = [
+    ['undefined', undefined],
+    ['NaN', NaN],
+    ['字串 "95.2"', '95.2'],
+    ['null', null],
+    ['空物件', {}],
+  ];
+  for (const [label, v] of noValue) {
+    for (const lang of ['zh', 'en'] as const) {
+      const a = withField('value', v);
+      expect([label, lang, formatAlert(a, lang, { speakValue: false })]).toEqual([
+        label,
+        lang,
+        formatAlert(a, lang),
+      ]);
+    }
+  }
+});
+
+test('#71：關掉後句子的子句數剛好少一段（中文以「，」、英文以「, 」串接）', () => {
+  expect(formatAlert(mk()).split('，').length - formatAlert(mk(), 'zh', { speakValue: false }).split('，').length).toBe(
+    1,
+  );
+  expect(
+    formatAlert(mk(), 'en').split(', ').length - formatAlert(mk(), 'en', { speakValue: false }).split(', ').length,
+  ).toBe(1);
+});

@@ -199,7 +199,7 @@ interface RawAnnotation {
 export function historyToEntries(
   raw: unknown,
   templates: Map<string, RuleTemplate>,
-  opts: { minSeverity: string; lang: AlertLang; aliases?: SeverityAliasMap }
+  opts: { minSeverity: string; lang: AlertLang; aliases?: SeverityAliasMap; speakValue?: boolean }
 ): HistoryResult {
   if (!Array.isArray(raw)) {
     throw new Error('告警歷史的回應不是清單');
@@ -248,7 +248,10 @@ export function historyToEntries(
       ...(summary !== undefined ? { summary } : {}),
       ...(value !== undefined ? { value } : {}),
     };
-    const plan = buildBroadcastPlan(alert, opts.lang, opts.aliases);
+    // `speakValue`（#71）與播報吃同一個選項、同一個組句入口：紀錄句與播報句
+    // 逐字相同是硬要求（G-ADR006-2），少傳這個參數就會變成「念的沒有數值、
+    // 紀錄裡有」。`undefined` 在組句層與 `true` 同義，行為照舊。
+    const plan = buildBroadcastPlan(alert, opts.lang, opts.aliases, { speakValue: opts.speakValue });
     entries.push({
       key: `h:${a.id ?? `${time}:${name}:${status}`}`,
       time,
