@@ -71,8 +71,7 @@ const LABEL_NAME = '[A-Za-z_][A-Za-z0-9_]*';
  * 只讀舊欄位的話，Grafana 移除它之後會拿到 undefined 而放行 —— 部署若用 loki，就會靜默顯示「沒有紀錄」。
  */
 export function historyBackendFrom(unifiedAlerting: unknown): unknown {
-  const ua = unifiedAlerting as
-    { stateHistory?: { backend?: unknown }; alertStateHistoryBackend?: unknown } | undefined;
+  const ua = unifiedAlerting as { stateHistory?: { backend?: unknown }; alertStateHistoryBackend?: unknown } | undefined;
   return ua?.stateHistory?.backend ?? ua?.alertStateHistoryBackend;
 }
 
@@ -85,13 +84,7 @@ export function historyBackendFrom(unifiedAlerting: unknown): unknown {
  * 設定不存在（較舊版本）也放行，交給實際的讀取結果說話。
  */
 export function historyBackendProblem(backend: unknown): string | null {
-  if (
-    backend === undefined ||
-    backend === null ||
-    backend === '' ||
-    backend === 'annotations' ||
-    backend === 'multiple'
-  ) {
+  if (backend === undefined || backend === null || backend === '' || backend === 'annotations' || backend === 'multiple') {
     return null;
   }
   return `Grafana 的告警歷史存在 ${String(backend)}，不是 annotations`;
@@ -319,10 +312,7 @@ function historyAlertNameOf(labels: Record<string, string> | undefined, ruleName
  * 不知道條件欄時（ruler API 讀不到）：各欄數值都相同就照用，不同就**不給數值** ——
  * 寧可紀錄句少一段，也不要顯示一個和當時念的不一樣的數字。
  */
-function conditionValue(
-  values: Record<string, unknown> | undefined,
-  condition: string | undefined
-): number | undefined {
+function conditionValue(values: Record<string, unknown> | undefined, condition: string | undefined): number | undefined {
   if (!values) {
     return undefined;
   }
