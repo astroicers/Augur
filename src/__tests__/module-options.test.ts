@@ -11,11 +11,14 @@
  * 所以這裡跑的是真的 `PanelOptionsEditorBuilder`,斷言打在註冊結果上,
  * 而不是讀 `module.ts` 的原始碼字串。
  */
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { PanelOptionsEditorBuilder, standardEditorsRegistry } from '@grafana/data';
 import { plugin } from '../module';
 import { DEFAULT_OPTIONS, type MascotPanelOptions } from '../panelOptions';
 import { parseSeverityAliases } from '../core/severityAliases';
-import { parseQuietHours } from '../director/BroadcastDirector';
+import { parseFlapping, parseQuietHours } from '../director/BroadcastDirector';
 
 /**
  * 編輯器元件本身由 Grafana 在執行期注入（`standardEditorsRegistry` 在 app 啟動時才填）。
@@ -131,4 +134,85 @@ test('#71 AC-4：speakValue 的說明寫明用途（條件只是 0／1 或查 AL
 test('#71：speakValue 不受「開啟語音」左右 —— 播報紀錄的句子也吃它，所以不藏起來', () => {
   const opt = registeredOptions().find((o) => o.path === 'speakValue');
   expect(opt!.showIf).toBeUndefined();
+});
+
+test('#69 AC-1：alertNameLabel 註冊在編輯器上，預設是空字串（= 照舊用 alertname）', () => {
+  const opt = registeredOptions().find((o) => o.path === 'alertNameLabel');
+  expect(opt).toBeDefined();
+  expect(opt!.defaultValue).toBe('');
+  expect(DEFAULT_OPTIONS.alertNameLabel).toBe('');
+});
+
+test('#69 AC-6：alertNameLabel 的說明舉 wall_alertname 當例子，並寫明 label 不存在時退回 alertname', () => {
+  const description = registeredOptions().find((o) => o.path === 'alertNameLabel')?.description ?? '';
+  expect(description).toContain('wall_alertname');
+  expect(description).toContain('label 不存在時退回 alertname');
+  // 留空的語意（AC-1 的使用者可見面）。
+  expect(description).toContain('留空');
+});
+
+/**
+ * #69 AC-6：文件裡的「選項總數」與實際註冊數一致。
+ *
+ * `docs/ARCHITECTURE.md` 的維護規則寫著「不要寫死會漂的數字」，而〈設定〉那一節
+ * 偏偏寫死了一個 —— 本專案在 ROADMAP 的引用規則、#36 與 #58 的 AC 上已經各犯過一次。
+ * 數字留著（AC-6 明文要求「選項總數也要更新」），但改成**機械比對**：
+ * 加減選項而忘了動文件時這條會紅，不必靠下一次稽核才發現。
+ * 同時比對檔案表那一欄的每個 option 名 —— 新增選項時漏掉一列的失敗形態同樣是沉默的。
+ */
+test('#69 AC-6：docs/ARCHITECTURE.md〈設定〉的選項總數與每一列都跟註冊面一致', () => {
+  const doc = fs.readFileSync(path.resolve(__dirname, '..', '..', 'docs', 'ARCHITECTURE.md'), 'utf8');
+  const total = /Panel options 共 \*\*(\d+) 個\*\*/.exec(doc);
+  expect(total).not.toBeNull();
+
+  const paths = registeredOptions().map((o) => o.path);
+  expect(Number(total![1])).toBe(paths.length);
+  for (const p of paths) {
+    expect(doc).toContain(`| \`${p}\` |`);
+  }
+});
+
+test('#64 AC-1：flappingThreshold／flappingWindowMin 註冊在編輯器上，預設是「關閉」', () => {
+  const threshold = registeredOptions().find((o) => o.path === 'flappingThreshold');
+  expect(threshold).toBeDefined();
+  expect(threshold!.defaultValue).toBe(0);
+  expect(DEFAULT_OPTIONS.flappingThreshold).toBe(0);
+
+  const minutes = registeredOptions().find((o) => o.path === 'flappingWindowMin');
+  expect(minutes).toBeDefined();
+  expect(minutes!.defaultValue).toBe(10);
+  expect(DEFAULT_OPTIONS.flappingWindowMin).toBe(10);
+});
+
+test('#64 AC-6：flappingThreshold 的說明有「關閉」的語意與一個解析得出來的範例', () => {
+  const description = registeredOptions().find((o) => o.path === 'flappingThreshold')?.description ?? '';
+  // 範例要是**解析得出來**的設定，不是看起來像範例的字。
+  const example = /門檻 (\d+)、窗長 (\d+)/.exec(description);
+  expect(example).not.toBeNull();
+  expect(parseFlapping(Number(example![1]), Number(example![2])).config).toEqual({
+    threshold: 4,
+    windowMs: 10 * 60_000,
+  });
+  // 票文 AC-6 那句例子的兩半：窗內翻幾次就不念、穩定多久就恢復。
+  expect(description).toContain('10 分鐘內翻 4 次就先不念');
+  expect(description).toContain('穩定 10 分鐘後恢復');
+  // AC-1 的使用者可見面，以及 AC-5 第一項（門檻擋下的不計數）。
+  expect(description).toContain('0 或留空 = 關閉');
+  expect(description).toContain('不計入翻轉次數');
+});
+
+test('#64 AC-6：flappingWindowMin 的說明寫明它同時是「穩定多久解除」，且 0 視同關閉', () => {
+  const description = registeredOptions().find((o) => o.path === 'flappingWindowMin')?.description ?? '';
+  expect(description).toContain('穩定多久就解除抑制');
+  expect(description).toContain('視同關閉');
+});
+
+test('#64：窗長只在開了語音且門檻大於 0 時顯示（門檻 0 時它無從生效）', () => {
+  const minutes = registeredOptions().find((o) => o.path === 'flappingWindowMin');
+  const showIf = minutes!.showIf!;
+  const base = { ...DEFAULT_OPTIONS };
+  expect(showIf({ ...base, flappingThreshold: 4 })).toBe(true);
+  expect(showIf({ ...base, flappingThreshold: 0 })).toBeFalsy();
+  expect(showIf({ ...base })).toBeFalsy();
+  expect(showIf({ ...base, flappingThreshold: 4, enableTTS: false })).toBeFalsy();
 });

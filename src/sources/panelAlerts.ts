@@ -19,6 +19,11 @@
  *     startsAt 餵進 fingerprint，dedup 整條失效，症狀是「每 30 秒念一次」。
  *  3. **每次評估都無條件 emit**：重複抑制完全交給 `dedup.ts`，本層不記「我播過了沒」。
  *     這讓 dedup 既有語意（6 個測試）原封不動就是對的。
+ *
+ * **告警名就是去重單位**：本層的 fingerprint 是 `alert:${名字}`，而名字默認取
+ * `labels.alertname`。Grafana 會用規則名覆蓋每個 instance 的 `alertname`，所以
+ * 「一條總規則查整面值班牆」時每則告警的名字都一樣、只念得到第一則 ——
+ * `alertNameLabel`（#69）讓呼叫端指定改讀哪個 label，詳見 `alertNameOf()`。
  */
 import type { ParsedAlert } from '../core/types';
 import { panelRulesOf } from './panelRules';
@@ -51,7 +56,16 @@ export interface RuleDetail {
   activeAt?: string;
 }
 
-export type RulesFetcher = (dashboardUid: string, panelId: number) => Promise<RuleDetail[]>;
+/**
+ * 取規則細節。第三個參數是「用哪個 label 當告警名」（#69），由來源層在**評估當下**
+ * 從選項讀出後帶進來 —— fetcher 自己不持有設定，所以換選項不必重建 fetcher。
+ * 既有的實作與測試替身只收前兩個參數也照樣成立（多餘的參數在 TS 與 JS 都合法）。
+ */
+export type RulesFetcher = (
+  dashboardUid: string,
+  panelId: number,
+  alertNameLabel?: string
+) => Promise<RuleDetail[]>;
 
 export interface PanelAlertSourceOptions {
   panelId: number;
@@ -68,6 +82,15 @@ export interface PanelAlertSourceOptions {
    * 而預設窗是 Infinity,於是這個 fingerprint 再也不會出聲。
    */
   fallbackSeverity: string | (() => string);
+  /**
+   * 用哪個 instance label 當告警名與去重單位（#69）。空字串／不給 = `alertname`，
+   * 行為與沒有這個選項時**逐字相同**。
+   *
+   * **可以給函式** —— 理由與 `fallbackSeverity` 完全相同：它在 `evaluate` 當下才被讀，
+   * 呼叫端不必為了換這個值而重建整個 source（重建會清空 `episodes`，那正是第 2 條
+   * 不變量要擋的事）。換值本身要做的事在 `forgetOnLabelChange()`。
+   */
+  alertNameLabel?: string | (() => string);
   /** 規則細節的快取秒數；同一個 episode 期間不必反覆打端點。 */
   ruleCacheSec?: number;
   /**
@@ -94,7 +117,13 @@ export interface PanelAlertSource {
  * 走訪與「綁在本 panel 嗎」的比對在 `panelRules.ts`（三個 parser 共用）；這裡只負責
  * 從一條規則取出 ParsedAlert 要的欄位。
  */
-export function parseRulesResponse(raw: unknown, dashboardUid: string, panelId: number): RuleDetail[] {
+export function parseRulesResponse(
+  raw: unknown,
+  dashboardUid: string,
+  panelId: number,
+  alertNameLabel?: string
+): RuleDetail[] {
+  const nameLabel = (alertNameLabel ?? '').trim();
   const out: RuleDetail[] = [];
   for (const { rule, annotations: ann } of panelRulesOf<FiringRule>(raw, dashboardUid, panelId)) {
     const firing = (rule.alerts ?? []).filter((a) => String(a.state ?? '').toLowerCase() === 'alerting');
@@ -102,7 +131,7 @@ export function parseRulesResponse(raw: unknown, dashboardUid: string, panelId: 
       const labels = a.labels ?? rule.labels ?? {};
       const aAnn = a.annotations ?? ann;
       out.push({
-        alertname: labels['alertname'] ?? rule.name ?? 'unknown',
+        alertname: alertNameOf(labels, rule.name, nameLabel),
         severity: labels['severity'] ?? 'unknown',
         ...(aAnn['summary'] !== undefined ? { summary: aAnn['summary'] } : {}),
         // ⚠️ value 是**字串科學記號**（實測 "1e+00"），不是數字。
@@ -112,6 +141,35 @@ export function parseRulesResponse(raw: unknown, dashboardUid: string, panelId: 
     }
   }
   return out;
+}
+
+/**
+ * 一個 instance 的告警名（#69）。
+ *
+ * **為什麼需要指定 label**：Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`
+ * （eks-infra#1210 實測）。所以「一條總規則查 `ALERTS{alertstate="firing"}`」這種值班牆
+ * 用法，到 panel 手上每個 instance 的 `alertname` 全是同一個規則名 —— 名字相同，
+ * fingerprint 就相同，於是一條規則底下不管燒幾則**只念第一則**。
+ * 把原名用 `label_replace` 保留成另一個 label（例：`wall_alertname`）之後，
+ * 這一欄指的就是「去讀那個 label」。
+ *
+ * 三條規則，順序有意義：
+ *  1. `nameLabel` 為空 → 回 `labels.alertname ?? rule.name ?? 'unknown'`，
+ *     與沒有這個選項時**逐字相同**（#69 AC-1 的機械保證：空字串走的是同一行運算式）。
+ *  2. 指定的 label 在**這個 instance** 上有非空白的值 → 用它（修剪前後空白）。
+ *     逐 instance 判斷，所以同一條規則裡帶與不帶的可以並存（AC-3）。
+ *  3. 不存在、空字串或只有空白 → 退回第 1 條。**不留空名**：空名會讓 fingerprint
+ *     變成 `alert:`、播報句念成「偵測到告警：」後面一片空白（#19→#30→#39→#46 同一族的缺值坑）。
+ */
+function alertNameOf(labels: Record<string, string>, ruleName: string | undefined, nameLabel: string): string {
+  const fallback = labels['alertname'] ?? ruleName ?? 'unknown';
+  if (!nameLabel) {
+    return fallback;
+  }
+  // String() 而不是直接 .trim()：label 值在 runtime 沒有型別保證（回應是 JSON），
+  // 拿到數字時 .trim() 會丟 TypeError，而這一層的契約是「形狀不對回空陣列、不丟例外」。
+  const picked = String(labels[nameLabel] ?? '').trim();
+  return picked !== '' ? picked : fallback;
 }
 
 /** `parseRulesResponse` 讀得到的欄位（rules 端點回應無型別保證，形狀宣告留在用它的地方）。 */
@@ -142,22 +200,77 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
 
   /** fingerprint → 該 episode 的 firing 事件本身（不變量 1 與 2 的載體）。 */
   const episodes = new Map<string, ParsedAlert>();
-  let cache: { at: number; rules: RuleDetail[] } | null = null;
+  /** 快取**連著取名用的 label 一起記**（#69）—— 理由見 `rules()` 裡的比對。 */
+  let cache: { at: number; label: string; rules: RuleDetail[] } | null = null;
+
+  /** 目前這一輪要用哪個 label 取名（#69）；函式型的選項在這裡才被讀。 */
+  function nameLabel(): string {
+    const v = typeof opts.alertNameLabel === 'function' ? opts.alertNameLabel() : opts.alertNameLabel;
+    return (v ?? '').trim();
+  }
 
   async function rules(dashboardUid: string): Promise<RuleDetail[]> {
     const t = now();
-    if (cache && t - cache.at < cacheMs) {
+    const label = nameLabel();
+    // ⚠️ 快取的命中條件**含 label**：手上那份清單的 `alertname` 是用**當時**那個 label
+    // 取的，換了 label 之後整份都是舊命名（fingerprint 跟著錯），而預設快取窗是 10 秒。
+    // 不比對 label 的話，剛改好選項的那 10 秒內看到的還是「只念第一則」的舊行為 ——
+    // 使用者會以為選項沒生效。比對條件寫在這裡，而不是在別處記得去 `cache = null`。
+    if (cache && cache.label === label && t - cache.at < cacheMs) {
       return cache.rules;
     }
     try {
-      const fetched = await opts.fetchRules(dashboardUid, opts.panelId);
-      cache = { at: t, rules: fetched };
+      // ⚠️ label 為空時**連第三個參數都不傳**，讓呼叫與這個選項不存在時逐字相同（#69 AC-1）。
+      // 不是美觀考量：既有的接線測試用 `toHaveBeenCalledWith('dash-1', 7)` 檢查這個呼叫，
+      // 而 jest 的那個比對連參數個數都算 —— 多傳一個空字串就會讓它變紅，而 AC-1 要的是
+      // 「留空時行為完全相同、既有測試不改」。於是預設路徑在「連呼叫形狀都一樣」這個
+      // 層級上被釘住，而不只是「結果一樣」。
+      const args: [string, number, string?] = label ? [dashboardUid, opts.panelId, label] : [dashboardUid, opts.panelId];
+      const fetched = await opts.fetchRules(...args);
+      cache = { at: t, label, rules: fetched };
       return fetched;
     } catch {
       // 端點無官方穩定性保證 —— 失敗是預期內的一種結果，不是例外。
       // 降級成單一泛用事件，由呼叫端照常播報。
-      cache = { at: t, rules: [] };
+      cache = { at: t, label, rules: [] };
       return [];
+    }
+  }
+
+  /** 上一輪實際用來取名的 label；`null` = 還沒評估過（第一輪不算「換過」）。 */
+  let lastLabel: string | null = null;
+
+  /**
+   * 換了 `alertNameLabel` 之後，手上那些 episode 的 fingerprint 是用**舊命名規則**
+   * 算的（#69）。它們不會出現在這一輪的 `detail` 裡，於是會掉進下面那個差集迴圈、
+   * 被當成「恢復了」—— 使用者在編輯面板裡填上 `wall_alertname` 的那一刻，
+   * 會先聽到一句「規則名 已恢復」（而告警其實一直在燒），然後才聽到新名字的 firing。
+   *
+   * 這正是 `onSupersede` 存在的情境：**被取代，不是恢復**（降級路徑的泛用 episode 同理）。
+   * 所以改名規則時把舊 episode 刪掉並請 dedup 一起忘掉 —— 不播恢復句，而新名字的
+   * episode 這一輪就會重新建立、照常播一次 firing。
+   *
+   * 只在 `alerting` 那條路徑上呼叫：`ok` 的那一輪要用**舊名字**念恢復句
+   * （念出去的是哪個名字，恢復就該是哪個名字），而 `resolvedAll()` 本來就會清空 episodes。
+   */
+  function forgetOnLabelChange(): void {
+    const label = nameLabel();
+    if (lastLabel === label) {
+      return;
+    }
+    const changed = lastLabel !== null;
+    lastLabel = label;
+    if (!changed) {
+      return;
+    }
+    for (const fp of [...episodes.keys()]) {
+      // 降級路徑的泛用 episode 與 label 無關（名字固定是「告警」），留著 ——
+      // 丟掉它只會讓同一句泛用句再念一次。
+      if (fp === `alert:panel:${opts.panelId}`) {
+        continue;
+      }
+      episodes.delete(fp);
+      opts.onSupersede?.(fp);
     }
   }
 
@@ -214,6 +327,7 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
       }
 
       // state === 'alerting'
+      forgetOnLabelChange();
       const detail = dashboardUid ? await rules(dashboardUid) : [];
       const nowIso = new Date(now()).toISOString();
 
@@ -251,6 +365,12 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
       for (const d of detail) {
         // fingerprint 用 alertname —— 一個 panel 可以綁多條規則，用 panelId 會把它們併成一個。
         // 不含 startsAt（不變量 2）、不含 value（它每次 refresh 都在變）。
+        //
+        // `d.alertname` 自 #69 起是**逐 instance 取好的名字**（指定 label 時取那個 label
+        // 的值，否則照舊是 `labels.alertname ?? rule.name`），所以一條總規則底下的每則
+        // 告警各有自己的 fingerprint、各自成為一個 episode。
+        // 反面也刻意不變：**名字相同就共用 fingerprint**，跨規則亦然（key 不含 panelId
+        // 與規則名，見上一段）—— 同一個告警在兩條規則下燒，仍然只念一次。
         const fp = `alert:${d.alertname}`;
         stillFiring.add(fp);
         const existing = episodes.get(fp);

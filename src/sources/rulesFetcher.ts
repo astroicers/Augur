@@ -15,7 +15,10 @@ export const RULES_ENDPOINT = '/api/prometheus/grafana/api/v1/rules';
 
 export const fetchPanelRules: RulesFetcher = async (
   dashboardUid: string,
-  panelId: number
+  panelId: number,
+  // 「用哪個 label 當告警名」（#69）。端點不認得這個概念 —— 它純粹是**解析**的參數，
+  // 由來源層在評估當下從 panel 選項讀出後帶進來，所以不進查詢字串。
+  alertNameLabel?: string
 ): Promise<RuleDetail[]> => {
   // 實測 dashboard_uid + panel_id 過濾有效（全庫 9 條縮到 1 條）。
   // parseRulesResponse 仍會再比對一次註解 —— 過濾參數若被忽略，
@@ -24,5 +27,5 @@ export const fetchPanelRules: RulesFetcher = async (
     dashboard_uid: dashboardUid,
     panel_id: panelId,
   });
-  return parseRulesResponse(raw, dashboardUid, panelId);
+  return parseRulesResponse(raw, dashboardUid, panelId, alertNameLabel);
 };

@@ -407,3 +407,313 @@ test('降級 episode 的 severity 跟著目前的 fallbackSeverity 走 —— �
   // startsAt 仍然釘死在第一次 —— 跟上的只有猜測值，不是事實欄位。
   expect(second[0]!.startsAt).toBe(first[0]!.startsAt);
 });
+
+// ---------------------------------------------------------------------------
+// #69：以指定 label 當告警名與去重 key
+//
+// 實測依據（eks-infra#1210）：一條 Grafana 總規則查值班牆的
+// `ALERTS{alertstate="firing"}`，Grafana 用**規則名覆蓋**每個 instance 的 `alertname`，
+// 原名由 `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` 留在 instance label。
+//
+// 這一段的 source 測試刻意讓假 fetcher **跑真的 `parseRulesResponse`**：選項要經過
+// 「source 讀選項 → 帶給 fetcher → 解析時取名 → fingerprint」整條路才算接通，
+// 直接餵 `RuleDetail[]` 的話把這條線接錯了測試照樣綠。
+// ---------------------------------------------------------------------------
+
+/** 值班牆的形狀：一條總規則、兩個 firing instance，alertname 都被規則名蓋掉。 */
+function wallResponse(alerts?: unknown[]) {
+  return {
+    data: {
+      groups: [
+        {
+          rules: [
+            {
+              name: 'OncallWall',
+              state: 'firing',
+              labels: { severity: 'warning' },
+              annotations: { __dashboardUid__: UID, __panelId__: String(PANEL), summary: '總規則的摘要' },
+              alerts: alerts ?? [
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'Watchdog', severity: 'info' },
+                  annotations: { summary: '看門狗還活著' },
+                  value: '1e+00',
+                  activeAt: '2026-10-15T01:00:00Z',
+                },
+                {
+                  state: 'Alerting',
+                  labels: { alertname: 'OncallWall', wall_alertname: 'KubeletTooManyPods', severity: 'critical' },
+                  annotations: { summary: 'pod 數量過多' },
+                  value: '2.5e+02',
+                  activeAt: '2026-10-15T02:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/** 跑真的解析的 source：`alertNameLabel` 由 `label()` 在每一輪評估當下讀。 */
+function wallSource(
+  label: () => string,
+  raw: () => unknown,
+  clock = { t: 1_000_000 },
+  onSupersede?: (fp: string) => void
+) {
+  return createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules: async (uid, panelId, alertNameLabel) => parseRulesResponse(raw(), uid, panelId, alertNameLabel),
+    fallbackSeverity: 'critical',
+    alertNameLabel: label,
+    ruleCacheSec: 0,
+    now: () => clock.t,
+    ...(onSupersede ? { onSupersede } : {}),
+  });
+}
+
+test('#69 AC-1：留空或填 alertname 時，解析結果與沒有這個選項時逐字相同', () => {
+  const baseline = parseRulesResponse(rulesResponse(), UID, PANEL);
+  expect(parseRulesResponse(rulesResponse(), UID, PANEL, '')).toEqual(baseline);
+  expect(parseRulesResponse(rulesResponse(), UID, PANEL, '   ')).toEqual(baseline);
+  expect(parseRulesResponse(rulesResponse(), UID, PANEL, 'alertname')).toEqual(baseline);
+
+  // 值班牆那條總規則也一樣：留空時兩個 instance 都還是規則名（也就是現行的「只念第一則」）。
+  const wall = parseRulesResponse(wallResponse(), UID, PANEL);
+  expect(wall.map((d) => d.alertname)).toEqual(['OncallWall', 'OncallWall']);
+  expect(parseRulesResponse(wallResponse(), UID, PANEL, 'alertname')).toEqual(wall);
+});
+
+test('#69 AC-1：留空時一條總規則底下的兩則仍共用 fingerprint（本票不改這個既有語意）', async () => {
+  const s = wallSource(() => '', () => wallResponse());
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+  expect(new Set(out.map((a) => a.fingerprint))).toEqual(new Set(['alert:OncallWall']));
+  expect(s.episodeCount()).toBe(1);
+});
+
+test('#69 AC-2：指定 label → 兩個 RuleDetail，severity／summary／value 各自取自該 instance', () => {
+  const out = parseRulesResponse(wallResponse(), UID, PANEL, 'wall_alertname');
+  expect(out).toEqual([
+    {
+      alertname: 'Watchdog',
+      severity: 'info',
+      summary: '看門狗還活著',
+      value: 1,
+      activeAt: '2026-10-15T01:00:00Z',
+    },
+    {
+      alertname: 'KubeletTooManyPods',
+      severity: 'critical',
+      summary: 'pod 數量過多',
+      value: 250,
+      activeAt: '2026-10-15T02:00:00Z',
+    },
+  ]);
+});
+
+test('#69 AC-2：指定 label → 兩個 ParsedAlert，name 與 fingerprint 各自成立', async () => {
+  const s = wallSource(() => 'wall_alertname', () => wallResponse());
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+
+  expect(out).toHaveLength(2);
+  expect(out.map((a) => a.name)).toEqual(['Watchdog', 'KubeletTooManyPods']);
+  expect(out.map((a) => a.fingerprint)).toEqual(['alert:Watchdog', 'alert:KubeletTooManyPods']);
+  // 每一則的內容都是自己那個 instance 的，不是第一個 instance 的。
+  expect(out.map((a) => a.severity)).toEqual(['info', 'critical']);
+  expect(out.map((a) => a.summary)).toEqual(['看門狗還活著', 'pod 數量過多']);
+  expect(out.map((a) => a.value)).toEqual([1, 250]);
+  // startsAt 取各自的 activeAt（不變量 2：Grafana 給的 episode 起點比本地時鐘準）。
+  expect(out.map((a) => a.startsAt)).toEqual(['2026-10-15T01:00:00Z', '2026-10-15T02:00:00Z']);
+  expect(s.episodeCount()).toBe(2);
+});
+
+test('#69 AC-2：選項前後的空白不算（編輯器裡貼 label 名很容易帶到空白）', () => {
+  const out = parseRulesResponse(wallResponse(), UID, PANEL, '  wall_alertname  ');
+  expect(out.map((d) => d.alertname)).toEqual(['Watchdog', 'KubeletTooManyPods']);
+});
+
+test('#69 AC-3：label 不存在／空字串／只有空白的 instance 退回 alertname，可與帶 label 的並存', () => {
+  const out = parseRulesResponse(
+    wallResponse([
+      {
+        state: 'Alerting',
+        labels: { alertname: 'OncallWall', wall_alertname: 'Watchdog', severity: 'info' },
+        annotations: {},
+      },
+      // label 不存在
+      { state: 'Alerting', labels: { alertname: 'LegacyRule', severity: 'warning' }, annotations: {} },
+      // label 是空字串
+      { state: 'Alerting', labels: { alertname: 'EmptyLabel', wall_alertname: '', severity: 'warning' }, annotations: {} },
+      // label 只有空白 —— 不 trim 的話名字會是空白，fingerprint 變成 `alert:   `，
+      // 播報句念成「偵測到告警：」後面一片空白（#19→#30→#39→#46 同一族的缺值坑）。
+      { state: 'Alerting', labels: { alertname: 'BlankLabel', wall_alertname: '   ', severity: 'warning' }, annotations: {} },
+      // 連 alertname 都沒有 → 退到規則名
+      { state: 'Alerting', labels: { severity: 'warning' }, annotations: {} },
+    ]),
+    UID,
+    PANEL,
+    'wall_alertname'
+  );
+  expect(out.map((d) => d.alertname)).toEqual([
+    'Watchdog',
+    'LegacyRule',
+    'EmptyLabel',
+    'BlankLabel',
+    'OncallWall',
+  ]);
+});
+
+test('#69 AC-3：label 值前後的空白會修掉（名字與 fingerprint 都不帶空白）', async () => {
+  const s = wallSource(
+    () => 'wall_alertname',
+    () =>
+      wallResponse([
+        {
+          state: 'Alerting',
+          labels: { alertname: 'OncallWall', wall_alertname: '  Watchdog  ', severity: 'info' },
+          annotations: {},
+        },
+      ])
+  );
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+  expect(out.map((a) => a.name)).toEqual(['Watchdog']);
+  expect(out.map((a) => a.fingerprint)).toEqual(['alert:Watchdog']);
+});
+
+test('#69：不同規則底下 label 值相同時仍共用 fingerprint（key 刻意不含規則名與 panelId）', async () => {
+  const two = {
+    data: {
+      groups: [
+        {
+          rules: [
+            {
+              name: 'WallA',
+              annotations: { __dashboardUid__: UID, __panelId__: String(PANEL) },
+              alerts: [
+                { state: 'Alerting', labels: { wall_alertname: 'Watchdog', severity: 'warning' }, annotations: {} },
+              ],
+            },
+            {
+              name: 'WallB',
+              annotations: { __dashboardUid__: UID, __panelId__: String(PANEL) },
+              alerts: [
+                { state: 'Alerting', labels: { wall_alertname: 'Watchdog', severity: 'critical' }, annotations: {} },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const s = wallSource(() => 'wall_alertname', () => two);
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+  // 兩條規則、同一個名字 → 一個 episode、一個 fingerprint（同一個告警不念兩次）。
+  // 本票把 key 從規則名換成 label 值，跨規則同名合併的語意不變 —— 寫明以免日後當 bug 重開。
+  expect(new Set(out.map((a) => a.fingerprint))).toEqual(new Set(['alert:Watchdog']));
+  expect(s.episodeCount()).toBe(1);
+});
+
+test('#69 AC-4：兩則之中一則恢復 → 只有那一則念恢復句，另一則照舊抑制', async () => {
+  const clock = { t: 1_000_000 };
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+  let raw: unknown = wallResponse();
+  const s = wallSource(() => 'wall_alertname', () => raw, clock, (fp) => dedup.forget(fp));
+
+  const spoken: string[] = [];
+  const tick = async (state: string) => {
+    for (const ev of await s.evaluate({ state }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+
+  await tick('alerting');
+  expect(spoken).toEqual(['Watchdog/firing', 'KubeletTooManyPods/firing']);
+
+  // Watchdog 恢復（不再 firing），總規則仍在燒 → alertState 還是 alerting。
+  clock.t += 60_000;
+  raw = wallResponse([
+    {
+      state: 'Alerting',
+      labels: { alertname: 'OncallWall', wall_alertname: 'KubeletTooManyPods', severity: 'critical' },
+      annotations: { summary: 'pod 數量過多' },
+    },
+  ]);
+  await tick('alerting');
+  // 只多了 Watchdog 的恢復句；KubeletTooManyPods 照舊被 dedup 抑制。
+  expect(spoken).toEqual(['Watchdog/firing', 'KubeletTooManyPods/firing', 'Watchdog/resolved']);
+  expect(s.episodeCount()).toBe(1);
+
+  // 下一輪也不得再念一次恢復
+  clock.t += 60_000;
+  await tick('alerting');
+  expect(spoken).toHaveLength(3);
+});
+
+test('#69：改了 alertNameLabel 之後，舊 episode 算「被取代」而不是「恢復」', async () => {
+  // 使用者在編輯面板裡填上 wall_alertname 的那一刻，手上的 episode 是用舊命名算的
+  // fingerprint。若當成恢復，會先聽到一句「OncallWall 已恢復」—— 而告警其實一直在燒。
+  const clock = { t: 1_000_000 };
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+  const forgotten: string[] = [];
+  let label = '';
+  const s = wallSource(
+    () => label,
+    () => wallResponse(),
+    clock,
+    (fp) => {
+      forgotten.push(fp);
+      dedup.forget(fp);
+    }
+  );
+
+  const spoken: string[] = [];
+  const tick = async (state: string) => {
+    for (const ev of await s.evaluate({ state }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+
+  await tick('alerting');
+  expect(spoken).toEqual(['OncallWall/firing']);
+
+  label = 'wall_alertname';
+  clock.t += 60_000;
+  await tick('alerting');
+  expect(forgotten).toEqual(['alert:OncallWall']);
+  expect(spoken).toEqual(['OncallWall/firing', 'Watchdog/firing', 'KubeletTooManyPods/firing']);
+  expect(s.episodeCount()).toBe(2);
+});
+
+test('#69：rules 快取連 label 一起記 —— 改了選項不必等快取到期', async () => {
+  // ⚠️ 用 production 預設的 10 秒快取窗（其餘 source 測試傳 0，等於把快取關掉）。
+  // 不比對 label 的話，改好選項之後那 10 秒看到的還是舊命名，使用者會以為選項沒生效。
+  const clock = { t: 1_000_000 };
+  const seen: Array<string | undefined> = [];
+  let label = '';
+  const s = createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules: async (uid, panelId, alertNameLabel) => {
+      seen.push(alertNameLabel);
+      return parseRulesResponse(wallResponse(), uid, panelId, alertNameLabel);
+    },
+    fallbackSeverity: 'critical',
+    alertNameLabel: () => label,
+    ruleCacheSec: 10,
+    now: () => clock.t,
+  });
+
+  await s.evaluate({ state: 'alerting' }, UID);
+  clock.t += 1_000; // 仍在快取窗內
+  label = 'wall_alertname';
+  const out = await s.evaluate({ state: 'alerting' }, UID);
+
+  // 留空那一輪連第三個參數都不傳（AC-1：呼叫形狀與這個選項不存在時逐字相同）。
+  expect(seen).toEqual([undefined, 'wall_alertname']);
+  expect(out.filter((a) => a.status === 'firing').map((a) => a.name)).toEqual(['Watchdog', 'KubeletTooManyPods']);
+});
