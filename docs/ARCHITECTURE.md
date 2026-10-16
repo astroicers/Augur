@@ -6,7 +6,10 @@
 > 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
 > 前一次是 2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
 > 去重單位，一條總規則底下的每則告警各自播報；#64：新增 `flappingThreshold`／`flappingWindowMin`
-> 兩個選項——抖動抑制，判斷在導播的交付閘門上、排在值班靜音時段之前）。
+> 兩個選項——抖動抑制，判斷在導播的交付閘門上、排在值班靜音時段之前；#71：新增 `speakValue`
+> ——關掉就不念「目前數值」子句，播報與播報紀錄共用 `buildBroadcastPlan` 的同一個開關）。
+> 前一次是 2026-10-15（#63：新增 `quietHours`／`quietAllowCritical` 兩個選項——
+> dashboard 層級的值班靜音時段，判斷在導播的交付閘門上）。
 
 ## 一句話
 
@@ -138,7 +141,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 
 ## 設定
 
-Panel options 共 **18 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
+Panel options 共 **19 個**。權威是 `src/module.ts` 的 `setPanelOptions`（型別與預設值在
 `src/panelOptions.ts`）—— 這裡只是導覽，加減選項時兩邊一起改。這個數字與下表的每一列
 由 `src/__tests__/module-options.test.ts` 對著註冊面機械比對（#69），漏改會紅：
 
@@ -150,6 +153,7 @@ Panel options 共 **18 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
+| `speakValue` | `true`（念） | 播報句與播報紀錄要不要帶「目前數值 N」子句（#71）。條件只是 0／1 或查 `ALERTS`（值恆為 1）時數值沒有意義，關掉只少那一段、其餘子句逐字不變 |
 | `enableTTS` | `true` | 關掉就只更新畫面不發聲（對所有觀看者生效；panel 標題列的語音開關只管自己這台瀏覽器） |
 | `quietHours` | `''`（無排程） | 值班靜音時段 `22:00-07:00`：時段內照樣更新畫面，只是不念（#63）。**起點含、終點不含**；跨午夜與不跨午夜都支援。留空或格式錯誤即與沒有這個選項時完全相同 |
 | `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing（恢復句不念）。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果 |
@@ -170,6 +174,12 @@ Panel options 共 **18 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 （延續 2026-09-18 不擴 `Emotion` 那次裁定所依據的純函式語意）。
 播報句與 `BroadcastPlan.severity` 保留原始 label（仍走 #39 的 `speakableSeverity`：去掉前後空白、
 轉小寫，缺值、空白與非字串一律收斂成 `unknown`，見 `src/core/format.ts`）。
+
+`speakValue`（#71）的判斷在 `core/format.ts`（`spokenValue`：`false` 才省略，缺鍵／`undefined` 與 `true` 同義，
+所以舊 dashboard 的句子逐字不變），中英兩套共用同一份。選項**不經** `showIf: enableTTS`：
+關掉語音後播報紀錄照樣顯示句子，那些句子一樣吃這個開關 —— 導播與紀錄兩條路都走
+`buildBroadcastPlan` 並把它原樣轉手，紀錄句與播報句因此仍然逐字相同（G-ADR006-2）。
+`BroadcastPlan.value` 欄位不受影響（那是給 feed／除錯讀的原值，不是念出來的那一段）。
 
 `alertNameLabel`（#69）動的是**名字**，而名字就是**去重單位**：來源層的 fingerprint 是
 `alert:${名字}`（不含 panelId 也不含規則名，所以同名的告警跨規則仍然只念一次）。

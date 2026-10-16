@@ -115,6 +115,27 @@ test('#63：quietAllowCritical 只在設了時段且開著語音時顯示（沒�
   expect(showIf({ ...base, quietHours: '22:00-07:00', enableTTS: false })).toBeFalsy();
 });
 
+test('#71 AC-1：speakValue 註冊在編輯器上，預設是「開」（念數值）', () => {
+  const opt = registeredOptions().find((o) => o.path === 'speakValue');
+  expect(opt).toBeDefined();
+  expect(opt!.defaultValue).toBe(true);
+  expect(DEFAULT_OPTIONS.speakValue).toBe(true);
+});
+
+test('#71 AC-4：speakValue 的說明寫明用途（條件只是 0／1 或查 ALERTS 時數值沒有意義）', () => {
+  const description = registeredOptions().find((o) => o.path === 'speakValue')?.description ?? '';
+  expect(description).toContain('ALERTS');
+  expect(description).toContain('0／1');
+  expect(description).toContain('沒有意義');
+  // 關掉只少那一段，其餘逐字不變（AC-2 的使用者可見面）。
+  expect(description).toContain('逐字不變');
+});
+
+test('#71：speakValue 不受「開啟語音」左右 —— 播報紀錄的句子也吃它，所以不藏起來', () => {
+  const opt = registeredOptions().find((o) => o.path === 'speakValue');
+  expect(opt!.showIf).toBeUndefined();
+});
+
 test('#69 AC-1：alertNameLabel 註冊在編輯器上，預設是空字串（= 照舊用 alertname）', () => {
   const opt = registeredOptions().find((o) => o.path === 'alertNameLabel');
   expect(opt).toBeDefined();

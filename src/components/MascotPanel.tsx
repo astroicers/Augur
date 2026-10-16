@@ -322,6 +322,10 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // （重新評估、重新打 history 端點）。D10 那條「一律 useRef 而非 useMemo」擋的是
   // 有狀態的物件；這裡連 memo 都不需要，解析是幾次 split，一輪評估跑一次就好。
   const severityAliasSpec = options.severityAliases ?? '';
+  // 「目前數值」子句（#71）。舊 dashboard 的 JSON 沒有這個鍵 → `?? true` → 與沒有這個選項時
+  // 完全相同。判斷不在這裡：元件只把它原樣帶進導播的每一輪設定與紀錄的參數，
+  // 真正決定要不要組那一段的是 `core/format.ts`（播報與紀錄因此共用同一份判斷）。
+  const speakValue = options.speakValue ?? true;
   // 告警名稱取自哪個 label（#69）。**純接線**：名字與 fingerprint 是來源層的職責
   // （`sources/panelAlerts.ts` 的 `alertNameOf`），本檔只負責把這個字串原樣帶進每一輪的設定。
   // 前後空白在這裡就修掉 —— 編輯器裡貼 label 名稱很容易帶到空白，而一個帶空白的
@@ -790,12 +794,15 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // 放進 deps 只會讓「在編輯面板裡改那幾個選項」各多打一次 rules 端點。
     // 代價是改了它們要等下一輪 refresh 才生效，而靜音時段的邊界本來就只在
     // refresh 當下才被看一眼（時段結束不補念，所以沒有「錯過一輪」這回事）。
+    // `speakValue`（#71）**在** deps 裡，與 `alertLang` 同一類：它改的是句子本身，
+    // 在編輯面板裡撥了之後要能立刻看到新句子（紀錄那個 effect 同理）。
     const settings: DirectorSettings = {
       minSeverity,
       repeatFiringMin,
       fallbackSeverity,
       alertNameLabel,
       alertLang,
+      speakValue,
       severityAliasSpec,
       quietHours,
       quietAllowCritical,
@@ -831,7 +838,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, id, minSeverity, alertLang, severityAliasSpec, directorFor]);
+  }, [data, id, minSeverity, alertLang, speakValue, severityAliasSpec, directorFor]);
 
   // ADR-006：每次 panel data 刷新就重讀一次這個 panel 的告警歷史。
   // ⚠️ 這裡的結果**只給 feed 顯示，永遠不進播報器、也不經導播**（決策 5）——
@@ -860,6 +867,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         historyToEntries(h.raw, h.templates, {
           minSeverity,
           lang: alertLang,
+          speakValue,
           aliases: parseSeverityAliases(severityAliasSpec).aliases,
           alertNameLabel,
         })
@@ -891,7 +899,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // 列兩次，也就是 #70 AC-5 要擋的那件事。兩邊都只在 `data` 刷新時讀，換名於是同進同退；
     // 代價是改了要等下一輪 refresh 生效（與 #69 在 README 與編輯器說明裡寫的那句一致）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, id, minSeverity, alertLang, severityAliasSpec]);
+  }, [data, id, minSeverity, alertLang, speakValue, severityAliasSpec]);
 
   // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
   // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。

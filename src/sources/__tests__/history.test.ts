@@ -508,3 +508,74 @@ describe('#70：紀錄的名字跟著 alertNameLabel', () => {
     });
   });
 });
+
+/**
+ * #71 AC-3：`speakValue` 關掉時，**紀錄句**也不含數值子句 —— 而且不是另寫一套措辭：
+ * 期望值由同一個 `buildBroadcastPlan`（走真的即時管線的那則告警）產出，
+ * 所以「紀錄與播報共用組句入口」這件事本身就是斷言的一部分（G-ADR006-2）。
+ */
+describe('#71 speakValue 與播報紀錄', () => {
+  test('AC-1：不傳 speakValue 時紀錄句與先前逐字相同（數值照念）', () => {
+    const [e] = historyToEntries([ann({})], templates(), { minSeverity: '', lang: 'zh' }).entries;
+    expect(e!.text).toBe(
+      '偵測到告警：MerakContainerMemoryHigh，嚴重度 warning，目前數值 0.93，merak-prod api-7f9c/app 記憶體 > 90% limit（10m）。'
+    );
+    // 明文傳 true 與不傳同義。
+    const [same] = historyToEntries([ann({})], templates(), { minSeverity: '', lang: 'zh', speakValue: true }).entries;
+    expect(same!.text).toBe(e!.text);
+  });
+
+  test('AC-3：關掉後紀錄句不含數值子句，其餘逐字不變（中英兩套）', () => {
+    const expected = {
+      zh: '偵測到告警：MerakContainerMemoryHigh，嚴重度 warning，merak-prod api-7f9c/app 記憶體 > 90% limit（10m）。',
+      en: 'Alert firing: MerakContainerMemoryHigh, severity warning, merak-prod api-7f9c/app 記憶體 > 90% limit（10m）.',
+    };
+    for (const lang of ['zh', 'en'] as const) {
+      const [e] = historyToEntries([ann({})], templates(), { minSeverity: '', lang, speakValue: false }).entries;
+      expect([lang, e!.text]).toEqual([lang, expected[lang]]);
+      expect(e!.text).not.toContain('目前數值');
+      expect(e!.text).not.toContain('current value');
+    }
+  });
+
+  test('AC-3：關掉後紀錄句仍與播報句逐字相同（兩邊共用 buildBroadcastPlan）', async () => {
+    const rendered = 'merak-prod api-7f9c/app 記憶體 > 90% limit（10m）';
+    const source = createPanelAlertSource({
+      panelId: PANEL,
+      fallbackSeverity: 'critical',
+      ruleCacheSec: 0,
+      fetchRules: async () => [
+        { alertname: 'MerakContainerMemoryHigh', severity: 'warning', summary: rendered, value: 0.934211 },
+      ],
+    });
+    const [liveFiring] = await source.evaluate({ state: 'alerting' }, DASH);
+    const [liveResolved] = await source.evaluate({ state: 'ok' }, DASH);
+
+    const hist = historyToEntries(
+      [ann({ id: 2, time: 2, prevState: 'Alerting', newState: 'Normal (NoData)' }), ann({ id: 1, time: 1 })],
+      templates(),
+      { minSeverity: '', lang: 'zh', speakValue: false }
+    ).entries;
+
+    expect(hist.map((e) => e.text)).toEqual([
+      buildBroadcastPlan(liveResolved!, 'zh', undefined, { speakValue: false }).text,
+      buildBroadcastPlan(liveFiring!, 'zh', undefined, { speakValue: false }).text,
+    ]);
+    // 開著時那一則才有數值子句 —— 關掉的這兩句確實少了那一段。
+    expect(buildBroadcastPlan(liveFiring!, 'zh').text).toContain('目前數值 0.93');
+    expect(hist[1]!.text).not.toContain('目前數值');
+  });
+
+  test('#71 × #51：關掉數值子句不影響別名（紀錄的門檻與表情照舊吃別名）', () => {
+    const out = historyToEntries([ann({ text: MEM_TEXT.replace('severity=warning', 'severity=P1') })], templates(), {
+      minSeverity: 'critical',
+      lang: 'zh',
+      aliases: parseSeverityAliases('P1=critical').aliases,
+      speakValue: false,
+    });
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0]!.plan.emotion).toBe('critical');
+    expect(out.entries[0]!.text).not.toContain('目前數值');
+    expect(out.entries[0]!.text).toContain('嚴重度 p1');
+  });
+});

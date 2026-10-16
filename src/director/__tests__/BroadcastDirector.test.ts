@@ -613,6 +613,29 @@ test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 
 });
 
 // ---------------------------------------------------------------------------
+// #71：speakValue 隨每一輪的設定帶進來（不變量 1 的同一條：設定不經 ref）
+
+test('#71 AC-1：不帶 speakValue 的設定（既有 fixture）念出的句子含數值子句', async () => {
+  const h = harness();
+  await h.run([alert()]);
+  expect(h.spoken[0]!.text).toContain('目前數值 93');
+});
+
+test('#71 AC-2：speakValue: false 的那一輪不念數值子句，其餘子句不變', async () => {
+  const h = harness();
+  await h.run([alert({ fingerprint: 'fp-on' })]);
+  await h.run([alert({ fingerprint: 'fp-off' })], { speakValue: false });
+  expect(h.spoken).toHaveLength(2);
+  expect(h.spoken[0]!.text).toBe('偵測到告警：CPU，嚴重度 critical，目前數值 93，CPU 過高。');
+  expect(h.spoken[1]!.text).toBe('偵測到告警：CPU，嚴重度 critical，CPU 過高。');
+  // 撥回去的下一輪又念 —— 設定隨呼叫帶進來，沒有被記在任何 ref 裡。
+  await h.run([alert({ fingerprint: 'fp-back' })], { speakValue: true });
+  expect(h.spoken[2]!.text).toContain('目前數值 93');
+  // plan 的 value 欄位不受影響（feed／除錯讀的是它）。
+  expect(h.spoken[1]!.value).toBe(93);
+});
+
+// ---------------------------------------------------------------------------
 // 告警名稱取自哪個 label（#69）—— 導播只是**原樣轉給來源層**，不解析也不判斷。
 // 名字與 fingerprint 是來源層的職責（`sources/panelAlerts.ts` 的 `alertNameOf`），
 // 這裡要釘住的只有一件事：來源層在**評估當下**讀到的是本輪設定帶進來的值。
@@ -831,6 +854,20 @@ test('#64：抑制中關掉抖動抑制，而當下狀態與最後念出去的�
   h.setClock(1_000_000 + 7 * MINUTE);
   await h.run([alert({ fingerprint: 'fp-flap' })], { ...FLAPPING, flappingThreshold: 0 });
   expect(h.spoken).toHaveLength(5);
+});
+
+test('#64 × #71：解除抑制時補念的那一句同樣吃 speakValue —— 關了數值子句就不念數值', async () => {
+  // 補念走 `deliverReleased()` 自己組句，那是 #71 寫成時還不存在的路徑；
+  // 沒把 speakValue 帶進去的話，關掉數值子句後只有補念那一句仍會念出「目前數值」。
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10, speakValue: false };
+  await flipRounds(h, 7, over); // 第 7 輪（firing）被抑制；抑制前最後念出去的是 resolved
+  expect(h.spoken).toHaveLength(6);
+  h.setClock(1_000_000 + 16 * MINUTE);
+  await h.run([], over);
+  expect(h.spoken).toHaveLength(7);
+  expect(h.spoken[6]!.status).toBe('firing');
+  expect(h.spoken[6]!.text).toBe('偵測到告警：CPU，嚴重度 critical，CPU 過高。');
 });
 
 test('#64：抑制中（最後是 firing）被取代 —— 解除時不補念，之後同一個 fingerprint 再燒起來念得出來', async () => {
