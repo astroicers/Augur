@@ -710,6 +710,56 @@ test('#84 AC-1：記錄的鍵是**實際交付** —— 那一刻沒有播報器
   expect(round.pending).toBeNull();
 });
 
+test('#84 AC-2：恢復句被每瀏覽器靜音擋下 —— 那一筆通行證要消掉，後來那個破不了靜音的 episode 不借它出聲', async () => {
+  // QA 回合補：寫入那一側等「實際交付」是對的，**消除**那一側等交付則會留下一筆過期的
+  // 通行證。恢復句被 ADR-007 的靜音鈕擋下時它不會再回到靜音閘門（dedup 已經收下），
+  // 而 fingerprint 不含 severity（來源層是 `alert:${名字}`），所以同一個名字之後那個
+  // 只有 warning 的 episode 恢復時會拿它破靜音 —— 使用者聽到一句從沒聽過前文的「已恢復」。
+  const h = harness();
+  h.setClock(at(15, 22, 0));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  // 被叫醒的人按下標題列的靜音鈕：這一句恢復一個字都沒出聲。
+  h.setMuted(true);
+  h.setClock(at(15, 22, 10));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  // 解除靜音；同一段時段內同一個名字再燒起來，這次只有 warning → 破不了靜音，沒人被叫醒。
+  h.setMuted(false);
+  h.setClock(at(15, 22, 20));
+  expect((await h.run([alert({ fingerprint: 'fp-a', severity: 'warning' })], ALLOW)).items[0]!.suppressed).toBe(
+    'quiet'
+  );
+
+  // 它恢復：照 AC-2 照舊不念。
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved', severity: 'warning' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
+test('#84 AC-2：恢復句那一輪沒有播報器 —— 同樣消掉通行證，之後的 warning episode 恢復不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 0));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  h.setSink(null);
+  h.setClock(at(15, 22, 10));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+
+  const spoken: BroadcastPlan[] = [];
+  h.setSink({ enqueue: (plan) => void spoken.push(plan), pending: () => spoken.length });
+  h.setClock(at(15, 22, 20));
+  await h.run([alert({ fingerprint: 'fp-a', severity: 'warning' })], ALLOW);
+  h.setClock(at(15, 22, 30));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved', severity: 'warning' })], ALLOW);
+  expect(spoken).toHaveLength(0);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
 test('#84 AC-3：時段**外**念出的 firing，恢復落在時段內仍然不念', async () => {
   const h = harness();
   // 中午念出來：那個人沒有被吵醒，不需要在半夜被告知結局。

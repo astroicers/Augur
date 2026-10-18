@@ -463,7 +463,10 @@ const QUIET_BREAK_LIMIT = 256;
  *  1. 離開時段、或 `quietAllowCritical` 關掉 → `clear()`（每一輪都查，見 `evaluate()`）。
  *     「不得殘留到下一段時段」就是這一條：昨晚念過的 critical 撐到今晚才恢復時，
  *     那句恢復不會莫名其妙地破今晚的靜音。
- *  2. 恢復句真的念出去了 → `forget()`：結局聽到了，這筆就沒有用處了。
+ *  2. 恢復句**在閘門上拿到通行證** → `forget()`：這筆就沒有用處了。**刻意不等交付** ——
+ *     等交付的話，被每瀏覽器靜音／沒有播報器擋下的那一輪會留下一筆過期的通行證，
+ *     之後同一個 fingerprint 那個破不了靜音的 episode 會拿它冒出一句沒有前文的
+ *     「已恢復」。寫入那一側仍然等交付，兩側刻意不對稱（見 `evaluate()` 的兩段註解）。
  *  3. 來源層取代 episode（`onSupersede`）→ `forget()`，與 dedup、抖動狀態同一條路徑。
  *  4. `dispose()` → `clear()`。
  *
@@ -1080,7 +1083,7 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         return { items, evaluated: true, pending: null };
       }
       const outgoing: BroadcastItem[] = [];
-      /** 這一輪**在時段內破了靜音**的那幾則；真的交付之後才寫進記錄（見下方）。 */
+      /** 這一輪**在時段內破了靜音**的那幾則 firing；真的交付之後才寫進記錄（見下方）。 */
       const breaking: ParsedAlert[] = [];
       for (const item of candidates) {
         if (quiet) {
@@ -1088,7 +1091,18 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
             item.suppressed = 'quiet';
             continue;
           }
-          breaking.push(item.alert);
+          if (item.alert.status === 'firing') {
+            breaking.push(item.alert);
+          } else {
+            // ⚠️ **恢復側在這裡就把那一筆消掉，不等交付。** 寫入那一側等交付是對的（沒出聲
+            // 就不該記下「吵醒過你」），但**消除**那一側等交付會留下一筆過期的通行證：
+            // 這一輪若被下面兩道整輪的早退（沒有播報器、ADR-007 的每瀏覽器靜音）擋下，
+            // 那句恢復永遠不會再回到這道閘門（dedup 已經把它收下了），而記錄還留著。
+            // 同一個 fingerprint（來源層是 `alert:${名字}`，**不含 severity**）之後那個
+            // 破不了靜音的 episode 恢復時就會拿它當通行證，冒出一句使用者從沒聽過前文的
+            // 「已恢復」—— 正是 AC-2 要擋的事。退化方向刻意是「少念一句」。
+            quietBreaks.forget(item.alert.fingerprint);
+          }
         }
         outgoing.push(item);
       }
@@ -1110,13 +1124,10 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // 所以「判定破得了靜音卻一句都沒出聲」的那台瀏覽器不會記下任何東西 ——
       // 它解除靜音後不會冒出一句沒有前文的「已恢復」。理由詳見 `QuietBreakLog`。
       //
-      // 恢復句念完就**忘掉**：結局聽到了，這筆的用處結束（記錄也因此不會單調增長）。
+      // `breaking` 只收 firing —— 恢復側那一筆在閘門上就消掉了（理由見上面那段），
+      // 所以記錄不會單調增長。
       for (const alert of breaking) {
-        if (alert.status === 'firing') {
-          quietBreaks.remember(alert.fingerprint);
-        } else {
-          quietBreaks.forget(alert.fingerprint);
-        }
+        quietBreaks.remember(alert.fingerprint);
       }
       return { items, evaluated: true, pending: sink.pending() };
     } finally {
