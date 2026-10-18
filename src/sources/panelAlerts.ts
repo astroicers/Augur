@@ -24,6 +24,7 @@
  * `labels.alertname`。Grafana 會用規則名覆蓋每個 instance 的 `alertname`，所以
  * 「一條總規則查整面值班牆」時每則告警的名字都一樣、只念得到第一則 ——
  * `alertNameLabel`（#69）讓呼叫端指定改讀哪個 label，詳見 `alertNameOf()`。
+ * 換這個選項時只有**名字真的變了**的 fingerprint 算被取代，詳見 `noteLabelChange()`（#85）。
  */
 import type { ParsedAlert } from '../core/types';
 import { panelRulesOf } from './panelRules';
@@ -88,7 +89,7 @@ export interface PanelAlertSourceOptions {
    *
    * **可以給函式** —— 理由與 `fallbackSeverity` 完全相同：它在 `evaluate` 當下才被讀，
    * 呼叫端不必為了換這個值而重建整個 source（重建會清空 `episodes`，那正是第 2 條
-   * 不變量要擋的事）。換值本身要做的事在 `forgetOnLabelChange()`。
+   * 不變量要擋的事）。換值本身要做的事在 `noteLabelChange()` 與差集迴圈的對帳（#85）。
    */
   alertNameLabel?: string | (() => string);
   /** 規則細節的快取秒數；同一個 episode 期間不必反覆打端點。 */
@@ -123,7 +124,7 @@ export function parseRulesResponse(
   panelId: number,
   alertNameLabel?: string
 ): RuleDetail[] {
-  const nameLabel = (alertNameLabel ?? '').trim();
+  const nameLabel = normalizeNameLabel(alertNameLabel);
   const out: RuleDetail[] = [];
   for (const { rule, annotations: ann } of panelRulesOf<FiringRule>(raw, dashboardUid, panelId)) {
     const firing = (rule.alerts ?? []).filter((a) => String(a.state ?? '').toLowerCase() === 'alerting');
@@ -172,6 +173,28 @@ function alertNameOf(labels: Record<string, string>, ruleName: string | undefine
   return picked !== '' ? picked : fallback;
 }
 
+/**
+ * 選項字串 → 這一層真正使用的 label 名（#85 AC-1）。
+ *
+ * 兩件事，都是為了讓「等價的兩個寫法」在**同一行運算式**上等價，而不是靠兩條路徑
+ * 巧合地算出同一個名字：
+ *  1. 修前後空白 —— 在編輯器裡貼 label 名很容易帶到空白，而 ` alertname ` 比對不中任何
+ *     label，於是每個 instance 都退回原名（#69 的第 3 條規則）。名字是對的，但那是
+ *     「打字打到一半剛好 refresh」時走了一條完全不同的路徑才碰巧對上。
+ *  2. **`alertname` 正規化成空字串** —— 填 `alertname` 與留空在 `alertNameOf()` 裡本來就
+ *     幾乎等價（#69 AC-1 已有測試釘住解析結果），但「幾乎」不夠：label 名只要在字串上
+ *     不同，`noteLabelChange()` 就會認定使用者換了取名規則，`rules()` 的快取鍵也跟著
+ *     失效。於是「從留空改成填 `alertname`」這個**什麼都沒改變**的動作，會多打一次端點、
+ *     並讓所有具名 episode 跑一趟取代與重建。
+ *     在這裡收斂成同一個值之後，那一輪連「換過」都偵測不到（#85 AC-1）。
+ *
+ * 刻意**不**折大小寫：Prometheus 的 label 名區分大小寫，`Alertname` 是另一個 label。
+ */
+export function normalizeNameLabel(alertNameLabel: string | undefined): string {
+  const trimmed = (alertNameLabel ?? '').trim();
+  return trimmed === 'alertname' ? '' : trimmed;
+}
+
 /** `parseRulesResponse` 讀得到的欄位（rules 端點回應無型別保證，形狀宣告留在用它的地方）。 */
 interface FiringRule {
   name?: string;
@@ -206,7 +229,9 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
   /** 目前這一輪要用哪個 label 取名（#69）；函式型的選項在這裡才被讀。 */
   function nameLabel(): string {
     const v = typeof opts.alertNameLabel === 'function' ? opts.alertNameLabel() : opts.alertNameLabel;
-    return (v ?? '').trim();
+    // 正規化（修空白、`alertname` 視同留空）在這裡做一次，於是快取鍵、要不要傳第三個參數、
+    // 以及「label 換過了嗎」三處讀到的都是同一個值（#85 AC-1）。
+    return normalizeNameLabel(v);
   }
 
   async function rules(dashboardUid: string): Promise<RuleDetail[]> {
@@ -239,38 +264,43 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
 
   /** 上一輪實際用來取名的 label；`null` = 還沒評估過（第一輪不算「換過」）。 */
   let lastLabel: string | null = null;
+  /**
+   * 「label 換過了，但手上的 episode 還沒跟新命名**對帳**過」（#85）。
+   *
+   * 旗標在對帳的那一輪才清掉 —— 不是在偵測到換值的那一刻。偵測到的那一輪可能走降級
+   * 路徑（端點掛了、或 `dashboardUid` 還沒到，`detail` 是空的），那一輪沒有任何新命名的
+   * 清單可以對；提早清掉旗標會讓下一輪把舊命名的 episode 當成恢復、念出一句假的恢復句
+   * —— 那正是 #69 當初要擋的事。
+   */
+  let pendingRelabel = false;
 
   /**
-   * 換了 `alertNameLabel` 之後，手上那些 episode 的 fingerprint 是用**舊命名規則**
-   * 算的（#69）。它們不會出現在這一輪的 `detail` 裡，於是會掉進下面那個差集迴圈、
-   * 被當成「恢復了」—— 使用者在編輯面板裡填上 `wall_alertname` 的那一刻，
-   * 會先聽到一句「規則名 已恢復」（而告警其實一直在燒），然後才聽到新名字的 firing。
+   * 記下 `alertNameLabel` 換過了（#69 → #85）。
    *
+   * 換掉取名用的 label 之後，手上那些 episode 的 fingerprint 是用**舊命名規則**算的。
+   * 其中「名字真的變了」的那幾則不會出現在這一輪的 `detail` 裡，於是會掉進差集迴圈、
+   * 被當成「恢復了」—— 使用者在編輯面板裡填上 `wall_alertname` 的那一刻，會先聽到一句
+   * 「規則名 已恢復」（而告警其實一直在燒），然後才聽到新名字的 firing。
    * 這正是 `onSupersede` 存在的情境：**被取代，不是恢復**（降級路徑的泛用 episode 同理）。
-   * 所以改名規則時把舊 episode 刪掉並請 dedup 一起忘掉 —— 不播恢復句，而新名字的
-   * episode 這一輪就會重新建立、照常播一次 firing。
+   *
+   * ⚠️ #69 的實作在這裡就把**所有**具名 episode 刪光。那過度了：名字其實沒變的那幾則
+   * （沒帶指定 label 而退回原名的 instance、或留空↔`alertname` 這種等價改法）也被忘掉，
+   * 下一輪整面重念一次。所以本函式只**記一個旗標**，真正的取捨留到差集迴圈 ——
+   * 那時候手上已經有一份用新 label 取好名的清單，「這個 fingerprint 還在不在」
+   * 就是「名字有沒有真的變」的現成答案（#85 AC-2）。
    *
    * 只在 `alerting` 那條路徑上呼叫：`ok` 的那一輪要用**舊名字**念恢復句
    * （念出去的是哪個名字，恢復就該是哪個名字），而 `resolvedAll()` 本來就會清空 episodes。
    */
-  function forgetOnLabelChange(): void {
+  function noteLabelChange(): void {
     const label = nameLabel();
     if (lastLabel === label) {
       return;
     }
     const changed = lastLabel !== null;
     lastLabel = label;
-    if (!changed) {
-      return;
-    }
-    for (const fp of [...episodes.keys()]) {
-      // 降級路徑的泛用 episode 與 label 無關（名字固定是「告警」），留著 ——
-      // 丟掉它只會讓同一句泛用句再念一次。
-      if (fp === `alert:panel:${opts.panelId}`) {
-        continue;
-      }
-      episodes.delete(fp);
-      opts.onSupersede?.(fp);
+    if (changed) {
+      pendingRelabel = true;
     }
   }
 
@@ -297,6 +327,9 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
     // 順帶一提，這個缺陷先前測不到，因為**每一條測試都傳 `ruleCacheSec: 0`**，
     // 等於把快取整個關掉 —— 而 production 用的是預設的 10 秒。
     cache = null;
+    // episodes 清空了，就沒有用舊命名算的 fingerprint 要跟新 label 對帳（#85）。
+    // 上面那些 resolved 用的是**舊名字**，而那正是先前念出去的名字 —— 對的。
+    pendingRelabel = false;
     return out;
   }
 
@@ -327,7 +360,7 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
       }
 
       // state === 'alerting'
-      forgetOnLabelChange();
+      noteLabelChange();
       const detail = dashboardUid ? await rules(dashboardUid) : [];
       const nowIso = new Date(now()).toISOString();
 
@@ -359,6 +392,12 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         episodes.set(fp, ep);
         return [ep];
       }
+
+      // 到這裡手上有一份**用現在這個 label 取好名**的清單，於是換 label 這件事可以對帳了
+      // （#85）。旗標在這一行消費掉，而不是在 `noteLabelChange()` 裡 —— 上面那條降級路徑
+      // 會 `return`，而它沒有清單可對。
+      const relabeled = pendingRelabel;
+      pendingRelabel = false;
 
       const out: ParsedAlert[] = [];
       const stillFiring = new Set<string>();
@@ -412,11 +451,23 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
         if (stillFiring.has(fp)) {
           continue;
         }
-        if (fp === `alert:panel:${opts.panelId}`) {
-          // 降級路徑留下的泛用 episode。現在拿得到細節了，它是被**取代**而不是恢復 ——
-          // 不要念一句「告警 已恢復」（那會在告警仍在燒的時候宣告恢復）。
+        if (fp === `alert:panel:${opts.panelId}` || relabeled) {
+          // 兩種「不是恢復，是**被取代**」，處置相同（刪掉、請 dedup 忘掉、不播任何句子）：
           //
-          // ⚠️ 但也**不能只是刪掉自己這邊**：dedup 的 `lastFiring` 只在播出 resolved 時
+          //  1. 降級路徑留下的泛用 episode。現在拿得到細節了，它是被具名的那幾則取代 ——
+          //     不要念一句「告警 已恢復」（那會在告警仍在燒的時候宣告恢復）。
+          //  2. 這一輪換過取名用的 label，而這個 fingerprint 不在新命名的清單裡（#85）——
+          //     同一則告警現在叫別的名字。舊名字的 episode 被新名字的取代，所以不念舊名字的
+          //     恢復句（AC-3），新名字這一輪就會建立並照常念一次 firing。
+          //     **只有落到這裡的才被取代**：名字沒變的那幾則（沒帶指定 label 而退回原名的
+          //     instance、或 `alertname`↔留空這種等價改法）本來就在 `stillFiring` 裡，
+          //     上面那個 `continue` 就把它們留住了，episode 照常延續、不重念（AC-2）。
+          //     ⚠️ 已知取捨：換 label 的**同一輪**剛好不再燒的那一則，分不出「改名了」
+          //     還是「恢復了」（手上只有新命名的清單），一律當成取代 —— 也就是少念一句
+          //     恢復。這與 #69 的行為相同（那時候是整面都不念），而要分辨就得把每個
+          //     instance 的 labels 一路帶到這一層，`RuleDetail` 的形狀得跟著改。
+          //
+          // ⚠️ 兩種都**不能只是刪掉自己這邊**：dedup 的 `lastFiring` 只在播出 resolved 時
           // 才清 key，而預設窗是 `Infinity`，所以光刪 `episodes` 會讓這個 fingerprint
           // 永久靜音 —— 之後端點再掛一次、真的有告警時，面板會完全不出聲。
           // 必須同時請 dedup 忘掉它。

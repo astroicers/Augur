@@ -44,7 +44,7 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         path: 'alertNameLabel',
         name: '告警名稱取自哪個 label',
         description:
-          '留空 = 用 alertname（與沒有這個選項時完全相同）。填一個 label 名稱，面板就改用每個 instance 的那個 label 當告警名與去重單位，於是一條總規則底下同時燒的每則告警各自播報，而不是只念第一則。用在「一條 Grafana 規則查整面值班牆（ALERTS{alertstate="firing"}）」的情形：Grafana 會用規則名覆蓋每個 instance 的 alertname，查詢端先用 label_replace(…, "wall_alertname", "$1", "alertname", "(.*)") 把原名保留成 instance label，這裡就填 wall_alertname。label 不存在時退回 alertname（連 alertname 也沒有才用規則名）—— 空字串與只有空白的值也一樣退回，所以同一條規則裡帶與不帶這個 label 的 instance 可以並存。這個 label 的值必須能唯一識別一則告警：值相同的告警會被當成同一則（例如填 instance，同一台機器上的兩則不同告警只會念一則）。改了這一欄要等下一輪 panel 重新整理才生效，屆時正在燒的告警會全部重新播報一次（包括名字其實沒變的）。',
+          '留空 = 用 alertname（與沒有這個選項時完全相同）。填一個 label 名稱，面板就改用每個 instance 的那個 label 當告警名與去重單位，於是一條總規則底下同時燒的每則告警各自播報，而不是只念第一則。用在「一條 Grafana 規則查整面值班牆（ALERTS{alertstate="firing"}）」的情形：Grafana 會用規則名覆蓋每個 instance 的 alertname，查詢端先用 label_replace(…, "wall_alertname", "$1", "alertname", "(.*)") 把原名保留成 instance label，這裡就填 wall_alertname。label 不存在時退回 alertname（連 alertname 也沒有才用規則名）—— 空字串與只有空白的值也一樣退回，所以同一條規則裡帶與不帶這個 label 的 instance 可以並存。這個 label 的值必須能唯一識別一則告警：值相同的告警會被當成同一則（例如填 instance，同一台機器上的兩則不同告警只會念一則）。改了這一欄要等下一輪 panel 重新整理才生效，屆時只有名字真的改變的那幾則會以新名字重新播報一次（舊名字算被取代，不會念恢復句）；名字沒變的照常延續、不重念。填 alertname 等同留空（前後空白也會自動修掉），兩者之間切換不算改動。',
         defaultValue: DEFAULT_OPTIONS.alertNameLabel ?? '',
         settings: { placeholder: 'wall_alertname' },
       })

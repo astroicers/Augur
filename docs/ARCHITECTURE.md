@@ -149,7 +149,7 @@ Panel options 共 **19 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
-| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，正在燒的告警會全部重新播報一次，名字沒變的也一樣 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，**只有名字真的改變的**那幾則以新名字重新播報一次（舊名字算被取代，不念恢復句）；名字沒變的（例如沒帶那個 label、退回 `alertname` 的 instance）照常延續、不重念。填 `alertname` 視同留空，兩者之間切換不算改動（#85） |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
@@ -189,8 +189,13 @@ Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`，所以「一�
 label，這個選項再指定去讀它。取名是**逐 instance** 的（`sources/panelAlerts.ts` 的 `alertNameOf`），
 所以同一條規則裡帶與不帶那個 label 的 instance 可以並存，各自成為一個 episode、
 各自恢復。`MascotPanel.tsx` 與導播都只是把這個字串原樣往下帶，不解析也不判斷。
-改這一欄會讓既有 episode 的 fingerprint 失效，所以來源層把它們當**被取代**（`onSupersede`，
-不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
+改這一欄會讓某些既有 episode 的 fingerprint 失效，所以來源層把**那幾則**當
+**被取代**（`onSupersede`，不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
+判定依據是換 label 之後的第一份清單：fingerprint 還在裡面的就是名字沒變，episode 照常延續、
+不重念；不在裡面的才是改了名（#85，`noteLabelChange()` 與差集迴圈的對帳）。`alertname` 與留空
+在讀取時就正規化成同一個值（連前後空白一起修掉），所以兩者之間切換連「換過」都偵測不到。
+已知取捨：換 label 的**同一輪**剛好不再燒的那一則，分不出改名與恢復，一律當成被取代
+（少念一句恢復，與 #85 之前的行為相同）。
 
 **播報紀錄（ADR-006）也吃同一個選項**（#70）：紀錄端的取名是 `sources/history.ts` 的
 `historyAlertNameOf`，讀的是 annotation 自由文字 `RuleName {labels} - values` 裡 `{labels}` 段的
