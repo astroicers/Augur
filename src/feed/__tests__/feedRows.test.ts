@@ -196,10 +196,21 @@ describe('#79 AC-1：純函式', () => {
 
   test('不 import React、不碰 DOM（原始碼層的機械檢查）', () => {
     // 這一條是 AC-1 的字面要求，而「不小心 import 了 react」在 jest（jsdom）裡
-    // 不會自己紅 —— 要讀原始碼才看得見。
-    const src = fs.readFileSync(path.join(__dirname, '..', 'feedRows.ts'), 'utf8');
-    expect(src).not.toMatch(/from 'react'|require\('react'\)/);
-    expect(src).not.toMatch(/\bdocument\.|\bwindow\./);
+    // 不會自己紅 —— 要讀原始碼才看得見。判法與 `BroadcastDirector.test.ts` 的
+    // `AC-1：導播不 import react、不碰 DOM` 同一套（同族的規則同一個判法）：
+    // 先拿掉註解 —— 檔頭的說明會提到 react / DOM，那是散文不是相依。
+    const code = fs
+      .readFileSync(path.join(__dirname, '..', 'feedRows.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    const sources = [...code.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1]!);
+    expect(sources).toEqual(['../core/types', '../sources/history']);
+    // 裸 token（不是只看 `window.`／`document.`）：`typeof window !== 'undefined'`
+    // 這種寫法也要擋得到。
+    for (const token of [/\breact\b/i, /\bwindow\b/, /\bdocument\b/, /\bnavigator\b/, /\blocalStorage\b/]) {
+      expect(code).not.toMatch(token);
+    }
   });
 });
 
