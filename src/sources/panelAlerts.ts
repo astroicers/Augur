@@ -462,9 +462,10 @@ export function createPanelAlertSource(opts: PanelAlertSourceOptions): PanelAler
           //     **只有落到這裡的才被取代**：名字沒變的那幾則（沒帶指定 label 而退回原名的
           //     instance、或 `alertname`↔留空這種等價改法）本來就在 `stillFiring` 裡，
           //     上面那個 `continue` 就把它們留住了，episode 照常延續、不重念（AC-2）。
-          //     ⚠️ 已知取捨：換 label 的**同一輪**剛好不再燒的那一則，分不出「改名了」
-          //     還是「恢復了」（手上只有新命名的清單），一律當成取代 —— 也就是少念一句
-          //     恢復。這與 #69 的行為相同（那時候是整面都不念），而要分辨就得把每個
+          //     ⚠️ 已知取捨：**在換 label 與第一份新命名的清單到手之間**剛好不再燒的那一則，
+          //     分不出「改名了」還是「恢復了」（手上只有新命名的清單），一律當成取代 ——
+          //     也就是少念一句恢復。那通常就是換 label 的同一輪，但端點掛著時對帳會晚幾輪
+          //     （旗標留到有清單可對才消費，見 `pendingRelabel`），窗口跟著變長。這與 #69 的行為相同（那時候是整面都不念），而要分辨就得把每個
           //     instance 的 labels 一路帶到這一層，`RuleDetail` 的形狀得跟著改。
           //
           // ⚠️ 兩種都**不能只是刪掉自己這邊**：dedup 的 `lastFiring` 只在播出 resolved 時
