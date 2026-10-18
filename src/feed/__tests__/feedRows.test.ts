@@ -271,3 +271,46 @@ describe('#79：formatHistoryWhen', () => {
     expect(row!.when).toBe(formatHistoryWhen(rec.time));
   });
 });
+
+describe('#81：每一列為什麼沒念（suppressed 原樣轉手）', () => {
+  /** 一句被抑制的本分頁播報。 */
+  const held = (text: string, at: number, suppressed: FeedLine['suppressed']): FeedLine => ({
+    ...line(text, at),
+    suppressed,
+  });
+
+  test('沒有紀錄時：本分頁的列原樣帶著 suppressed，兩種原因各自分得出來', () => {
+    const feed = [held('抖的', T0 + 1000, 'flapping'), held('靜音的', T0, 'quiet')];
+    const { rows } = buildFeedRows(feed, null, '', when);
+    expect(rows.map((r) => r.suppressed)).toEqual(['flapping', 'quiet']);
+  });
+
+  test('沒有 suppressed 的列，suppressed 是 undefined（元件據此整個屬性都不渲染）', () => {
+    const { rows } = buildFeedRows([line('念過的', T0)], null, '', when);
+    expect(rows[0]!.suppressed).toBeUndefined();
+  });
+
+  test('紀錄模式：補進來的本分頁那一列照樣帶著標記，紀錄列一律沒有標記', () => {
+    // 紀錄來自 Grafana 自己的狀態歷史，那份資料記的是狀態變化，不知道這個分頁念了沒有。
+    const feed = [held('只在本分頁的', T0 + 1000, 'quiet')];
+    const rec = entry('紀錄裡的', T0);
+    const { rows } = buildFeedRows(feed, history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([
+      ['session', 'quiet'],
+      ['history', undefined],
+    ]);
+  });
+
+  test('被紀錄列吃掉的那一句，標記跟著消失（合併窗內只留紀錄那一列）', () => {
+    // 誠實記：同一件事在紀錄裡也有時，畫面上留的是紀錄列，而紀錄列沒有「念了沒」這個資訊。
+    const l = held('同一件事', T0, 'flapping');
+    const { rows } = buildFeedRows([l], history([entry(l.plan.text, T0)]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', undefined]]);
+  });
+
+  test('篩選過後留下的列，標記仍是那一列自己的（不是被串位）', () => {
+    const feed = [held('抖的', T0 + 2000, 'flapping'), held('靜音的', T0 + 1000, 'quiet')];
+    const { rows } = buildFeedRows(feed, history([entry('紀錄裡的', T0)]), '靜音', when);
+    expect(rows.map((r) => [r.text, r.suppressed])).toEqual([[feed[1]!.plan.text, 'quiet']]);
+  });
+});

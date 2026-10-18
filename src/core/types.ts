@@ -35,6 +35,22 @@ export interface ParsedAlert {
 export type Emotion = 'calm' | 'warning' | 'critical' | 'resolved'
 
 /**
+ * 一則**沒有**交給播報器的原因（`BroadcastItem.suppressed`，#63／#64）。
+ *
+ * - `'flapping'`：抖動抑制 —— 這個 fingerprint 在窗內翻太多次。
+ * - `'quiet'`：值班靜音時段 —— 現在落在時段內，而它破不了靜音。
+ *
+ * **住在這裡而不是 `director/BroadcastDirector.ts`**（原本的家，#81 移來）：清單列要標出
+ * 「這句為什麼沒念」，於是 `feed/` 也得認得這個型別，而 `feed/feedRows.ts` 與導播兩邊都有
+ * 一支既有測試逐項比對自己的 import 清單（純函式的機械承接）。放進這條唯一的抽象邊界旁邊，
+ * 兩邊都只讀 `core/types`，誰都不必 import 另一邊。導播照舊 re-export 它，呼叫端不受影響。
+ *
+ * ADR-007 的**每瀏覽器靜音**刻意不在這裡出現：那是呼叫端自己持有的開關（它按的、它存的），
+ * 而這個型別報的是「導播自己決定、呼叫端看不到的原因」。
+ */
+export type SuppressReason = 'flapping' | 'quiet'
+
+/**
  * 播報計畫 — 導播輸出給前端 avatar 的單則指令（取代舊的純 text sink）。
  * text 給 TTS 念；emotion 驅動表情；其餘欄位供前端 feed / 除錯。
  */

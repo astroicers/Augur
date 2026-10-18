@@ -16,6 +16,7 @@ import { fetchPanelRules } from '../sources/rulesFetcher';
 import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
 import { fetchPanelHistory } from '../sources/historyFetcher';
 import { buildFeedRows, type FeedLine, type FeedRow } from '../feed/feedRows';
+import { isPanelEditor, skippedAliasNotice, suppressedMark } from '../feed/feedNotices';
 import { FEED_CSV_MIME, feedCsvFilename, feedRowsToCsv } from '../feed/feedCsv';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
@@ -191,6 +192,25 @@ const getStyles = () => ({
     font-size: 10px;
     opacity: 0.6;
     flex-shrink: 0;
+  `,
+  /*
+   * 「這句為什麼沒念」的標記（#81）。**自己一個 class，不動上面的 `line`** ——
+   * 沒有 `suppressed` 的列要與先前逐字相同（AC-1），而 `line` 是每一列共用的。
+   *
+   * `flex-shrink: 0` ＋ `white-space: nowrap`：窄面板（:701 的切換點之下改成上下堆疊）
+   * 時標記不折成兩行、也不被句子擠掉；句子本身是 flex item 裡的文字，照樣自己換行，
+   * 所以擠的時候是句子多佔幾行而不是標記破版。檔頭 :78 那段 feed 的 overflow 踩坑
+   * 與這裡無關（那是高度，這裡只動一列之內的水平配置）。
+   */
+  suppressedMark: css`
+    font-size: 10px;
+    font-weight: 600;
+    padding: 0 5px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    opacity: 0.8;
+    flex-shrink: 0;
+    white-space: nowrap;
   `,
   empty: css`
     opacity: 0.55;
@@ -818,6 +838,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
           when: new Date(item.at).toLocaleTimeString(),
           at: item.at,
           plan: item.plan,
+          // 「這一則為什麼沒念」原樣轉手（#81）。導播已經算好了（#63 的靜音時段、#64 的抖動抑制），
+          // 這裡**不重算**：重算就等於同一條交付閘門有兩個住處，而元件這一側看不到翻轉次數。
+          suppressed: item.suppressed,
         }));
         const newestFirst = [...lines].reverse();
         setFeed((prev) => [...newestFirst, ...prev].slice(0, 20));
@@ -983,17 +1006,45 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   // 「匯出的就是目前畫面上那幾列」因此不靠兩處各算一次來維持一致（篩選框一改，兩邊同時變）。
   const { rows: feedRows, emptyText: feedEmptyText } = buildFeedRows(feed, history, historyFilter);
 
+  /**
+   * 別名設定寫錯時的那一行提示（#81）。**只在編輯模式下算、也只在編輯模式下顯示** ——
+   * 牆面螢幕是給值班的人看告警的，一行設定錯誤的提示在那裡只是干擾（AC-2）。
+   *
+   * ⚠️ 判定來源是 `data.request?.app`（`CoreApp.PanelEditor`），而 `data.request`
+   * **在真實部署裡會缺**（12.3.x 的 dashboard uid 那次就是同一個欄位，見上面兩處註解）。
+   * 缺席時 `isPanelEditor` 回 false → 提示不顯示 → 退化成「編輯者少看到一行提示」，
+   * 而不是「值班牆上多一行」。這個取捨與它的驗證界線寫在 `src/README.md` 與 PR 描述裡。
+   *
+   * 解析放在這裡而不是上面那些 `options.*` 旁邊：`parseSeverityAliases` 的結果是物件，
+   * 擺在 render 的頂層會讓人想把它塞進某個相依陣列 —— 那正是 `severityAliasSpec` 那段
+   * 註解在擋的事。這裡只有**編輯模式**下才跑一次幾個 split，與任何 effect 無關。
+   */
+  const aliasNotice = isPanelEditor(data.request?.app)
+    ? skippedAliasNotice(parseSeverityAliases(severityAliasSpec).skipped, alertLang)
+    : null;
+
   const renderFeedLines = () => {
     if (feedEmptyText !== null) {
       return <span className={styles.empty}>{feedEmptyText}</span>;
     }
     // data-origin 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。
-    return feedRows.map((r) => (
-      <div key={r.key} className={styles.line} data-origin={r.origin}>
-        <span className={styles.when}>{r.when}</span>
-        <span>{r.text}</span>
-      </div>
-    ));
+    // data-suppressed 的**值就是原因字串**（`'flapping'`／`'quiet'`，#81）而不是 `'true'`：
+    // 測試要分辨兩種標記時不必比中文字面值，語言一改也不會碎。沒有 `suppressed` 的列
+    // 傳進去的是 `undefined`，React 於是整個屬性都不渲染 —— 那一列的畫面逐字如舊（AC-1）。
+    return feedRows.map((r) => {
+      const mark = r.suppressed === undefined ? null : suppressedMark(r.suppressed, alertLang);
+      return (
+        <div key={r.key} className={styles.line} data-origin={r.origin} data-suppressed={r.suppressed}>
+          <span className={styles.when}>{r.when}</span>
+          {mark && (
+            <span className={styles.suppressedMark} title={mark.title}>
+              {mark.label}
+            </span>
+          )}
+          <span>{r.text}</span>
+        </div>
+      );
+    });
   };
 
   /** 匯出：目前畫面上那幾列 → CSV → 下載（#80；內容與檔名都在 `exportFeedRowsAsCsv` 底下那兩支）。 */
@@ -1133,6 +1184,15 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         />
 
         <div className={styles.feedCol}>
+          {/*
+            編輯模式下才出現的那一行（#81 AC-2）。排在篩選框之前：它講的是**設定**寫錯了，
+            與這段時間範圍內有哪些紀錄無關，而打開編輯面板的人要先看到自己剛打錯的那一行。
+          */}
+          {aliasNotice !== null && (
+            <span className={styles.notice} style={{ color: theme.colors.warning.text }} data-testid="alias-notice">
+              {aliasNotice}
+            </span>
+          )}
           {history && (
             <input
               className={styles.filter}

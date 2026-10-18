@@ -108,6 +108,12 @@ function props(over: {
   alertState?: unknown;
   options?: Partial<MascotPanelOptions>;
   timeRange?: unknown;
+  /**
+   * `data.request`（#81）。**預設整個欄位不存在** —— 這正是真實部署裡會發生的情形
+   * （12.3.x 的 dashboard uid 那次踩過同一個欄位），所以既有的每一支測試都在
+   * 「request 缺席」的狀態下跑，一行都不必改。編輯模式的那幾支自己傳 `{ app: … }`。
+   */
+  request?: unknown;
 }): PanelProps<MascotPanelOptions> {
   return {
     id: 7,
@@ -119,6 +125,7 @@ function props(over: {
       series: [],
       timeRange: over.timeRange ?? {},
       ...(over.alertState === undefined ? {} : { alertState: over.alertState }),
+      ...(over.request === undefined ? {} : { request: over.request }),
     },
   } as unknown as PanelProps<MascotPanelOptions>;
 }
@@ -2146,4 +2153,181 @@ test('#80：窄面板（低於 320x180）不顯示匯出鈕 —— 與語音那�
   // 夠大時才出現（同一份 props 只改尺寸）。
   view.rerender(<MascotPanel {...props({ alertState: OK })} />);
   await waitFor(() => expect(view.queryByTestId('feed-export')).not.toBeNull());
+});
+
+// ─── #81：清單列標出「這句為什麼沒念」，別名設定寫錯時在編輯模式提示 ─────────────
+
+/**
+ * 一定涵蓋「現在」的靜音時段（本地時間的前一小時到後一小時）。
+ *
+ * 寫死 `00:00-23:59` 的話每天 23:59 那一分鐘會紅；而 `isQuietAt` 的端點規則是
+ * 「起點含、終點不含」，跨午夜（例如 23:00-01:00）本來就支援，所以這個算法在任何
+ * 時刻都成立。時段的判斷由 `BroadcastDirector.test.ts` 用注入的時鐘逐條驗，
+ * 這裡只需要「現在在時段內」這個前提成立。
+ */
+function quietAroundNow(): string {
+  const hour = new Date().getHours();
+  const pad = (h: number) => String((h + 24) % 24).padStart(2, '0');
+  return `${pad(hour - 1)}:00-${pad(hour + 1)}:00`;
+}
+
+/** `[data-suppressed]` 的值，照畫面上的順序。 */
+function suppressedMarks(view: { container: HTMLElement }): string[] {
+  return Array.from(view.container.querySelectorAll('[data-suppressed]')).map(
+    (el) => el.getAttribute('data-suppressed') ?? ''
+  );
+}
+
+test('#81 AC-1：靜音時段擋下的那一列標 data-suppressed="quiet" 並寫出「靜音時段，未念」', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'QuietOne', severity: 'critical', summary: '時段內燒起來的' }]);
+  const view = render(
+    <MascotPanel {...props({ alertState: ALERTING, options: { quietHours: quietAroundNow() } })} />
+  );
+
+  await waitFor(() => expect(view.container.textContent).toContain('時段內燒起來的'));
+  // 標記講的是事實：這一句真的一個字都沒念出來（導播沒有交給播報器）。
+  expect(spoken).toEqual([]);
+  expect(suppressedMarks(view)).toEqual(['quiet']);
+  expect(view.container.textContent).toContain('靜音時段，未念');
+});
+
+test('#81 AC-1：抖動抑制擋下的那一列標 data-suppressed="flapping" 並寫出「抖動中，未念」', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'Flappy', severity: 'critical', summary: '一直翻' }]);
+  const options = { flappingThreshold: 2, flappingWindowMin: 10 };
+  // 門檻 2＝「第 2 次翻轉是最後一次出聲」，所以第 3 次翻轉才被擋下（#64 AC-2）。
+  const view = render(<MascotPanel {...props({ alertState: ALERTING, options })} />);
+  await waitFor(() => expect(spoken).toHaveLength(1));
+  for (const state of [OK, ALERTING, OK]) {
+    view.rerender(<MascotPanel {...props({ alertState: { ...state }, options })} />);
+    await settle();
+  }
+
+  // 四則都在清單上（被抑制的照樣進清單、照樣換表情），但只有最後那一則帶標記。
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin]')).toHaveLength(4));
+  expect(spoken).toHaveLength(3);
+  expect(suppressedMarks(view)).toEqual(['flapping']);
+  expect(view.container.textContent).toContain('抖動中，未念');
+});
+
+test('#81 AC-1：沒有被擋下的列不帶 data-suppressed，也不多出任何節點', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'Normal', severity: 'critical', summary: '正常念出來的' }]);
+  const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+
+  await waitFor(() => expect(spoken).toHaveLength(1));
+  await waitFor(() => expect(view.container.querySelectorAll('[data-origin]')).toHaveLength(1));
+  const row = view.container.querySelector('[data-origin]')!;
+  expect(row.hasAttribute('data-suppressed')).toBe(false);
+  // 畫面與先前逐字相同：一列仍然只有「時間」與「句子」兩個 span。
+  expect(row.children).toHaveLength(2);
+  expect(view.container.textContent).not.toContain('未念');
+});
+
+test('#81 AC-3：標記跟著 alertLang —— 英文面板上是英文標記', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'QuietOne', severity: 'critical', summary: 'burning in the window' }]);
+  const view = render(
+    <MascotPanel
+      {...props({ alertState: ALERTING, options: { alertLang: 'en', quietHours: quietAroundNow() } })}
+    />
+  );
+
+  await waitFor(() => expect(suppressedMarks(view)).toEqual(['quiet']));
+  expect(view.container.textContent).toContain('quiet hours, not spoken');
+  expect(view.container.textContent).not.toContain('靜音時段');
+});
+
+test('#81 AC-1：窄面板（上下堆疊）下標記照樣渲染在那一列裡', async () => {
+  mockedFetch.mockResolvedValue([{ alertname: 'QuietOne', severity: 'critical', summary: '時段內燒起來的' }]);
+  const narrow = {
+    ...props({ alertState: ALERTING, options: { quietHours: quietAroundNow() } }),
+    width: 300,
+    height: 160,
+  };
+  const view = render(<MascotPanel {...narrow} />);
+
+  // jsdom 沒有版面計算，所以這一支驗得到的是「窄面板不走另一條渲染路徑」：
+  // 標記仍在那一列裡、仍帶 data-suppressed。不折行／不破版由 CSS 負責
+  // （`flex-shrink: 0` ＋ `white-space: nowrap`），那一截沒有測試釘得到。
+  await waitFor(() => expect(suppressedMarks(view)).toEqual(['quiet']));
+  const row = view.container.querySelector('[data-suppressed="quiet"]')!;
+  expect(row.textContent).toContain('靜音時段，未念');
+  expect(row.textContent).toContain('時段內燒起來的');
+});
+
+test('#81 AC-2：編輯模式下列出被略過的別名設定與原因', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(
+    <MascotPanel
+      {...props({
+        alertState: OK,
+        request: { app: 'panel-editor' },
+        options: { severityAliases: '亂寫, sev2=nonsense' },
+      })}
+    />
+  );
+
+  await settle();
+  const notice = view.getByTestId('alias-notice');
+  expect(notice.textContent).toContain('2 項');
+  expect(notice.textContent).toContain('亂寫');
+  expect(notice.textContent).toContain('sev2=nonsense');
+  expect(notice.textContent).toContain('缺 `=`');
+  expect(notice.textContent).toContain('目標不是已知嚴重度');
+});
+
+test('#81 AC-2：觀看模式不顯示那一行（同一份設定，只差 data.request.app）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const options = { severityAliases: '亂寫, sev2=nonsense' };
+  const view = render(<MascotPanel {...props({ alertState: OK, request: { app: 'dashboard' }, options })} />);
+  await settle();
+  expect(view.queryByTestId('alias-notice')).toBeNull();
+
+  // 對照組：同一份 props 只把 app 換成 panel-editor，提示就出現 —— 否則這一支只驗得到否定面。
+  view.rerender(<MascotPanel {...props({ alertState: OK, request: { app: 'panel-editor' }, options })} />);
+  await waitFor(() => expect(view.queryByTestId('alias-notice')).not.toBeNull());
+});
+
+test('#81 AC-2：`data.request` 整個缺席時不顯示（退化成觀看模式，牆面螢幕不受干擾）', async () => {
+  mockedFetch.mockResolvedValue([]);
+  // 真實部署裡 request 會缺（dashboard uid 那次踩過同一個欄位）。誠實記下退化方向：
+  // 編輯者少看到一行提示，而不是值班牆上多一行。
+  const view = render(
+    <MascotPanel {...props({ alertState: OK, options: { severityAliases: '亂寫, sev2=nonsense' } })} />
+  );
+  await settle();
+  expect(view.queryByTestId('alias-notice')).toBeNull();
+});
+
+test('#81 AC-2：沒有被略過的項目時，編輯模式下也不顯示那一行', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const request = { app: 'panel-editor' };
+  // 設定正確：三項全部解析成功。
+  const view = render(
+    <MascotPanel {...props({ alertState: OK, request, options: { severityAliases: 'P1=critical, sev2=warning' } })} />
+  );
+  await settle();
+  expect(view.queryByTestId('alias-notice')).toBeNull();
+
+  // 留空同理（舊 dashboard 的 JSON 根本沒有這個鍵）。
+  view.rerender(<MascotPanel {...props({ alertState: OK, request })} />);
+  await settle();
+  expect(view.queryByTestId('alias-notice')).toBeNull();
+});
+
+test('#81 AC-3：編輯模式那一行也跟著 alertLang', async () => {
+  mockedFetch.mockResolvedValue([]);
+  const view = render(
+    <MascotPanel
+      {...props({
+        alertState: OK,
+        request: { app: 'panel-editor' },
+        options: { alertLang: 'en', severityAliases: '亂寫, sev2=nonsense' },
+      })}
+    />
+  );
+
+  await settle();
+  const notice = view.getByTestId('alias-notice');
+  expect(notice.textContent).toContain('2 entries skipped');
+  expect(notice.textContent).toContain('no `=`');
+  expect(notice.textContent).not.toContain('缺');
 });
