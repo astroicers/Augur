@@ -57,6 +57,25 @@ describe('#81 AC-1／AC-3：suppressedMark', () => {
     expect(suppressedMark('flapping', 'en').title).toContain('window');
     expect(suppressedMark('quiet', 'en').title).toContain('quiet-hours');
   });
+
+  /**
+   * #94：解除抑制時**不一定**會聽到一句 —— `createFlappingTracker` 的 `release()`／`drain()`
+   * 只回傳「當下狀態與上次念出去的不同」的那幾則（`state.announced !== state.status`），
+   * 一樣的就不出聲。原本的末句（「會把當下狀態念出來」／"the current state is spoken"）
+   * 把它說成無條件會念，使用者於是等一句永遠不會來的話。
+   *
+   * 斷言釘的是**語意**而不是逐字的句子：條件子句在、無條件句式不在。逐字比對會讓日後
+   * 任何潤飾都變紅，而本票要擋的缺陷是「有沒有講條件」，不是「用哪一種措辭講」。
+   */
+  test('#94：抖動的 title 寫明「與上次念出去的不同才補念」，沒有無條件會念的句式', () => {
+    const zh = suppressedMark('flapping', 'zh').title;
+    expect(zh).toContain('不同才補念');
+    expect(zh).not.toContain('會把當下狀態念出來');
+
+    const en = suppressedMark('flapping', 'en').title;
+    expect(en).toContain('only if it differs');
+    expect(en).not.toContain('is spoken');
+  });
 });
 
 // --- AC-2：編輯模式的判定 ------------------------------------------------------
