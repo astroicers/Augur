@@ -622,6 +622,33 @@ test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 
 /** 功能開著的那一組設定（#84 只在這一組底下有新行為）。 */
 const ALLOW: Partial<DirectorSettings> = { quietHours: NIGHT, quietAllowCritical: true };
 
+test('#84 AC-4：兩段時段之間一輪都沒跑 —— 昨晚念過的 critical 撐到今晚才恢復，恢復句不破今晚的靜音', async () => {
+  // 清空原本只發生在「某一輪跑在時段外」：dashboard 沒開 auto-refresh、主機休眠時根本沒有那一輪。
+  // 記錄帶寫入時刻、超過一段時段長度就作廢，才不靠那一輪。
+  const h = harness();
+  const over = { quietHours: NIGHT, quietAllowCritical: true };
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-x' })], over);
+  expect(h.spoken).toHaveLength(1);
+  h.setClock(at(16, 23, 0)); // 隔天晚上，中間沒有任何一輪
+  const round = await h.run([alert({ fingerprint: 'fp-x', status: 'resolved' })], over);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+  expect(h.spoken).toHaveLength(1);
+});
+
+test('#84 AC-1：同一輪裡補念的 critical firing 與它自己的恢復同時出現 —— 恢復句一樣破靜音', async () => {
+  // 抖動抑制解除時補念 firing、同一輪來源層又吐出同一個 fingerprint 的 resolved：
+  // 記錄要等交付後才寫，所以閘門判 resolved 時還看不到它；同一輪已放行的 firing 也要算數。
+  const h = harness();
+  const over = { flappingThreshold: 5, flappingWindowMin: 10, quietHours: NIGHT, quietAllowCritical: true };
+  await flipRounds(h, 7, over, at(15, 22, 0)); // 第 7 輪（firing）被抖動抑制
+  const before = h.spoken.length;
+  h.setClock(at(15, 22, 16));
+  const round = await h.run([alert({ fingerprint: 'fp-flap', status: 'resolved' })], over);
+  expect(h.spoken.slice(before).map((p) => p.status)).toEqual(['firing', 'resolved']);
+  expect(round.items.every((it) => it.suppressed === undefined)).toBe(true);
+});
+
 test('#84 AC-1：時段內破靜音念出的 critical，同一段時段內恢復也念得出來', async () => {
   const h = harness();
   h.setClock(at(15, 22, 30));
@@ -829,8 +856,10 @@ test('#84 AC-4：dispose() 的本體把記錄清掉（dispose 之後導播永久
   // 另外三個都有上面的行為測試；這一條只能機械比對，與檔尾那支 import 清單的測試同一種做法。
   const code = fs.readFileSync(path.resolve(__dirname, '../BroadcastDirector.ts'), 'utf8');
   const body = /dispose\(\) \{\n([\s\S]*?)\n    \},/.exec(code)?.[1] ?? '';
-  expect(body).toContain('dedup.close()');
-  expect(body).toContain('quietBreaks.clear()');
+  // 先去掉註解：本體裡有一行註解提到 `dedup.close()`，不去掉的話刪了那個呼叫這條照樣綠。
+  const live = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  expect(live).toContain('dedup.close()');
+  expect(live).toContain('quietBreaks.clear()');
 });
 
 test('#84 AC-5：quietAllowCritical 關著時，恢復側與沒有這個功能時完全相同', async () => {

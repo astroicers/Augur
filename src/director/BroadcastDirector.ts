@@ -417,6 +417,12 @@ export function isQuietAt(range: QuietRange | null, minuteOfDay: number): boolea
     : at >= range.startMin || at < range.endMin;
 }
 
+/** 一段時段的長度（毫秒）。起訖相同解析不出來，所以結果恆為正。 */
+export function quietSpanMs(range: QuietRange): number {
+  const minutes = (((range.endMin - range.startMin) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return minutes * 60_000;
+}
+
 const QUIET_PROBLEM_TEXT: Record<QuietHoursProblem, string> = {
   empty: '',
   'not-a-range': '要用一個 `-` 分成起訖兩段，例如 22:00-07:00',
@@ -476,28 +482,37 @@ const QUIET_BREAK_LIMIT = 256;
  * 上限與四個出口就能各自直接驗（見 `quietHours.test.ts`）。
  */
 export interface QuietBreakLog {
-  /** 記下「這個 fingerprint 的 firing 剛剛破了靜音、而且真的念出去了」。 */
-  remember(fingerprint: string): void;
+  /** 記下「這個 fingerprint 的 firing 剛剛破了靜音、而且真的念出去了」，連同寫入時刻。 */
+  remember(fingerprint: string, at: number): void;
   /** 這個 fingerprint 在本段時段內破過靜音嗎？ */
   has(fingerprint: string): boolean;
   /** 忘掉一筆（恢復句念完、或來源層取代了 episode）。 */
   forget(fingerprint: string): void;
   /** 忘掉全部（離開時段、功能關閉、`dispose()`）。 */
   clear(): void;
+  /**
+   * 忘掉寫入時刻距 `now` 已達 `maxAgeMs` 的那幾筆（`maxAgeMs` = 一段時段的長度）。
+   *
+   * 「離開時段就清」只在兩段時段之間**有跑過一輪**時成立；dashboard 沒開 auto-refresh、
+   * 主機休眠時根本沒有那一輪（獨立複審 M1）。同一段時段內的兩個時刻相差必然小於時段長度，
+   * 所以「比時段長度舊」= 「一定是前一段（或更早）時段寫下的」，不靠中間那一輪。
+   */
+  expire(now: number, maxAgeMs: number): void;
   /** 目前記著幾筆。只有測試與上限的斷言用得到。 */
   size(): number;
 }
 
 export function createQuietBreakLog(opts: { limit?: number } = {}): QuietBreakLog {
   const limit = opts.limit ?? QUIET_BREAK_LIMIT;
-  const spoken = new Set<string>();
+  /** fingerprint → 寫入時刻。`Map` 保留插入順序，淘汰最舊的那一筆照舊靠它。 */
+  const spoken = new Map<string, number>();
   return {
-    remember(fingerprint) {
+    remember(fingerprint, at) {
       // 先刪再加：同一個 fingerprint 重播時要排到隊尾，淘汰的才會是真正最舊的那一筆。
       spoken.delete(fingerprint);
-      spoken.add(fingerprint);
+      spoken.set(fingerprint, at);
       while (spoken.size > limit) {
-        const oldest = spoken.values().next();
+        const oldest = spoken.keys().next();
         if (oldest.done === true) {
           break;
         }
@@ -507,6 +522,13 @@ export function createQuietBreakLog(opts: { limit?: number } = {}): QuietBreakLo
     has: (fingerprint) => spoken.has(fingerprint),
     forget: (fingerprint) => void spoken.delete(fingerprint),
     clear: () => spoken.clear(),
+    expire(now, maxAgeMs) {
+      for (const [fingerprint, at] of spoken) {
+        if (now - at >= maxAgeMs) {
+          spoken.delete(fingerprint);
+        }
+      }
+    },
     size: () => spoken.size,
   };
 }
@@ -536,13 +558,13 @@ function breaksQuiet(
   item: BroadcastItem,
   settings: DirectorSettings,
   aliases: SeverityAliasMap,
-  quietBreaks: QuietBreakLog
+  brokeQuiet: (fingerprint: string) => boolean
 ): boolean {
   if (settings.quietAllowCritical !== true) {
     return false;
   }
   if (item.alert.status !== 'firing') {
-    return quietBreaks.has(item.alert.fingerprint);
+    return brokeQuiet(item.alert.fingerprint);
   }
   return meetsMin(resolveSeverity(item.alert.severity, aliases), 'critical');
 }
@@ -1070,7 +1092,9 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // 按靜音鈕無關，所以標記不受下面那個早退影響。真正受影響的是**交付** ——
       // `sink.enqueue()` 全部排在那個早退之後，所以 `quietAllowCritical` 在結構上
       // 依然不可能蓋過觀看者自己按下的開關（#63 AC-6）。
-      const quiet = isQuietAt(quietRangeFor(round.quietHours ?? ''), minuteOfDayAt(now()));
+      const quietAt = now();
+      const quietRange = quietRangeFor(round.quietHours ?? '');
+      const quiet = isQuietAt(quietRange, minuteOfDayAt(quietAt));
       // ⚠️ **清空排在「這一輪無事」的早退之前**（#84 AC-4）：破靜音記錄只在**本段**時段內
       // 有意義，而時段是被時鐘跨出去的，不是被告警跨出去的。放到早退之後的話，
       // 白天每一輪都無事（最常見的情形）就一次都不會清 —— 昨晚念過的那則 critical
@@ -1078,6 +1102,10 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // 功能關掉時一併清：關了再開不該讀到關掉之前的記錄（與抖動抑制關閉時的理由同一條）。
       if (!quiet || round.quietAllowCritical !== true) {
         quietBreaks.clear();
+      } else if (quietRange !== null) {
+        // 兩段時段之間一輪都沒跑時，上面那一條清不到（獨立複審 M1）：比一段時段長度還舊的
+        // 記錄必定是前一段寫下的，在這裡作廢。
+        quietBreaks.expire(quietAt, quietSpanMs(quietRange));
       }
       if (items.length === 0) {
         return { items, evaluated: true, pending: null };
@@ -1085,15 +1113,23 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       const outgoing: BroadcastItem[] = [];
       /** 這一輪**在時段內破了靜音**的那幾則 firing；真的交付之後才寫進記錄（見下方）。 */
       const breaking: ParsedAlert[] = [];
+      /**
+       * 本輪已放行的 firing。記錄要等交付後才寫，所以同一輪裡的 resolved（例：抖動解除時補念的
+       * firing 與來源層同一輪吐出的恢復）在閘門上還看不到它（獨立複審 L1）——一併算數。
+       */
+      const breakingNow = new Set<string>();
+      const brokeQuiet = (fingerprint: string) => quietBreaks.has(fingerprint) || breakingNow.has(fingerprint);
       for (const item of candidates) {
         if (quiet) {
-          if (!breaksQuiet(item, round, aliases, quietBreaks)) {
+          if (!breaksQuiet(item, round, aliases, brokeQuiet)) {
             item.suppressed = 'quiet';
             continue;
           }
           if (item.alert.status === 'firing') {
             breaking.push(item.alert);
+            breakingNow.add(item.alert.fingerprint);
           } else {
+            breakingNow.delete(item.alert.fingerprint);
             // ⚠️ **恢復側在這裡就把那一筆消掉，不等交付。** 寫入那一側等交付是對的（沒出聲
             // 就不該記下「吵醒過你」），但**消除**那一側等交付會留下一筆過期的通行證：
             // 這一輪若被下面兩道整輪的早退（沒有播報器、ADR-007 的每瀏覽器靜音）擋下，
@@ -1127,7 +1163,10 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // `breaking` 只收 firing —— 恢復側那一筆在閘門上就消掉了（理由見上面那段），
       // 所以記錄不會單調增長。
       for (const alert of breaking) {
-        quietBreaks.remember(alert.fingerprint);
+        // 同一輪裡已經念到結局（恢復也放行了）的那一則不必再記。
+        if (breakingNow.has(alert.fingerprint)) {
+          quietBreaks.remember(alert.fingerprint, quietAt);
+        }
       }
       return { items, evaluated: true, pending: sink.pending() };
     } finally {
