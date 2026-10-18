@@ -37,7 +37,7 @@ const SUPPRESSED_TEXT: Record<AlertLang, Record<SuppressReason, SuppressedMark>>
     flapping: {
       label: '抖動中，未念',
       title:
-        '這則在設定的窗內 firing↔resolved 翻太多次，被抖動抑制擋下（#64）。維持同一個狀態滿一個窗之後，會把當下狀態念出來。',
+        '這則在設定的窗內 firing↔resolved 翻太多次，被抖動抑制擋下（#64）。維持同一個狀態滿一個窗之後解除抑制：當下狀態與上次念出去的不同才補念一句，一樣就不出聲。',
     },
     quiet: {
       label: '靜音時段，未念',
@@ -48,7 +48,7 @@ const SUPPRESSED_TEXT: Record<AlertLang, Record<SuppressReason, SuppressedMark>>
     flapping: {
       label: 'flapping, not spoken',
       title:
-        'This alert flipped between firing and resolved too many times inside the window, so flapping suppression held it back. Once it holds one state for a full window, the current state is spoken.',
+        'This alert flipped between firing and resolved too many times inside the window, so flapping suppression held it back. Suppression lifts once it holds one state for a full window: the current state is read out then only if it differs from the state announced last; if they match, nothing is said.',
     },
     quiet: {
       label: 'quiet hours, not spoken',

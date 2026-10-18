@@ -228,7 +228,7 @@ the sentence. Those lines carry a mark so the reason is visible instead of being
 
 | Mark | Why | Set by |
 |---|---|---|
-| **抖動中，未念** / *flapping, not spoken* | The alert flipped between firing and resolved too many times inside the window, so flapping suppression held it back. Once it holds one state for a full window, the current state is spoken. | *Flapping suppression: flip threshold* / *window* |
+| **抖動中，未念** / *flapping, not spoken* | The alert flipped between firing and resolved too many times inside the window, so flapping suppression held it back. Suppression lifts once it holds one state for a full window: the current state is read out then only if it differs from the state announced last; if they match, nothing is said. | *Flapping suppression: flip threshold* / *window* |
 | **靜音時段，未念** / *quiet hours, not spoken* | The quiet-hours window is on right now and this alert does not break the silence. It is not read out later when the window ends. | *Quiet hours* / *Still speak critical in quiet hours* |
 
 The wording follows *Language*, and the mark is also exposed as a `data-suppressed`
