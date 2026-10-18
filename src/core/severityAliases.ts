@@ -115,20 +115,47 @@ export function resolveSeverity(severity: unknown, aliases?: SeverityAliasMap): 
   return aliases.get(key) ?? severity
 }
 
-const REASON_TEXT: Record<SkippedAliasReason, string> = {
-  'no-separator': '缺 `=`',
-  'empty-alias': '`=` 左邊是空的',
-  'unknown-target': '目標不是已知嚴重度(critical/error/warning/info/unknown)',
-  'duplicate-alias': '別名重複,以第一筆為準',
+/**
+ * `describeSkippedAliases` 的語言(#81)。
+ *
+ * **刻意不 import `core/types.ts` 的 `AlertLang`**:檔頭第一句就是「純函式、零相依
+ * (只 import `severity.ts`)」,而那條不變量有一支既有測試逐項比對本檔的 import 清單。
+ * 代價是這個聯集與 `AlertLang` 必須一致,由 `feed/__tests__/feedNotices.test.ts` 的雙向可指派斷言
+ * 在 typecheck 時擋住漂移(單向只驗得到成員,驗不到「完全相同」)。
+ */
+export type SkippedAliasLang = 'zh' | 'en'
+
+const REASON_TEXT: Record<SkippedAliasLang, Record<SkippedAliasReason, string>> = {
+  zh: {
+    'no-separator': '缺 `=`',
+    'empty-alias': '`=` 左邊是空的',
+    'unknown-target': '目標不是已知嚴重度(critical/error/warning/info/unknown)',
+    'duplicate-alias': '別名重複,以第一筆為準',
+  },
+  en: {
+    'no-separator': 'no `=`',
+    'empty-alias': 'nothing on the left of `=`',
+    'unknown-target': 'target is not a known severity (critical/error/warning/info/unknown)',
+    'duplicate-alias': 'duplicate alias; the first one wins',
+  },
 }
 
 /**
  * 把被略過的項目講成一句人看得懂的話;沒有被略過的項目回空字串。
  *
- * 純函式、不碰 DOM —— 面板要顯示就直接用,目前沒有任何 UI 消費它(票文:「供面板顯示或日後用」)。
+ * 純函式、不碰 DOM —— 面板要顯示就直接用。自 #81 起**面板真的在用它**:編輯模式下
+ * 顯示一行提示(`feed/feedNotices.ts` 的 `skippedAliasNotice` 轉手這裡的輸出),
+ * 寫錯的設定於是不再靜默失效。
+ *
+ * `lang` 預設 `'zh'` —— 與 #81 之前逐字相同的輸出,所以既有呼叫端與既有測試都不必改。
  */
-export function describeSkippedAliases(skipped: readonly SkippedAlias[]): string {
+export function describeSkippedAliases(skipped: readonly SkippedAlias[], lang: SkippedAliasLang = 'zh'): string {
   if (skipped.length === 0) {return ''}
-  const items = skipped.map((s) => `「${s.entry}」(${REASON_TEXT[s.reason]})`).join('、')
+  const text = REASON_TEXT[lang]
+  if (lang === 'en') {
+    const items = skipped.map((s) => `“${s.entry}” (${text[s.reason]})`).join(', ')
+    return `Severity aliases: ${skipped.length} ${skipped.length === 1 ? 'entry' : 'entries'} skipped — ${items}`
+  }
+  const items = skipped.map((s) => `「${s.entry}」(${text[s.reason]})`).join('、')
   return `別名設定有 ${skipped.length} 項被略過:${items}`
 }

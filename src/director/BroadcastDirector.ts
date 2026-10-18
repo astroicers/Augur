@@ -43,12 +43,17 @@
  * `sources/rulesFetcher.ts` 的檔頭）；正式的來源層工廠由呼叫端用 `panelAlertSource()`
  * 組好再傳進來。
  */
-import type { AlertLang, BroadcastPlan, ParsedAlert } from '../core/types';
+import type { AlertLang, BroadcastPlan, ParsedAlert, SuppressReason } from '../core/types';
 import { meetsMin } from '../core/severity';
 import { parseSeverityAliases, resolveSeverity, type SeverityAliasMap } from '../core/severityAliases';
 import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
 import { createPanelAlertSource, type RulesFetcher } from '../sources/panelAlerts';
+
+// `SuppressReason` 的定義自 #81 起住在 `core/types.ts`（理由見那裡的註解）；這一行把原本的
+// 匯出點留著，所以 `import { type SuppressReason } from '…/BroadcastDirector'` 這條路徑
+// 照樣成立（repo 內目前沒有這樣的呼叫端 —— `feed/` 兩支直接讀 `core/types`）。
+export type { SuppressReason };
 
 /**
  * 導播要的來源能力 —— `PanelAlertSource` 的子集（只有 `evaluate`）。
@@ -433,8 +438,8 @@ const QUIET_PROBLEM_TEXT: Record<QuietHoursProblem, string> = {
 /**
  * 把解析失敗講成一句人看得懂的話（#63 AC-4 的「回報原因」）；沒設定或解析成功回空字串。
  *
- * 純函式、不碰 DOM —— 面板要顯示就直接用。目前沒有任何 UI 消費它，與
- * `core/severityAliases.ts` 的 `describeSkippedAliases` 同一個狀態。
+ * 純函式、不碰 DOM —— 面板要顯示就直接用。目前沒有任何 UI 消費它
+ * （`core/severityAliases.ts` 的 `describeSkippedAliases` 自 #81 起有了：編輯模式下的那一行提示）。
  */
 export function describeQuietHours(problem: QuietHoursProblem | null): string {
   if (problem === null || problem === 'empty') {
@@ -592,9 +597,6 @@ function breaksQuiet(
 // 所以測試能把任意時刻餵進來，不必真的等 10 分鐘。
 // ---------------------------------------------------------------------------
 
-/** 一則**沒有**交給播報器的原因（`BroadcastItem.suppressed`）。 */
-export type SuppressReason = 'flapping' | 'quiet';
-
 /** 解析成功的抖動設定。 */
 export interface FlappingConfig {
   /** 窗內翻轉幾次算抖動（>= 1 的整數；`parseFlapping` 會把小數往上取整）。 */
@@ -676,8 +678,8 @@ const FLAPPING_PROBLEM_TEXT: Record<FlappingProblem, string> = {
 /**
  * 把設定錯誤講成一句人看得懂的話；關閉（`'off'`）與解析成功回空字串。
  *
- * 純函式、不碰 DOM —— 面板要顯示就直接用。目前沒有任何 UI 消費它，與
- * `describeQuietHours`／`core/severityAliases.ts` 的 `describeSkippedAliases` 同一個狀態。
+ * 純函式、不碰 DOM —— 面板要顯示就直接用。目前沒有任何 UI 消費它，與 `describeQuietHours`
+ * 同一個狀態（`core/severityAliases.ts` 的 `describeSkippedAliases` 自 #81 起有了）。
  */
 export function describeFlapping(problem: FlappingProblem | null): string {
   if (problem === null || problem === 'off') {

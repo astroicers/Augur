@@ -58,6 +58,8 @@ Implemented and in use:
   state history for this panel, so it survives a reload and everyone sees the same list.
   Each line is the sentence the mascot speaks. Change the dashboard time range to look
   further back, and use the search box to filter. Lines from the record are never spoken.
+  Lines the panel deliberately kept quiet about carry a mark saying so — see *Lines that
+  were not read out* below.
 - **Exporting that record as CSV**, for pasting into a ticket or a post-mortem. The
   **匯出 CSV** button in the header downloads exactly the lines the list is showing — the
   search box applies — and nothing is uploaded anywhere. See *Exporting the record*
@@ -170,7 +172,7 @@ The panel's own options:
 | Option | Default | What it does |
 |---|---|---|
 | Minimum severity | all | Only speak alerts at or above this severity. Recovery messages ignore this — if it announced the problem, it announces the recovery. |
-| Severity aliases | empty (no aliases) | Map your own severity labels onto the standard ones (`critical`, `error`, `warning`, `info`, `unknown`) so that the threshold above and the expressions can read them: `P1=critical, sev2=warning, disaster=critical`. Case and *surrounding* spaces are ignored (a space inside a label counts, so `sev 1` does not match `sev1`); full-width commas, semicolons and equals signs work too. There are **no built-in aliases** — left empty, nothing is mapped and behaviour is exactly as it was. Malformed entries (no `=`, unknown target, duplicate alias) are skipped and the rest still apply. The spoken sentence keeps the original label (lower-cased, as every severity is), so an alert labelled `P1` is announced as `p1` and not as `critical`. |
+| Severity aliases | empty (no aliases) | Map your own severity labels onto the standard ones (`critical`, `error`, `warning`, `info`, `unknown`) so that the threshold above and the expressions can read them: `P1=critical, sev2=warning, disaster=critical`. Case and *surrounding* spaces are ignored (a space inside a label counts, so `sev 1` does not match `sev1`); full-width commas, semicolons and equals signs work too. There are **no built-in aliases** — left empty, nothing is mapped and behaviour is exactly as it was. Malformed entries (no `=`, unknown target, duplicate alias) are skipped and the rest still apply — and **while the panel is open in the panel editor** it shows a line listing exactly which entries were skipped and why, so a typo does not fail silently. That line follows *Language*, and it is **never** shown outside the editor: a wall display is not disturbed by a setting somebody is in the middle of fixing. The panel can only tell it is in the editor from `data.request.app`, which Grafana does not always provide, so the line can also be missing *inside* the editor; that affects the message only — which entries are skipped never depends on it. The spoken sentence keeps the original label (lower-cased, as every severity is), so an alert labelled `P1` is announced as `p1` and not as `critical`. |
 | Alert name label | empty (use `alertname`) | Which **instance label** to use as the alert's name — and therefore as the unit of de-duplication, since the panel speaks each name once. Leave it empty and nothing changes: the name comes from `alertname` as before. Set it when a single Grafana rule covers a whole wall of alerts (a query such as `ALERTS{alertstate="firing"}`): Grafana overwrites every instance's `alertname` with the rule's own name, so all of them arrive under one name and only the first one is ever spoken. Keep the original name in a label of its own — `label_replace(…, "wall_alertname", "$1", "alertname", "(.*)")` — and put that label's name here (`wall_alertname`), and each alert under that rule is announced, recovers and repeats on its own. If the label is missing, empty or only whitespace on a given instance, **that instance** falls back to `alertname` (and to the rule name if there is no `alertname` either), so instances with and without the label can sit under the same rule. The **broadcast history** list follows the same option, so an alert keeps one name on both sides; for a history entry the label is read from the `{labels}` part of Grafana's own annotation text, and the rule's name is used if it is not there. The label's value must identify one alert uniquely: alerts that share a value are treated as one (pick `instance`, and two different alerts on the same host are spoken as one). Changing this option takes effect on the panel's next refresh, and only the alerts whose name really changes are announced again, under the new name: the old name counts as superseded, so it is never reported as recovered. Alerts whose name is unchanged — those falling back to `alertname` — carry on silently and are not repeated. Typing `alertname` here is the same as leaving the field empty (surrounding spaces are ignored too), so switching between the two changes nothing at all. |
 | Repeat interval | 0 (never) | How often to re-announce an alert that is still firing. |
 | Fallback severity | `critical` | Severity to assume when the rules endpoint cannot be reached. That endpoint carries no stability guarantee, so failing to reach it is an expected outcome rather than an error. |
@@ -217,6 +219,34 @@ dashboard. It is shown when the panel has room for it (at least 320×180 px):
 
 The panel option *Enable speech* still turns speech off for everyone viewing the
 dashboard; when it is off the voice button is hidden.
+
+## Lines that were not read out
+
+A line can be on the list and still never have been spoken: *Quiet hours* and *Flapping
+suppression* both keep the display, the expression and the record updating while dropping
+the sentence. Those lines carry a mark so the reason is visible instead of being guessed:
+
+| Mark | Why | Set by |
+|---|---|---|
+| **抖動中，未念** / *flapping, not spoken* | The alert flipped between firing and resolved too many times inside the window, so flapping suppression held it back. Once it holds one state for a full window, the current state is spoken. | *Flapping suppression: flip threshold* / *window* |
+| **靜音時段，未念** / *quiet hours, not spoken* | The quiet-hours window is on right now and this alert does not break the silence. It is not read out later when the window ends. | *Quiet hours* / *Still speak critical in quiet hours* |
+
+The wording follows *Language*, and the mark is also exposed as a `data-suppressed`
+attribute on the line whose **value is the reason itself** (`flapping` or `quiet`), so
+automation does not have to match on display text. Lines without a mark are rendered
+exactly as before.
+
+Three honest limits:
+
+- **Only lines this browser tab produced can carry a mark.** It is the same `session` /
+  `history` split as the `data-origin` attribute and the CSV's `來源` column: a line read
+  back from Grafana's alert state history records that the *state changed*, not whether
+  this tab said anything about it. When the same event is in both, the list keeps the
+  history line — and the mark disappears with the session line it belonged to.
+- **The per-browser voice button is not a reason.** Muting your own browser silences
+  everything on this machine and nothing is marked for it — the button itself already says
+  so, and the mark is reserved for decisions the panel made that you cannot otherwise see.
+- The marks are **not** in the CSV export: its three columns are unchanged.
 
 ## Exporting the record
 

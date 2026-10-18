@@ -2,7 +2,12 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-18（#80：播報紀錄匯出 CSV——新增純函式 `src/feed/feedCsv.ts`
+> 最後更新：2026-10-18（#81：清單列標出「這句為什麼沒念」——導播算好的 `suppressed`
+> （#63 的靜音時段／#64 的抖動抑制）原樣轉手到 `FeedRow`，那一列多一個 `data-suppressed`
+> 屬性與一個標記；別名設定寫錯的項目在**編輯模式**下顯示一行提示（`describeSkippedAliases`
+> 自此有了 UI 消費端）。兩者的文字由新的純函式 `src/feed/feedNotices.ts` 決定、跟著
+> `alertLang`；`SuppressReason` 的定義一併移到 `src/core/types.ts`，導播照舊 re-export）。
+> 同日（#80：播報紀錄匯出 CSV——新增純函式 `src/feed/feedCsv.ts`
 > （RFC 4180 跳脫、以單引號前綴防公式注入、UTC 的 ISO 8601 時間欄、檔名安全化），
 > 下載動作（Blob + `a[download]`）留在 `MascotPanel.tsx` 且與它分開；匯出的是
 > `buildFeedRows` 的同一份輸出，所以「匯出的就是畫面上那幾列」）。
@@ -96,6 +101,10 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                       名字跟著 `alertNameLabel`（#70），與播報端同一個選項
                       ▼ 要顯示哪幾列（與本分頁念過的句子合併、篩選、空清單提示）
                       src/feed/feedRows.ts（純函式，#79）→ 元件只映射成 JSX
+                      ▼ 那一列上寫什麼（標記與提示的文字，跟著 alertLang）
+                      src/feed/feedNotices.ts（純函式，#81）
+                        suppressed（導播算好的）→ 標記＋data-suppressed="flapping|quiet"
+                        describeSkippedAliases（#51）→ 編輯模式才顯示的那一行
                       ▼ 同一份 rows 再走一條（按下「匯出 CSV」才發生，#80）
                       src/feed/feedCsv.ts（純函式：跳脫、防公式注入、檔名）
                       → MascotPanel 的 Blob + a[download]（零網路請求，檔案在分頁裡生出來）
@@ -108,14 +117,15 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
 | `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
-| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
+| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#81 的兩處畫面行為同樣只是接線：清單列的 `data-suppressed` 與標記、編輯模式（`isPanelEditor(data.request?.app)`）才渲染的那一行別名提示——文字全在 `src/feed/feedNotices.ts`。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、取名（`historyAlertNameOf`，跟著 `alertNameLabel`，#70）、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
-| `src/feed/feedRows.ts` | feed 要顯示哪幾列（#79）：本分頁念過的句子與播報紀錄的合併（同文字**而且**時間在 `SESSION_MATCH_WINDOW_MS` 內才算同一件事）、篩選（大小寫不敏感，同時比對句子與 label 值）、三種空清單提示。**純函式**：不 import React、不碰 DOM；合併與篩選只比兩個既有時間戳、不讀「現在」，唯一讀時鐘的 `formatHistoryWhen`（分辨今天）可從參數注入 |
+| `src/feed/feedRows.ts` | feed 要顯示哪幾列（#79）：本分頁念過的句子與播報紀錄的合併（同文字**而且**時間在 `SESSION_MATCH_WINDOW_MS` 內才算同一件事）、篩選（大小寫不敏感，同時比對句子與 label 值）、三種空清單提示。**純函式**：不 import React、不碰 DOM；合併與篩選只比兩個既有時間戳、不讀「現在」，唯一讀時鐘的 `formatHistoryWhen`（分辨今天）可從參數注入。`FeedLine`／`FeedRow` 另帶 `suppressed`（#81，導播算好的原樣轉手；**只有本分頁的列可能有值** —— 紀錄列來自 Grafana 的狀態歷史，那份資料不知道這個分頁念了沒有） |
+| `src/feed/feedNotices.ts` | 清單列上的標記與編輯模式那一行提示的**文字**（#81）：`suppressedMark`（`'flapping'`／`'quiet'` × `zh`／`en` 的 label 與 title）、`skippedAliasNotice`（轉手 `core/severityAliases.ts` 的 `describeSkippedAliases`，沒有被略過的項目回 `null`）、`isPanelEditor`／`PANEL_EDITOR_APP`（`data.request?.app === CoreApp.PanelEditor`；**`data.request` 會缺**，缺席時回 `false` ＝ 退化成觀看模式）。**純函式**：只 import `core/types` 與 `core/severityAliases`，不 import React、不 import `@grafana/data`（那個字串由測試對著 `CoreApp.PanelEditor` 比對）、不碰 DOM、不讀時鐘 |
 | `src/feed/feedCsv.ts` | 播報紀錄匯出 CSV（#80）：`feedRowsToCsv`（BOM＋標題列＋每列「UTC 的 ISO 8601 時間／來源／句子」）、`csvCell`（RFC 4180 的引號與雙引號加倍，**另**對 `=`／`+`／`-`／`@`、定位字元、CR 開頭的儲存格加單引號前綴防公式注入）、`feedCsvFilename`（`augur-broadcast-<uid>-panel<id>-<UTC 戳記>.csv`，只留 `A-Za-z0-9_-`，uid 或時間戳取不到就省略那一段）。**純函式**：只 `import type` 一個 `FeedRow`，不 import React、不碰 DOM、不讀時鐘（時間一律從參數進來）。下載動作刻意不在這裡 |
-| `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報 |
+| `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 回報（#81 起**面板真的在用它**：編輯模式下的那一行提示，並多一個 `lang` 參數，預設 `'zh'` ＝ #81 之前的輸出逐字相同） |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
 | `src/speech/remoteSpeaker.ts` | 外部語音服務的播報器（ADR-005）。同一個 `Speaker` 介面；逐句取音訊、Web Audio 播放（CSP 的 `media-src 'none'` 會擋 `<audio>`）、音量包絡驅動嘴型；任何一則失敗或逾時就把**那一則**交回 Web Speech |
@@ -135,6 +145,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 **唯一的抽象邊界是 `ParsedAlert`**（`src/core/types.ts`）。來源層把任何來源轉成它，
 `core/` 只認得它。這條線在 push → pull 的方向反轉中**完好無損** ——
 `src/core/` 整包繼承、介面一行沒改就承接了新架構。
+（`SuppressReason` 自 #81 起也住在這裡：清單列要標出「這句為什麼沒念」，於是 `feed/` 與導播
+兩邊都得認得它，而放進這條邊界旁邊，兩邊就都只讀 `core/types`。導播照舊 re-export 它。）
 （**內部改過**：之後為兩次真實的永久靜音缺陷加了 `dedup.forget()`（commit
 「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」）與 `setWindow()`（commit
 「fix(panel): 會讓面板永久靜音的三條路徑，以及 speaker.ts 的第一份測試」），

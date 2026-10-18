@@ -16,7 +16,7 @@
  * 唯一讀時鐘的是把紀錄時間戳轉成顯示字串的 `formatHistoryWhen`（要分辨「今天」），
  * 它的「現在」是參數，而且整個 formatter 可從第四個參數注入 —— 測試因此不必看時鐘臉色。
  */
-import type { BroadcastPlan } from '../core/types';
+import type { BroadcastPlan, SuppressReason } from '../core/types';
 import type { HistoryResult } from '../sources/history';
 
 /**
@@ -34,6 +34,15 @@ export interface FeedLine {
   /** 念出的時刻（epoch ms）。紀錄模式要拿它和紀錄的時間比，判斷「這一句是不是已經在紀錄裡」。 */
   at: number;
   plan: BroadcastPlan;
+  /**
+   * 這一句**沒有**被念出來的原因（`BroadcastItem.suppressed` 原樣轉手，#81）；
+   * `undefined` ＝ 念了。`'flapping'`／`'quiet'` 兩種各自在清單上標一個標記，
+   * 文字由 `feedNotices.ts` 的 `suppressedMark` 決定。
+   *
+   * 名字叫「沒念」而不是「沒播報」是刻意的：被抑制的那一則**照樣進清單、照樣換表情**，
+   * 只是沒有聲音（見 `BroadcastDirector.ts` 的交付閘門）。
+   */
+  suppressed?: SuppressReason;
 }
 
 /** 畫面上的一列。`origin` 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。 */
@@ -49,6 +58,15 @@ export interface FeedRow {
    */
   at: number;
   text: string;
+  /**
+   * 這一列**沒有**被念出來的原因（#81）；`undefined` ＝ 念了，那一列的畫面與 #81 之前逐字相同。
+   *
+   * **只有本分頁的列（`origin: 'session'`）可能有值。** 紀錄列來自 Grafana 自己的狀態歷史
+   * （ADR-006），那份資料記的是「狀態變化」而不是「這個分頁念了沒有」—— 抑制是本分頁的導播
+   * 當下的決定，紀錄裡沒有、也不該猜。所以同一件事若兩邊都有（合併窗內會只留紀錄那一列），
+   * 標記會跟著本分頁那一列一起消失；誠實記在 `src/README.md`。
+   */
+  suppressed?: SuppressReason;
 }
 
 export interface FeedRowsResult {
@@ -96,7 +114,14 @@ export function buildFeedRows(
 ): FeedRowsResult {
   if (!history) {
     return {
-      rows: feed.map((l) => ({ key: l.key, origin: 'session', when: l.when, at: l.at, text: l.plan.text })),
+      rows: feed.map((l) => ({
+        key: l.key,
+        origin: 'session' as const,
+        when: l.when,
+        at: l.at,
+        text: l.plan.text,
+        suppressed: l.suppressed,
+      })),
       emptyText: feed.length ? null : FEED_EMPTY_TEXT.session,
     };
   }
@@ -115,6 +140,7 @@ export function buildFeedRows(
       when: l.when,
       at: l.at,
       text: l.plan.text,
+      suppressed: l.suppressed,
       search: l.plan.text.toLowerCase(),
     })),
     // `e.search` 是句子加上所有 label 值、已轉小寫（`history.ts`）——篩選因此同時比對兩者。
@@ -129,7 +155,14 @@ export function buildFeedRows(
   ];
   const shown = q ? rows.filter((r) => r.search.includes(q)) : rows;
   return {
-    rows: shown.map((r) => ({ key: r.key, origin: r.origin, when: r.when, at: r.at, text: r.text })),
+    rows: shown.map((r) => ({
+      key: r.key,
+      origin: r.origin,
+      when: r.when,
+      at: r.at,
+      text: r.text,
+      suppressed: r.suppressed,
+    })),
     emptyText: shown.length ? null : q ? FEED_EMPTY_TEXT.filtered : FEED_EMPTY_TEXT.history,
   };
 }
