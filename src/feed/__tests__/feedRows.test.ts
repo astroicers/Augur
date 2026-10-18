@@ -93,6 +93,13 @@ describe('#79 AC-3：有紀錄時的合併', () => {
     expect(buildFeedRows([l], history([rec]), '', when).rows.map((r) => r.origin)).toEqual(['history']);
   });
 
+  test('同文字、紀錄時間晚於念出時刻而且在窗外 → 兩列都留（只比單側差的寫法會在這裡把本分頁那一列吞掉）', () => {
+    // 例：念出後過一小時，同一則告警再次 firing 留下同文字的紀錄 —— 那是另一件事。
+    const l = line('同一句話、晚來的另一次', T0);
+    const rec = entry(l.plan.text, T0 + SESSION_MATCH_WINDOW_MS + 1);
+    expect(buildFeedRows([l], history([rec]), '', when).rows.map((r) => r.origin)).toEqual(['session', 'history']);
+  });
+
   test('同文字但時間在窗外 → 兩列都留（只比文字的話會被幾小時前的舊紀錄吃掉，複審 L3）', () => {
     const l = line('同一句話、不同次事件', T0);
     const rec = entry(l.plan.text, T0 - SESSION_MATCH_WINDOW_MS - 1);
@@ -188,7 +195,8 @@ describe('#79 AC-1：純函式', () => {
     expect(JSON.stringify({ feed, entries })).toBe(snapshot);
   });
 
-  test('同樣的輸入給出同樣的輸出（合併與篩選不讀「現在」，只比兩個既有時間戳）', () => {
+  test('同樣的輸入連呼叫兩次，輸出相同', () => {
+    // 「不讀現在」本身由上面窗內／窗外的邊界測試間接釘住；這一支只驗冪等。
     const feed = [line('一', T0)];
     const h = history([entry('一', T0 - SESSION_MATCH_WINDOW_MS - 1)]);
     expect(buildFeedRows(feed, h, '', when)).toEqual(buildFeedRows(feed, h, '', when));
