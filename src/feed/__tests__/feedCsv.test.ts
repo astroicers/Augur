@@ -222,12 +222,13 @@ describe('#80 AC-2：防公式注入', () => {
     expect(csvCell('db-01 磁碟滿了')).toBe('db-01 磁碟滿了');
   });
 
-  test('三個欄位都過同一套處理 —— 來源與時間欄也不例外', () => {
-    // 來源與時間是我們自己產的字（不可能以 = 開頭），但處理是逐欄一致的：
-    // 這一支釘的是「沒有任何一欄繞過 csvCell」。
+  test('以 = 開頭的句子匯出之後，那一列沒有任何一欄還會被當公式算', () => {
+    // 來源與時間是我們自己產的字，不可能以 =／+／-／@ 開頭，所以這一支**驗不到**
+    // 「那兩欄有沒有繞過 csvCell」——繞過與沒繞過在產出的位元組上同形（QA 以變異體確認過）。
+    // 驗得到的是可觀察的結果：句子欄加了前綴，而整列沒有任何一欄落在「會被當公式」的那一側。
     const csv = feedRowsToCsv([row({ text: '=1+1' })]);
     for (const cell of parseCsv(csv)[1]!) {
-      expect(cell.startsWith('=') || cell.startsWith('+') || cell.startsWith('@')).toBe(false);
+      expect(['=', '+', '-', '@'].some((lead) => cell.startsWith(lead))).toBe(false);
     }
     expect(parseCsv(csv)[1]![2]).toBe("'=1+1");
   });
@@ -278,6 +279,13 @@ describe('#80 AC-3：檔名', () => {
 
   test('時間戳壞掉時省略那一段（不讓 NaN 進檔名）', () => {
     expect(feedCsvFilename({ dashboardUid: 'd', panelId: 7, at: NaN })).toBe('augur-broadcast-d-panel7.csv');
+  });
+
+  test('可表示範圍邊界的時間戳也只用檔名安全的字元（擴充年份的 ISO 帶正負號）', () => {
+    // `new Date(8.64e15).toISOString()` 是 `+275760-09-13T…`；那個 `+` 不該進檔名。
+    for (const at of [8.64e15, -8.64e15]) {
+      expect(feedCsvFilename({ dashboardUid: 'd', panelId: 7, at })).toMatch(/^[A-Za-z0-9_-]+\.csv$/);
+    }
   });
 
   test('panel id 一定出現在檔名裡（同一個 dashboard 上多個吉祥物 panel 分得出來）', () => {

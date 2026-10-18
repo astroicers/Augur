@@ -103,10 +103,15 @@ function fileSafe(s: string): string {
   return s.replace(FILENAME_UNSAFE, '-').replace(/^-+|-+$/g, '');
 }
 
-/** 時間戳 → 檔名用的 UTC 戳記 `20261018T074500Z`（`:` 在 Windows 的檔名裡不合法）。 */
+/**
+ * 時間戳 → 檔名用的 UTC 戳記 `20261018T074500Z`（`:` 在 Windows 的檔名裡不合法）。
+ *
+ * 最後仍過一次 `fileSafe`：擴充年份的 ISO 寫法帶正負號（`+275760-09-13T…`），
+ * 少了這一道那個 `+` 會進檔名，而「檔名只有 `A-Za-z0-9_-`」是對外講過的規則（QA #80）。
+ */
 function filenameStamp(at: number): string {
   const iso = isoUtc(at);
-  return iso === '' ? '' : iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  return iso === '' ? '' : fileSafe(iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'));
 }
 
 /**
