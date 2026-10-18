@@ -24,6 +24,7 @@ import type { SpeakerEvents } from '../../speech/speaker';
 import { fetchPanelRules } from '../../sources/rulesFetcher';
 import { parseRulesResponse } from '../../sources/panelAlerts';
 import { fetchPanelHistory } from '../../sources/historyFetcher';
+import { csvCell } from '../../feed/feedCsv';
 import { DiagnosticAvatar } from '../../avatar/DiagnosticAvatar';
 import { SpriteController } from '../../avatar/SpriteController';
 import {
@@ -1887,4 +1888,262 @@ test('#64：窗長為 0（設定無效）時視同關閉 —— 門檻填了也�
   await waitFor(() => expect(spoken.length).toBeGreaterThan(0));
   await flipPanel(view, [OK, { ...ALERTING }], options);
   expect(spoken.map((p) => p.status)).toEqual(['firing', 'resolved', 'firing']);
+});
+
+// ─── #80：播報紀錄匯出 CSV ──────────────────────────────────────────────────────
+
+/**
+ * 攔下下載動作，讓測試看得到「下載了什麼」。
+ *
+ * jsdom 沒有 `URL.createObjectURL`／`revokeObjectURL`，`Blob` 也沒有 `text()`，
+ * 所以這裡換掉三樣東西：記下建構參數的 `Blob` 子類別、兩個 object URL 函式，
+ * 以及 `a.click()`（不攔的話 jsdom 會對 `blob:` 位址報 navigation not implemented）。
+ * **production 的程式碼一行沒有為測試改**：驗的就是它真的走 Blob + `a[download]`。
+ */
+function captureDownloads() {
+  const contents = new Map<Blob, { type: string; text: string }>();
+  const urlToBlob = new Map<string, Blob>();
+  const downloads: Array<{ filename: string; href: string; type: string; text: string }> = [];
+  const revoked: string[] = [];
+  const RealBlob = window.Blob;
+  let seq = 0;
+
+  class RecordingBlob extends RealBlob {
+    constructor(parts: BlobPart[] = [], opts: BlobPropertyBag = {}) {
+      super(parts, opts);
+      contents.set(this, { type: opts.type ?? '', text: parts.map((p) => String(p)).join('') });
+    }
+  }
+
+  const url = URL as unknown as { createObjectURL?: unknown; revokeObjectURL?: unknown };
+  const realCreate = url.createObjectURL;
+  const realRevoke = url.revokeObjectURL;
+  window.Blob = RecordingBlob as unknown as typeof Blob;
+  url.createObjectURL = (b: Blob) => {
+    const u = `blob:augur-test/${++seq}`;
+    urlToBlob.set(u, b);
+    return u;
+  };
+  url.revokeObjectURL = (u: string) => revoked.push(u);
+  const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement
+  ) {
+    const href = this.getAttribute('href') ?? '';
+    const blob = urlToBlob.get(href);
+    const info = blob ? contents.get(blob) : undefined;
+    downloads.push({
+      filename: this.getAttribute('download') ?? '',
+      href,
+      type: info?.type ?? '',
+      text: info?.text ?? '',
+    });
+  });
+
+  return {
+    downloads,
+    revoked,
+    restore() {
+      clickSpy.mockRestore();
+      window.Blob = RealBlob;
+      url.createObjectURL = realCreate;
+      // 還排在下一個 task 的那次 revoke 可能晚於 restore 才跑。jsdom 本來就沒有這個函式，
+      // 還原成 undefined 會讓那個計時器丟錯、染紅**下一支**測試，所以留一個繼續收集的 shim。
+      url.revokeObjectURL = realRevoke ?? ((u: string) => revoked.push(u));
+    },
+  };
+}
+
+/** 一份下載的 CSV → 去掉 BOM 與尾端 CRLF 之後的列。 */
+function csvLines(text: string): string[] {
+  expect(text.charCodeAt(0)).toBe(0xfeff);
+  return text.slice(1).replace(/\r\n$/, '').split('\r\n');
+}
+
+test('#80 AC-1：按匯出就下載一個 CSV —— 內容是目前畫面上那幾列（套用篩選之後）', async () => {
+  mockedHistory.mockResolvedValue({
+    raw: [
+      histAnn({ id: 1 }),
+      histAnn({
+        id: 2,
+        alertName: 'DiskFull',
+        text: 'DiskFull {alertname=DiskFull, pod=db-0, severity=critical} - A=99, B=99',
+        data: { values: { A: 99 } },
+      }),
+    ],
+    templates: HIST_TEMPLATES,
+  });
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('db-0 磁碟滿了'));
+    // 篩選之後畫面上只剩一列 —— 匯出的就該只有那一列。
+    fireEvent.change(view.getByPlaceholderText(/篩選紀錄/), { target: { value: 'api-7f9c' } });
+    expect(view.container.querySelectorAll('[data-origin]')).toHaveLength(1);
+
+    fireEvent.click(view.getByTestId('feed-export'));
+
+    expect(cap.downloads).toHaveLength(1);
+    const [dl] = cap.downloads;
+    expect(dl!.type).toBe('text/csv;charset=utf-8');
+    // blob: 位址 —— 檔案是在這個分頁裡生出來的，沒有任何東西離開瀏覽器（AC-5）。
+    expect(dl!.href).toMatch(/^blob:/);
+    const rows = csvLines(dl!.text);
+    expect(rows[0]).toBe('時間（ISO 8601，UTC）,來源,句子');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain('api-7f9c 記憶體過高');
+    expect(rows[1]).toContain('紀錄');
+    expect(rows[1]!.startsWith(new Date(histAnn().time).toISOString())).toBe(true);
+    expect(dl!.text).not.toContain('db-0 磁碟滿了');
+    // 回收 object URL（排在下一個 task）——不回收的話 blob 活到分頁關掉為止。
+    await waitFor(() => expect(cap.revoked).toEqual([dl!.href]));
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-1／AC-3：檔名含 dashboard uid、panel id 與 UTC 時間，而且只用檔名安全的字元', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('api-7f9c 記憶體過高'));
+    fireEvent.click(view.getByTestId('feed-export'));
+
+    const name = cap.downloads[0]!.filename;
+    expect(name).toMatch(/^augur-broadcast-dash-1-panel7-\d{8}T\d{6}Z\.csv$/);
+    expect(name).toMatch(/^[A-Za-z0-9_-]+\.csv$/);
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-3：dashboard uid 兩個來源都取不到時，檔名省略那一段（不長出 undefined）', async () => {
+  // 12.3.x 的 alertState 只有數字 dashboardId，而這個 props 也沒有 data.request ——
+  // 紀錄因此讀不到（降級成只顯示本分頁的句子），匯出照樣要能按。
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: { state: 'alerting', panelId: 7, dashboardId: 5 } })} />);
+    // 沒有 uid 時 rules 端點也打不了，句子退到泛用降級（既有行為）——匯出不受影響。
+    await waitFor(() => expect(view.container.textContent).toContain('偵測到告警：告警'));
+    fireEvent.click(view.getByTestId('feed-export'));
+
+    const name = cap.downloads[0]!.filename;
+    expect(name).toMatch(/^augur-broadcast-panel7-\d{8}T\d{6}Z\.csv$/);
+    expect(name).not.toContain('undefined');
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-1：沒有紀錄時匯的是本分頁念過的句子，來源欄寫「本分頁」', async () => {
+  mockedHistory.mockRejectedValue(new Error('403 Forbidden'));
+  mockedFetch.mockResolvedValue([{ alertname: 'CPU', severity: 'critical', summary: '本分頁播的' }]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: ALERTING })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('本分頁播的'));
+    fireEvent.click(view.getByTestId('feed-export'));
+
+    const rows = csvLines(cap.downloads[0]!.text);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain('本分頁');
+    expect(rows[1]).not.toContain('紀錄,');
+    expect(rows[1]).toContain('本分頁播的');
+    // 時間欄是 UTC 的 ISO 8601，不是畫面上那個吃 locale 的顯示字串。
+    expect(rows[1]).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d\d\dZ,/);
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-2：句子裡的逗號與雙引號在下載的檔案裡已經跳脫（元件走的是同一支 csvCell）', async () => {
+  // 摘要樣板是使用者寫的字，`=` 開頭與半形逗號、雙引號都進得了句子。
+  mockedHistory.mockResolvedValue({
+    raw: [histAnn({ alertName: 'Odd' })],
+    templates: new Map([['Odd', { severity: 'warning', summary: '=SUM(1,2) 他說 "完了"' }]]),
+  });
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('=SUM(1,2)'));
+    fireEvent.click(view.getByTestId('feed-export'));
+
+    const text = cap.downloads[0]!.text;
+    // 句子欄含逗號與雙引號 → 整欄加引號、內部的雙引號加倍。
+    expect(text).toContain('""完了""');
+    expect(csvLines(text)).toHaveLength(2); // 句子裡的逗號沒有把一列拆成兩列
+    // 這一列的句子是「偵測到告警：…」開頭，所以不會加前綴 —— 前綴那一條在 feedCsv 的單元測試
+    // 裡逐種字元釘；這裡驗的是**元件真的走了那一支**（同一份跳脫規則）。
+    expect(text).toContain(csvCell(`偵測到告警：Odd，嚴重度 warning，目前數值 0.93，=SUM(1,2) 他說 "完了"。`));
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-4：清單是空的時候匯出鈕 disabled，而且按下去不下載空檔', async () => {
+  mockedHistory.mockResolvedValue({ raw: [], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('這段時間範圍內沒有播報紀錄'));
+    const btn = view.getByTestId('feed-export') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    // 這裡驗到的是「按下去沒有下載」這個可觀察的結果 —— 擋住它的是 `disabled`，
+    // 不是 `exportFeedRowsAsCsv` 的零列早退：React 依 `disabled` **prop** 決定要不要送
+    // click，從 DOM 上拿掉那個屬性也送不進去，所以那一道早退從元件這一側走不到、
+    // 本檔也沒有任何一支驗得到它（它是純防禦，拿掉它沒有測試會紅 —— QA #80 實測）。
+    fireEvent.click(btn);
+    expect(cap.downloads).toEqual([]);
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80 AC-4：有列可匯出時按鈕是啟用的（上一條的對照組）', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+  const view = render(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(view.container.textContent).toContain('api-7f9c 記憶體過高'));
+  expect((view.getByTestId('feed-export') as HTMLButtonElement).disabled).toBe(false);
+  // 篩選到沒有任何一列時，按鈕跟著停用（匯出的是「畫面上那幾列」）。
+  fireEvent.change(view.getByPlaceholderText(/篩選紀錄/), { target: { value: 'zzz' } });
+  expect((view.getByTestId('feed-export') as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('#80 AC-5：匯出不打任何端點（零後端）', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+  const cap = captureDownloads();
+  try {
+    const view = render(<MascotPanel {...props({ alertState: OK })} />);
+    await waitFor(() => expect(view.container.textContent).toContain('api-7f9c 記憶體過高'));
+    const historyCalls = mockedHistory.mock.calls.length;
+    const rulesCalls = mockedFetch.mock.calls.length;
+
+    fireEvent.click(view.getByTestId('feed-export'));
+    await settle();
+
+    expect(cap.downloads).toHaveLength(1);
+    expect(mockedHistory.mock.calls).toHaveLength(historyCalls);
+    expect(mockedFetch.mock.calls).toHaveLength(rulesCalls);
+  } finally {
+    cap.restore();
+  }
+});
+
+test('#80：窄面板（低於 320x180）不顯示匯出鈕 —— 與語音那兩顆同一個門檻，head 不被擠爆', async () => {
+  mockedHistory.mockResolvedValue({ raw: [histAnn()], templates: HIST_TEMPLATES });
+  mockedFetch.mockResolvedValue([]);
+  const narrow = { ...props({ alertState: OK }), width: 300, height: 160 };
+  const view = render(<MascotPanel {...narrow} />);
+  await waitFor(() => expect(view.container.textContent).toContain('api-7f9c 記憶體過高'));
+  expect(view.queryByTestId('feed-export')).toBeNull();
+  // 夠大時才出現（同一份 props 只改尺寸）。
+  view.rerender(<MascotPanel {...props({ alertState: OK })} />);
+  await waitFor(() => expect(view.queryByTestId('feed-export')).not.toBeNull());
 });

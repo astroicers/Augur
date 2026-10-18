@@ -58,6 +58,10 @@ Implemented and in use:
   state history for this panel, so it survives a reload and everyone sees the same list.
   Each line is the sentence the mascot speaks. Change the dashboard time range to look
   further back, and use the search box to filter. Lines from the record are never spoken.
+- **Exporting that record as CSV**, for pasting into a ticket or a post-mortem. The
+  **匯出 CSV** button in the header downloads exactly the lines the list is showing — the
+  search box applies — and nothing is uploaded anywhere. See *Exporting the record*
+  below for the format.
 
 Not implemented:
 
@@ -213,6 +217,47 @@ dashboard. It is shown when the panel has room for it (at least 320×180 px):
 
 The panel option *Enable speech* still turns speech off for everyone viewing the
 dashboard; when it is off the voice button is hidden.
+
+## Exporting the record
+
+The header also has an **匯出 CSV** ("export CSV") button. It downloads **the lines the
+list is showing right now** — the search box applies, so filter first and you export only
+the matching lines. The file is built inside the browser tab (no backend, nothing is
+uploaded, no request leaves the page) and the button is shown at the same size threshold
+as the voice button (at least 320×180 px).
+
+The file has a header row and three columns:
+
+| Column | Contents |
+|---|---|
+| `時間（ISO 8601，UTC）` | When the state change happened — for lines this tab spoke, when it spoke them. Always **UTC with a trailing `Z`** (`2026-10-18T09:00:00.000Z`), never a local offset, so a hand-over across time zones cannot read the column as someone else's clock. The list on screen keeps showing your own local time. |
+| `來源` | `紀錄` for a line read from Grafana's alert state history, `本分頁` for one this browser tab spoke but the history does not have (an alert that was already burning before the time range started). Same split as the `data-origin` attribute on each line. |
+| `句子` | The sentence, word for word what the mascot says. |
+
+Format details, all of them deliberate:
+
+- **RFC 4180 quoting.** A field containing a comma, a double quote, a line break, or
+  leading/trailing whitespace is wrapped in double quotes, and any double quote inside it
+  is doubled. Round-tripping is covered by tests.
+- **Formula injection is blocked by a leading apostrophe.** Spreadsheets evaluate a cell
+  that starts with `=`, `+`, `-` or `@` as a formula (which is how a CSV turns into an
+  external-link or DDE prompt), and alert text starting with `-` is ordinary — Grafana's
+  own history strings end in `- A=0.93`. Such a cell is exported with a single quote in
+  front of it (the OWASP recommendation), and so is a cell starting with a tab or a CR, or
+  with whitespace before the `=`. **That apostrophe is part of the cell**: a sentence
+  beginning with `=` reads `'=…` when you paste it back into a ticket. That is the trade:
+  a visible character instead of a cell that a spreadsheet might run.
+- **A UTF-8 BOM** is written first, because Excel on Windows reads a BOM-less CSV in the
+  system's legacy encoding and turns every Chinese sentence into mojibake.
+- **Records are separated by CRLF** (RFC 4180), including after the last one.
+- **The file name** is `augur-broadcast-<dashboard uid>-panel<panel id>-<UTC stamp>.csv`,
+  for example `augur-broadcast-dash-1-panel7-20261018T090000Z.csv`. Only
+  `A-Za-z0-9_-` survive in it: anything else in the dashboard uid becomes `-`. The uid
+  segment is **left out entirely** when Grafana does not give the panel one (12.3.x alert
+  state carries a numeric `dashboardId`, and an unsaved dashboard has no uid at all) — the
+  name never contains `undefined`.
+- **When the list is empty the button is disabled**, so there is no such thing as an
+  exported file with a header row and nothing under it.
 
 ## License
 
