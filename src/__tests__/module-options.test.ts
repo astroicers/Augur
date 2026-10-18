@@ -105,6 +105,13 @@ test('#63 AC-3：quietAllowCritical 的說明寫明只對排程靜音生效、�
   expect(description).toContain('只對上面這個時段生效');
 });
 
+test('#84 AC-6：quietAllowCritical 的說明寫明「破靜音念過的 critical，恢復時也會念」與它的反面', () => {
+  const description = registeredOptions().find((o) => o.path === 'quietAllowCritical')?.description ?? '';
+  expect(description).toContain('破靜音念過的 critical，恢復時也會念');
+  // 反面一起寫（否則使用者會以為所有 critical 的恢復都會念）。
+  expect(description).toContain('恢復時照舊不念');
+});
+
 test('#63：quietAllowCritical 只在設了時段且開著語音時顯示（沒設時段時它無從生效）', () => {
   const allow = registeredOptions().find((o) => o.path === 'quietAllowCritical');
   const showIf = allow!.showIf!;
