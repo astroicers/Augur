@@ -2,7 +2,13 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-18（#81：清單列標出「這句為什麼沒念」——導播算好的 `suppressed`
+> 最後更新：2026-10-18（#82：純提取式重構——`MascotPanel.tsx` 的 CSS 搬到
+> `src/components/MascotPanel.styles.ts`（逐字不變）、每瀏覽器靜音的本機儲存與
+> 同頁／跨分頁同步搬到 `src/speech/muteStore.ts`（不 import React；鍵名與事件名
+> 是 ADR-007 的相容面，不得更名）、`unavailableSpeaker` 搬到
+> `src/speech/unavailableSpeaker.ts`、`errorText` 搬到 `src/sources/errorText.ts`，
+> 三支新模組各有單元測試；元件瘦了兩百多行（實數看 `wc -l`），對外行為不變）。
+> 同日（#81：清單列標出「這句為什麼沒念」——導播算好的 `suppressed`
 > （#63 的靜音時段／#64 的抖動抑制）原樣轉手到 `FeedRow`，那一列多一個 `data-suppressed`
 > 屬性與一個標記；別名設定寫錯的項目在**編輯模式**下顯示一行提示（`describeSkippedAliases`
 > 自此有了 UI 消費端）。兩者的文字由新的純函式 `src/feed/feedNotices.ts` 決定、跟著
@@ -117,17 +123,21 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
 | `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
-| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#81 的兩處畫面行為同樣只是接線：清單列的 `data-suppressed` 與標記、編輯模式（`isPanelEditor(data.request?.app)`）才渲染的那一行別名提示——文字全在 `src/feed/feedNotices.ts`。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
+| `src/components/MascotPanel.tsx` | 接線 + 呈現。**只剩接線與 JSX**（#82 把三類與元件邏輯無關的東西搬走：CSS → `MascotPanel.styles.ts`、每瀏覽器靜音的儲存與同步 → `src/speech/muteStore.ts`、`unavailableSpeaker` → `src/speech/unavailableSpeaker.ts`、`errorText` → `src/sources/errorText.ts`）。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#81 的兩處畫面行為同樣只是接線：清單列的 `data-suppressed` 與標記、編輯模式（`isPanelEditor(data.request?.app)`）才渲染的那一行別名提示——文字全在 `src/feed/feedNotices.ts`。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
+| `src/components/MascotPanel.styles.ts` | `MascotPanel` 的 emotion CSS（#82 原樣搬出來，一個字元沒改）。搬出來只為閱讀性，**不是**為了共用：唯一的呼叫端仍是 `MascotPanel`，簽名也刻意維持零參數（`useStyles2(getStyles)` 的呼叫形狀不變；顏色一律沿用容器的 `currentColor`，不寫死色票）。SP-1.5 的 `background-size` 禁令掃的是整個 `src/`，搬過來照樣受管 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、取名（`historyAlertNameOf`，跟著 `alertNameLabel`，#70）、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
+| `src/sources/errorText.ts` | 丟出來的東西 → 給人看的一行原因（#82 從 `MascotPanel.tsx` 搬出來）：`Error` 取 `message`，`getBackendSrv()` 的拒絕值把 `{status, statusText, data.message}` 串起來，都認不出來時回「未知錯誤」（不回空字串 —— 畫面上會變成「降級了但沒說為什麼」）。放來源層的理由：那個非 `Error` 的形狀是 Grafana HTTP API 的拒絕值，而全專案只有這一層在打它。純函式 |
 | `src/feed/feedRows.ts` | feed 要顯示哪幾列（#79）：本分頁念過的句子與播報紀錄的合併（同文字**而且**時間在 `SESSION_MATCH_WINDOW_MS` 內才算同一件事）、篩選（大小寫不敏感，同時比對句子與 label 值）、三種空清單提示。**純函式**：不 import React、不碰 DOM；合併與篩選只比兩個既有時間戳、不讀「現在」，唯一讀時鐘的 `formatHistoryWhen`（分辨今天）可從參數注入。`FeedLine`／`FeedRow` 另帶 `suppressed`（#81，導播算好的原樣轉手；**只有本分頁的列可能有值** —— 紀錄列來自 Grafana 的狀態歷史，那份資料不知道這個分頁念了沒有） |
 | `src/feed/feedNotices.ts` | 清單列上的標記與編輯模式那一行提示的**文字**（#81）：`suppressedMark`（`'flapping'`／`'quiet'` × `zh`／`en` 的 label 與 title）、`skippedAliasNotice`（轉手 `core/severityAliases.ts` 的 `describeSkippedAliases`，沒有被略過的項目回 `null`）、`isPanelEditor`／`PANEL_EDITOR_APP`（`data.request?.app === CoreApp.PanelEditor`；**`data.request` 會缺**，缺席時回 `false` ＝ 退化成觀看模式）。**純函式**：只 import `core/types` 與 `core/severityAliases`，不 import React、不 import `@grafana/data`（那個字串由測試對著 `CoreApp.PanelEditor` 比對）、不碰 DOM、不讀時鐘 |
 | `src/feed/feedCsv.ts` | 播報紀錄匯出 CSV（#80）：`feedRowsToCsv`（BOM＋標題列＋每列「UTC 的 ISO 8601 時間／來源／句子」）、`csvCell`（RFC 4180 的引號與雙引號加倍，**另**對 `=`／`+`／`-`／`@`、定位字元、CR 開頭的儲存格加單引號前綴防公式注入）、`feedCsvFilename`（`augur-broadcast-<uid>-panel<id>-<UTC 戳記>.csv`，只留 `A-Za-z0-9_-`，uid 或時間戳取不到就省略那一段）。**純函式**：只 `import type` 一個 `FeedRow`，不 import React、不碰 DOM、不讀時鐘（時間一律從參數進來）。下載動作刻意不在這裡 |
 | `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 回報（#81 起**面板真的在用它**：編輯模式下的那一行提示，並多一個 `lang` 參數，預設 `'zh'` ＝ #81 之前的輸出逐字相同） |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
+| `src/speech/muteStore.ts` | 每瀏覽器靜音（ADR-007）的本機儲存與同頁／跨分頁同步（#82 從 `MascotPanel.tsx` 搬出來）：`readMuted`／`writeMuted`（讀寫都包 try/catch —— 無痕模式與配額滿時 `localStorage` 會拋，靜音仍要在本分頁即時生效、只是不持久）、`publishMuted`（寫本機 + 發同頁事件，寫入失敗照發）、`mutedFromStorageEvent`（**過濾條件在這裡**：不是我們那個鍵就回 `null`，否則別人寫本機會把吉祥物靜音）、`watchMuted`（訂閱兩種事件，回解除訂閱）。**不 import React**、不碰 `@grafana/*`。⚠️ 鍵名 `augur-mascot-panel.muted` 與事件名 `augur-mascot-panel:muted` 是 ADR-007 的相容面，不得更名 |
+| `src/speech/unavailableSpeaker.ts` | 沒有 `speechSynthesis` 的環境裡的 `Speaker`（#82 從 `MascotPanel.tsx` 搬出來）：每一則都以 `no-speech-synthesis` 報錯、佇列照走（吞掉的話畫面像在念卻沒有聲音也沒有錯誤）。原樣轉交 plan **物件身分**（試聽與補念靠它分辨）|
 | `src/speech/remoteSpeaker.ts` | 外部語音服務的播報器（ADR-005）。同一個 `Speaker` 介面；逐句取音訊、Web Audio 播放（CSP 的 `media-src 'none'` 會擋 `<audio>`）、音量包絡驅動嘴型；任何一則失敗或逾時就把**那一則**交回 Web Speech |
 | `src/avatar/AvatarController.ts` | avatar-agnostic 契約（繼承 ADR-002 §2） |
 | `src/avatar/gaze.ts` | 視線格計算。兩層防抖：dead zone + 角度遲滯 |
