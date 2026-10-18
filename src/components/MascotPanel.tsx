@@ -15,7 +15,8 @@ import type { AlertStateLike } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
 import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
 import { fetchPanelHistory } from '../sources/historyFetcher';
-import { buildFeedRows, type FeedLine } from '../feed/feedRows';
+import { buildFeedRows, type FeedLine, type FeedRow } from '../feed/feedRows';
+import { FEED_CSV_MIME, feedCsvFilename, feedRowsToCsv } from '../feed/feedCsv';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
 import { watchDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
@@ -205,6 +206,11 @@ const getStyles = () => ({
     border: 1px solid currentColor;
     background: transparent;
     color: inherit;
+    /* 清單是空的時候匯出鈕是 disabled（#80 AC-4）—— 停用要看得出來，否則按不動像壞掉。 */
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
   `,
 });
 
@@ -973,18 +979,29 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
   // 顯示哪幾列（合併、篩選、空清單判斷）全在 `buildFeedRows`（#79）——這裡只把結果映射成 JSX。
   // 紀錄模式顯示告警歷史（ADR-006）；讀不到時退回本分頁念過的句子（決策 7）。
+  // ⚠️ 一輪 render **只算一次**，清單與匯出鈕讀的是**同一份** `feedRows` —— #80 AC-1 的
+  // 「匯出的就是目前畫面上那幾列」因此不靠兩處各算一次來維持一致（篩選框一改，兩邊同時變）。
+  const { rows: feedRows, emptyText: feedEmptyText } = buildFeedRows(feed, history, historyFilter);
+
   const renderFeedLines = () => {
-    const { rows, emptyText } = buildFeedRows(feed, history, historyFilter);
-    if (emptyText !== null) {
-      return <span className={styles.empty}>{emptyText}</span>;
+    if (feedEmptyText !== null) {
+      return <span className={styles.empty}>{feedEmptyText}</span>;
     }
     // data-origin 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。
-    return rows.map((r) => (
+    return feedRows.map((r) => (
       <div key={r.key} className={styles.line} data-origin={r.origin}>
         <span className={styles.when}>{r.when}</span>
         <span>{r.text}</span>
       </div>
     ));
+  };
+
+  /** 匯出：目前畫面上那幾列 → CSV → 下載（#80；內容與檔名都在 `exportFeedRowsAsCsv` 底下那兩支）。 */
+  const exportFeedCsv = () => {
+    const alertState = (data as unknown as { alertState?: AlertStateLike }).alertState;
+    // dashboard uid 的取法與導播、紀錄兩個 effect 同一套（12.3.x 的 alertState 沒有 dashboardUID）；
+    // 兩個來源都取不到時檔名會省略那一段，不會長出 `undefined`（見 `feedCsvFilename`）。
+    exportFeedRowsAsCsv(feedRows, alertState?.dashboardUID ?? data.request?.dashboardUID, id);
   };
 
   const chipColor = theme.visualization.getColorByName(
@@ -1042,6 +1059,27 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         {roomy && enableTTS && (
           <button className={styles.btn} onClick={preview} type="button" data-testid="tts-preview">
             試聽
+          </button>
+        )}
+        {/*
+          匯出鈕（#80）。門檻與語音那兩顆同一個 `roomy`（>=320x180）：窄面板改成上下堆疊、
+          更窄還會退到 DiagnosticAvatar，多一顆按鈕在那個寬度只會把 head 擠成好幾列。
+          與語音鈕不同的是它**不看 `enableTTS`** —— 關掉語音時清單照樣在長，紀錄也照樣要帶得走。
+        */}
+        {roomy && (
+          <button
+            className={styles.btn}
+            onClick={exportFeedCsv}
+            type="button"
+            disabled={feedRows.length === 0}
+            data-testid="feed-export"
+            title={
+              feedRows.length === 0
+                ? '清單上目前沒有任何一列，沒有東西可以匯出'
+                : '把清單上目前這幾列（套用篩選之後）下載成 CSV；時間是 UTC 的 ISO 8601'
+            }
+          >
+            匯出 CSV
           </button>
         )}
         {enableTTS && (
@@ -1121,6 +1159,46 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     </div>
   );
 };
+
+/**
+ * 匯出一次：目前畫面上那幾列 → CSV → 下載（#80）。
+ *
+ * **放在元件外面**是刻意的：它要讀「現在」（檔名的時間戳），而「現在」只有在按下去的那一刻
+ * 才該被讀 —— 寫在 render 裡的話那是個會讓 render 不純的呼叫（react-hooks 的 purity 規則也會擋）。
+ * 這一支自己不決定任何格式：CSV 的內容與檔名在 `src/feed/feedCsv.ts`（純函式、有自己的單元測試），
+ * DOM 的部分在下面那一支。
+ *
+ * 零列時直接回頭不下載空檔（#80 AC-4）。畫面上按不到這條路：清單是空的時候按鈕是 disabled；
+ * 這道早退是第二層，免得日後有人把 `disabled` 拿掉就靜默下載一份只有標題列的檔案。
+ */
+function exportFeedRowsAsCsv(rows: readonly FeedRow[], dashboardUid: string | undefined, panelId: number): void {
+  if (rows.length === 0) {
+    return;
+  }
+  downloadTextFile(feedRowsToCsv(rows), feedCsvFilename({ dashboardUid, panelId, at: Date.now() }), FEED_CSV_MIME);
+}
+
+/**
+ * 把一段文字當檔案下載下來（匯出 CSV 的唯一一處 DOM 動作，#80）。
+ *
+ * **刻意與 `feedRowsToCsv` 分開**（AC-3）：「CSV 長什麼樣」是純函式的事、有自己的單元測試；
+ * 這裡只有 Blob + `a[download]`。零後端（ADR-004）—— 檔案在瀏覽器裡生出來，沒有任何網路請求，
+ * `createObjectURL` 的 `blob:` URL 也不會離開這個分頁。
+ */
+function downloadTextFile(text: string, filename: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  // Firefox 要求這個 a 在 document 裡才會觸發下載；`display:none` ＋ 立刻移走，畫面上看不到它。
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 立刻 revoke 在部分瀏覽器會把還沒開始的下載取消掉，所以排到下一個 task 再回收 ——
+  // 不回收的話這個 blob 會活到分頁關掉為止（匯出鈕是可以連按的）。
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 /** 錯誤物件 → 給人看的一行原因。backendSrv 丟出來的是 `{ status, statusText, data: { message } }`。 */
 function errorText(e: unknown): string {

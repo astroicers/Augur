@@ -77,7 +77,7 @@ describe('#79 AC-3：有紀錄時的合併', () => {
     const { rows } = buildFeedRows([only], history([rec]), '', when);
     expect(rows.map((r) => r.origin)).toEqual(['session', 'history']);
     expect(rows[0]!.text).toBe(only.plan.text);
-    expect(rows[1]!).toEqual({ key: rec.key, origin: 'history', when: `@${rec.time}`, text: rec.text });
+    expect(rows[1]!).toEqual({ key: rec.key, origin: 'history', when: `@${rec.time}`, at: rec.time, text: rec.text });
   });
 
   test('同文字而且時間在窗內 → 只留紀錄那一列，不重複列出', () => {
@@ -219,6 +219,37 @@ describe('#79 AC-1：純函式', () => {
     for (const token of [/\breact\b/i, /\bwindow\b/, /\bdocument\b/, /\bnavigator\b/, /\blocalStorage\b/]) {
       expect(code).not.toMatch(token);
     }
+  });
+});
+
+describe('#80：每一列的時間戳（匯出 CSV 的 ISO 欄位要用）', () => {
+  test('紀錄列的 at 是 entry.time、本分頁的列是 line.at', () => {
+    const l = line('本分頁念的', T0 + 5000);
+    const rec = entry('紀錄裡的', T0);
+    const { rows } = buildFeedRows([l], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.at])).toEqual([
+      ['session', T0 + 5000],
+      ['history', T0],
+    ]);
+  });
+
+  test('沒有紀錄時（降級路徑）每一列也帶著 at', () => {
+    const l = line('只有本分頁', T0);
+    expect(buildFeedRows([l], null, '', when).rows.map((r) => r.at)).toEqual([T0]);
+  });
+
+  test('篩選過後留下的列，at 仍是那一筆自己的時間（不是被串位）', () => {
+    const recs = [entry('第一則 DiskFull', T0), entry('第二則 MemHigh', T0 + 60_000)];
+    const { rows } = buildFeedRows([], history(recs), 'memhigh', when);
+    expect(rows.map((r) => [r.text, r.at])).toEqual([[recs[1]!.text, T0 + 60_000]]);
+  });
+
+  test('at 是機器要讀的時間戳，與給人看的 when 分開（when 吃 locale、還會省略日期）', () => {
+    const rec = entry('一', T0);
+    const [row] = buildFeedRows([], history([rec]), '').rows;
+    expect(row!.at).toBe(T0);
+    expect(row!.when).toBe(formatHistoryWhen(T0));
+    expect(typeof row!.at).toBe('number');
   });
 });
 

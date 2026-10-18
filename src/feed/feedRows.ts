@@ -40,7 +40,14 @@ export interface FeedLine {
 export interface FeedRow {
   key: string;
   origin: 'session' | 'history';
+  /** 給人看的時間字串（`formatWhen` 的輸出，吃 locale）。 */
   when: string;
+  /**
+   * 這一列的時間戳（epoch ms）：紀錄列是狀態變化時刻 `entry.time`，本分頁的列是念出時刻 `line.at`。
+   * 與 `when` 並存而不是取代它：`when` 是**給人看的**、吃 locale 又會省略日期，
+   * 機器要讀的時間（匯出 CSV 的 ISO 8601 欄，#80）從它回推不出來。
+   */
+  at: number;
   text: string;
 }
 
@@ -89,7 +96,7 @@ export function buildFeedRows(
 ): FeedRowsResult {
   if (!history) {
     return {
-      rows: feed.map((l) => ({ key: l.key, origin: 'session', when: l.when, text: l.plan.text })),
+      rows: feed.map((l) => ({ key: l.key, origin: 'session', when: l.when, at: l.at, text: l.plan.text })),
       emptyText: feed.length ? null : FEED_EMPTY_TEXT.session,
     };
   }
@@ -106,6 +113,7 @@ export function buildFeedRows(
       key: l.key,
       origin: 'session' as const,
       when: l.when,
+      at: l.at,
       text: l.plan.text,
       search: l.plan.text.toLowerCase(),
     })),
@@ -114,13 +122,14 @@ export function buildFeedRows(
       key: e.key,
       origin: 'history' as const,
       when: formatWhen(e.time),
+      at: e.time,
       text: e.text,
       search: e.search,
     })),
   ];
   const shown = q ? rows.filter((r) => r.search.includes(q)) : rows;
   return {
-    rows: shown.map((r) => ({ key: r.key, origin: r.origin, when: r.when, text: r.text })),
+    rows: shown.map((r) => ({ key: r.key, origin: r.origin, when: r.when, at: r.at, text: r.text })),
     emptyText: shown.length ? null : q ? FEED_EMPTY_TEXT.filtered : FEED_EMPTY_TEXT.history,
   };
 }
