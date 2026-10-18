@@ -120,7 +120,7 @@ export function resolveSeverity(severity: unknown, aliases?: SeverityAliasMap): 
  *
  * **刻意不 import `core/types.ts` 的 `AlertLang`**:檔頭第一句就是「純函式、零相依
  * (只 import `severity.ts`)」,而那條不變量有一支既有測試逐項比對本檔的 import 清單。
- * 代價是這個聯集與 `AlertLang` 必須一致,由 `severityAliases.test.ts` 的雙向可指派斷言
+ * 代價是這個聯集與 `AlertLang` 必須一致,由 `feed/__tests__/feedNotices.test.ts` 的雙向可指派斷言
  * 在 typecheck 時擋住漂移(單向只驗得到成員,驗不到「完全相同」)。
  */
 export type SkippedAliasLang = 'zh' | 'en'

@@ -50,8 +50,9 @@ import { createDedup, type Dedup } from '../core/dedup';
 import { buildBroadcastPlan } from '../core/format';
 import { createPanelAlertSource, type RulesFetcher } from '../sources/panelAlerts';
 
-// `SuppressReason` 的定義自 #81 起住在 `core/types.ts`（理由見那裡的註解）；這一行讓既有的
-// `import { type SuppressReason } from '…/BroadcastDirector'` 呼叫端一字都不必改。
+// `SuppressReason` 的定義自 #81 起住在 `core/types.ts`（理由見那裡的註解）；這一行把原本的
+// 匯出點留著，所以 `import { type SuppressReason } from '…/BroadcastDirector'` 這條路徑
+// 照樣成立（repo 內目前沒有這樣的呼叫端 —— `feed/` 兩支直接讀 `core/types`）。
 export type { SuppressReason };
 
 /**
