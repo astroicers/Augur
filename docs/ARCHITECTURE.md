@@ -6,7 +6,10 @@
 > （RFC 4180 跳脫、以單引號前綴防公式注入、UTC 的 ISO 8601 時間欄、檔名安全化），
 > 下載動作（Blob + `a[download]`）留在 `MascotPanel.tsx` 且與它分開；匯出的是
 > `buildFeedRows` 的同一份輸出，所以「匯出的就是畫面上那幾列」）。
-> 前一次是 2026-10-18（#79：feed 列的合併、篩選與空清單判斷抽成純函式
+> 同日（#84：`quietAllowCritical` 開著時，在時段內破靜音**念出來**的
+> critical，它的恢復句在同一段時段內也念——導播記下「真的交付過」的 fingerprint，
+> 離開時段／關掉功能／`onSupersede`／`dispose()` 都會清）。
+> 同日（#79：feed 列的合併、篩選與空清單判斷抽成純函式
 > `src/feed/feedRows.ts`——`MascotPanel` 只把結果映射成 JSX，對外行為不變）。
 > 前一次是 2026-10-16（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
 > 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
@@ -53,7 +56,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
                         交付閘門（依序）：抖動抑制（#64，窗內翻太多次就先不念，穩定滿窗後
                           解除並補念當下狀態）→ 值班靜音時段（#63，dashboard 層級，瀏覽器
-                          本地時間；quietAllowCritical 只放 critical 的 firing 過）
+                          本地時間；quietAllowCritical 放 critical 的 firing 過，#84 起
+                          連同「破靜音念出來過」的那幾則的恢復句）
                           → 每瀏覽器靜音（ADR-007，整輪的開關）
                           任一個成立就不交給播報器 —— items 照回（前兩道會留 suppressed
                           標記：'flapping'／'quiet'），清單與表情照常更新
@@ -103,7 +107,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 |---|---|
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
-| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
+| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
 | `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
@@ -162,14 +166,14 @@ Panel options 共 **19 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 |---|---|---|
 | `minSeverity` | `''`（全播） | 只播 >= 此嚴重度；resolved 不受門檻影響 |
 | `severityAliases` | `''`（無別名） | 把自家的 label 接到標準嚴重度：`P1=critical, sev2=warning`。**不附內建別名表**，留空即與沒有這個選項時完全相同 |
-| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，正在燒的告警會全部重新播報一次，名字沒變的也一樣 |
+| `alertNameLabel` | `''`（用 `alertname`） | 改用哪個 **instance label** 當告警名與去重單位：`wall_alertname`（#69）。一條總規則底下同時燒的每則告警於是各自播報，**播報紀錄的名字也跟著它**（#70）。label 不存在、空字串或只有空白時，**那一個 instance**（紀錄則是**那一筆**）退回 `alertname`（再沒有才用規則名）。留空即與沒有這個選項時完全相同。**這個 label 的值必須能唯一識別一則告警**：值相同的告警會被併成一則（去重單位就是名字）。改這一欄時，**只有名字真的改變的**那幾則以新名字重新播報一次（舊名字算被取代，不念恢復句）；名字沒變的（例如沒帶那個 label、退回 `alertname` 的 instance）照常延續、不重念。填 `alertname` 視同留空，兩者之間切換不算改動（#85） |
 | `repeatFiringMin` | `0`（不重播） | 持續燒時的重播間隔（分），補回 ADR-004 決策 4 放棄的 `repeat_interval` |
 | `fallbackSeverity` | `critical` | rules 端點取不到細節時的嚴重度（該端點無穩定性保證，失敗是預期內的） |
 | `alertLang` | `zh` | 播報語言 |
 | `speakValue` | `true`（念） | 播報句與播報紀錄要不要帶「目前數值 N」子句（#71）。條件只是 0／1 或查 `ALERTS`（值恆為 1）時數值沒有意義，關掉只少那一段、其餘子句逐字不變 |
 | `enableTTS` | `true` | 關掉就只更新畫面不發聲（對所有觀看者生效；panel 標題列的語音開關只管自己這台瀏覽器） |
 | `quietHours` | `''`（無排程） | 值班靜音時段 `22:00-07:00`：時段內照樣更新畫面，只是不念（#63）。**起點含、終點不含**；跨午夜與不跨午夜都支援。留空或格式錯誤即與沒有這個選項時完全相同 |
-| `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing（恢復句不念）。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果 |
+| `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果。**破靜音念過的 critical，恢復時也會念**（#84）；反面同樣成立——沒破過靜音念出來的告警（非 critical、或這個開關關著）恢復時照舊不念 |
 | `flappingThreshold` | `0`（關閉） | 抖動抑制（#64）：同一則在窗內 firing↔resolved 翻幾次就先不念。例「10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復」。**達到門檻的那一次仍會念**，之後的翻轉才不念。`0` 或留空即與沒有這個選項時完全相同 |
 | `flappingWindowMin` | `10` | 抖動抑制的窗長（分），同時是「穩定多久就解除抑制」的長度。不是大於 0 的數字（含 `0`）→ 整個抖動抑制視同關閉 |
 | `ttsVoice` | `''`（自動） | 指名聲線，**可只填名稱的一段**；空字串優先挑 zh-TW 本機引擎 |
@@ -202,8 +206,14 @@ Grafana 會用**規則名覆蓋**每個 instance 的 `alertname`，所以「一�
 label，這個選項再指定去讀它。取名是**逐 instance** 的（`sources/panelAlerts.ts` 的 `alertNameOf`），
 所以同一條規則裡帶與不帶那個 label 的 instance 可以並存，各自成為一個 episode、
 各自恢復。`MascotPanel.tsx` 與導播都只是把這個字串原樣往下帶，不解析也不判斷。
-改這一欄會讓既有 episode 的 fingerprint 失效，所以來源層把它們當**被取代**（`onSupersede`，
-不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
+改這一欄會讓某些既有 episode 的 fingerprint 失效，所以來源層把**那幾則**當
+**被取代**（`onSupersede`，不念恢復句）而不是恢復 —— 與降級路徑那顆泛用 episode 同一條理由。
+判定依據是換 label 之後的第一份清單：fingerprint 還在裡面的就是名字沒變，episode 照常延續、
+不重念；不在裡面的才是改了名（#85，`noteLabelChange()` 與差集迴圈的對帳）。`alertname` 與留空
+在讀取時就正規化成同一個值（連前後空白一起修掉），所以兩者之間切換連「換過」都偵測不到。
+已知取捨：**在換 label 與第一份新命名的清單到手之間**剛好不再燒的那一則，分不出改名與恢復，
+一律當成被取代（少念一句恢復，與 #85 之前的行為相同）。那通常就是換 label 的同一輪，
+但端點掛著時對帳會晚幾輪，窗口跟著變長。
 
 **播報紀錄（ADR-006）也吃同一個選項**（#70）：紀錄端的取名是 `sources/history.ts` 的
 `historyAlertNameOf`，讀的是 annotation 自由文字 `RuleName {labels} - values` 裡 `{labels}` 段的
@@ -228,6 +238,26 @@ ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號�
 兩者都是「照樣評估、照樣經過 dedup、照樣回 `items`，只是不交付」——
 所以時段結束時不會把時段內的告警一口氣補念出來。`quietAllowCritical` **只對排程靜音生效**：
 觀看者自己按了靜音，critical 也不念。
+
+`quietAllowCritical` 開著時還有恢復側的一條（#84）：**在時段內破靜音念出來的那則 critical，
+它的恢復句在同一段時段內也念** —— 使用者既然已經被叫醒，就該聽到結局，而不是起身去看螢幕。
+反面同樣是規格的一部分：**沒破過靜音念出來的告警（非 critical、或開關關著）恢復時照舊不念**，
+所以這不是「所有 critical 的恢復都會念」。導播為此記一份 fingerprint 的集合
+（`createQuietBreakLog`，與 dedup、抖動狀態同生同死）：
+
+- **鍵是實際交付，不是 `breaksQuiet()` 的判定。** 寫入點在 `sink.enqueue()` 之後，
+  所以 ADR-007 的靜音鈕按下去的那台瀏覽器（判定得出「破得了靜音」卻一句都沒出聲）
+  不會記下任何東西 —— 否則它解除靜音後會冒出一句沒有前文的「已恢復」，
+  而同一面牆上沒按靜音的那台行為還不一樣。
+- **只在一段時段內有效**，四個出口都會清：離開時段或關掉 `quietAllowCritical`（每一輪都查，
+  **排在「這一輪無事」的早退之前** —— 時段是被時鐘跨出去的，不是被告警跨出去的）、
+  恢復句在閘門上拿到通行證（**這一側不等交付**：等交付的話，恢復句被每瀏覽器靜音擋下的
+  那一輪會留下一筆過期的通行證，之後同一個名字那個破不了靜音的 episode 會拿它出聲）、
+  來源層 `onSupersede`、`dispose()`。昨晚念過的 critical 撐到今晚才恢復時
+  因此不會破今晚的靜音。上限 256 筆（滿了丟最舊的）是對付「fingerprint 每輪都變」的 backstop。
+- **時段外念出的 firing、時段內恢復 → 仍然不念**（記錄只在時段內累積）。那個人沒有被吵醒，
+  不需要在半夜被告知結局；要改成「念」的話，得先決定記錄要往回追多久，那是另一張票。
+
 時段用的是**每個觀看者瀏覽器的本地時間**（`new Date(ms).getHours()`），
 代價是跨時區的觀看者各自落在不同的絕對時刻、日光節約轉換當天不保證 ——
 要全站同一個絕對時段得改成帶時區的設定，那是另一張票。
@@ -244,7 +274,8 @@ ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號�
 （沒有播報器／每瀏覽器靜音）排在交付之前 —— 所以 `quietAllowCritical` 在結構上
 蓋不過觀看者自己按下的靜音鈕。抖動排在時段之前，所以兩者同時成立時標記是 `'flapping'`
 而不是 `'quiet'`，而且 `quietAllowCritical` 救不回一則正在抖動的 critical ——
-一則在 10 分鐘內翻 4 次的 critical 正是這個選項要安靜掉的噪音。
+一則在 10 分鐘內翻 4 次的 critical 正是這個選項要安靜掉的噪音。#84 的恢復側語意同樣
+越不過抖動那一道：被抖動抑制擋下的恢復句連靜音閘門都走不到（它在 `candidates` 之外）。
 抑制期間照樣經過 dedup（理由同靜音時段），但**解除**是三道閘門裡唯一會「多念一句」的：
 維持同一個狀態滿一個窗沒再翻轉就解除，而且**解除當下**就念當下的實際狀態
 （與抑制前最後念出去的那個狀態不同時）。不這樣做的話，抑制期間翻完、最後停在 resolved

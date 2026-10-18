@@ -717,3 +717,251 @@ test('#69：rules 快取連 label 一起記 —— 改了選項不必等快取�
   expect(seen).toEqual([undefined, 'wall_alertname']);
   expect(out.filter((a) => a.status === 'firing').map((a) => a.name)).toEqual(['Watchdog', 'KubeletTooManyPods']);
 });
+
+// ---------------------------------------------------------------------------
+// #85：換 alertNameLabel 時只重念「名字真的變了」的那幾則
+//
+// #69 的作法是：只要選項字串變了，就把**所有**具名 episode 當成被取代、通通忘掉，
+// 下一輪整面重念一次。本票把它收斂成「以新命名的清單對帳」—— 對帳的依據就是
+// 差集迴圈本來就在算的 `stillFiring`，所以沒有新的狀態要維護（`episodes` 自己
+// 就是那份 fingerprint → 名字的記錄，生命週期沿用既有的）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 值班牆的混合形狀：一則帶 `wall_alertname`（換 label 時名字會變）、
+ * 一則沒帶（換 label 時退回 `alertname`，名字**不會**變）。
+ */
+function mixedWallAlerts(withLegacy = true) {
+  const renamed = {
+    state: 'Alerting',
+    labels: { alertname: 'OncallWall', wall_alertname: 'Watchdog', severity: 'info' },
+    annotations: { summary: '看門狗還活著' },
+  };
+  const legacy = {
+    state: 'Alerting',
+    labels: { alertname: 'LegacyPlain', severity: 'warning' },
+    annotations: { summary: '沒帶 wall_alertname 的老規則' },
+  };
+  return withLegacy ? [renamed, legacy] : [renamed];
+}
+
+/**
+ * #85 的共用台架：真的解析（選項走完整條路）+ 真的 dedup（「有沒有重念」要由
+ * dedup 回答，不是由 source 吐了幾個事件回答）。
+ */
+function relabelRig(label: () => string, raw: () => unknown, clock = { t: 1_000_000 }) {
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+  const forgotten: string[] = [];
+  const spoken: string[] = [];
+  const s = wallSource(label, raw, clock, (fp) => {
+    forgotten.push(fp);
+    dedup.forget(fp);
+  });
+  const tick = async (state = 'alerting') => {
+    for (const ev of await s.evaluate({ state }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+  return { s, tick, spoken, forgotten };
+}
+
+test('#85 AC-1：留空 ↔ alertname 視為沒有變化 —— 不取代、不重念，連端點都不必再打', async () => {
+  const clock = { t: 1_000_000 };
+  const dedup = createDedup(Number.POSITIVE_INFINITY, { startCleanup: false, now: () => clock.t });
+  const forgotten: string[] = [];
+  const seen: Array<string | undefined> = [];
+  let label = '';
+  const s = createPanelAlertSource({
+    panelId: PANEL,
+    fetchRules: async (uid, panelId, alertNameLabel) => {
+      seen.push(alertNameLabel);
+      return parseRulesResponse(wallResponse(mixedWallAlerts()), uid, panelId, alertNameLabel);
+    },
+    fallbackSeverity: 'critical',
+    alertNameLabel: () => label,
+    // ⚠️ production 預設的 10 秒快取窗：換 label 要讓快取失效（#69 已釘住），
+    // 而「等價的改法」不該讓它失效 —— 否則使用者只是把 alertname 打進去就多打一次端點。
+    ruleCacheSec: 10,
+    now: () => clock.t,
+    onSupersede: (fp) => {
+      forgotten.push(fp);
+      dedup.forget(fp);
+    },
+  });
+  const spoken: string[] = [];
+  const tick = async () => {
+    for (const ev of await s.evaluate({ state: 'alerting' }, UID)) {
+      if (dedup.shouldSpeak(ev)) {
+        spoken.push(`${ev.name}/${ev.status}`);
+      }
+    }
+  };
+
+  await tick();
+  expect(spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing']);
+
+  // 留空 → alertname → 前後帶空白的 alertname（編輯器裡打字打到一半）→ 回到留空。
+  for (const next of ['alertname', '  alertname  ', '']) {
+    label = next;
+    clock.t += 1_000; // 仍在快取窗內
+    await tick();
+  }
+
+  expect(forgotten).toEqual([]);
+  expect(spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing']); // 一句都沒多
+  expect(s.episodeCount()).toBe(2);
+  // 快取鍵（正規化後的 label）從頭到尾沒變 → 端點只打了第一輪那一次。
+  expect(seen).toEqual([undefined]);
+});
+
+test('#85 AC-1：parseRulesResponse 填 alertname（含前後空白）與留空的結果逐字相同', () => {
+  const baseline = parseRulesResponse(wallResponse(mixedWallAlerts()), UID, PANEL);
+  expect(parseRulesResponse(wallResponse(mixedWallAlerts()), UID, PANEL, '  alertname  ')).toEqual(baseline);
+  expect(baseline.map((d) => d.alertname)).toEqual(['OncallWall', 'LegacyPlain']);
+});
+
+test('#85 AC-2：換成別的 label → 只有名字真的變的那則被取代，名字沒變的照常延續不重念', async () => {
+  const clock = { t: 1_000_000 };
+  let label = '';
+  const rig = relabelRig(
+    () => label,
+    () => wallResponse(mixedWallAlerts()),
+    clock
+  );
+
+  await rig.tick();
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing']);
+
+  label = 'wall_alertname';
+  clock.t += 60_000;
+  await rig.tick();
+
+  // OncallWall → Watchdog：名字真的變了，所以舊 fingerprint 被取代。
+  // LegacyPlain 沒帶那個 label、退回 alertname：名字沒變，episode 照常延續。
+  expect(rig.forgotten).toEqual(['alert:OncallWall']);
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing', 'Watchdog/firing']);
+  expect(rig.s.episodeCount()).toBe(2);
+
+  // 再下一輪也不得冒出任何句子（取代是一次性的，不會每輪重做）。
+  clock.t += 60_000;
+  await rig.tick();
+  expect(rig.spoken).toHaveLength(3);
+});
+
+test('#85 AC-3：名字變了而仍在燒的那則以新名字念一次 firing，且不念舊名字的恢復句', async () => {
+  const clock = { t: 1_000_000 };
+  let label = '';
+  const rig = relabelRig(
+    () => label,
+    () => wallResponse(mixedWallAlerts()),
+    clock
+  );
+
+  await rig.tick();
+  label = 'wall_alertname';
+  clock.t += 60_000;
+  await rig.tick();
+
+  expect(rig.spoken).toContain('Watchdog/firing');
+  expect(rig.spoken.filter((s) => s.endsWith('/resolved'))).toEqual([]);
+});
+
+test('#85 AC-3：換回留空 → 名字變回來的那則重念，沒帶 label 的那則仍然不重念', async () => {
+  const clock = { t: 1_000_000 };
+  let label = 'wall_alertname';
+  const rig = relabelRig(
+    () => label,
+    () => wallResponse(mixedWallAlerts()),
+    clock
+  );
+
+  await rig.tick();
+  expect(rig.spoken).toEqual(['Watchdog/firing', 'LegacyPlain/firing']);
+
+  label = '';
+  clock.t += 60_000;
+  await rig.tick();
+
+  expect(rig.forgotten).toEqual(['alert:Watchdog']);
+  expect(rig.spoken).toEqual(['Watchdog/firing', 'LegacyPlain/firing', 'OncallWall/firing']);
+  expect(rig.s.episodeCount()).toBe(2);
+});
+
+test('#85：換 label 的那一輪取不到細節時，對帳留到真的拿到新命名的清單那一輪（中間不念假的恢復句）', async () => {
+  // 端點無官方穩定性保證，「換選項的那一輪剛好掛掉」是會發生的。
+  // 若在偵測到換值的當下就把旗標清掉，下一輪會把舊命名的 episode 當成恢復 ——
+  // 一句「OncallWall 已恢復」，而它其實一直在燒（#69 本來就要擋這件事）。
+  const clock = { t: 1_000_000 };
+  let label = '';
+  let raw: unknown = wallResponse(mixedWallAlerts());
+  const rig = relabelRig(
+    () => label,
+    () => raw,
+    clock
+  );
+
+  await rig.tick();
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing']);
+
+  // 換 label 的那一輪：端點回了一份看不出任何規則的東西 → 走降級路徑。
+  label = 'wall_alertname';
+  raw = {};
+  clock.t += 60_000;
+  await rig.tick();
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing', '告警/firing']);
+
+  // 下一輪端點回來了：這才是第一份用新 label 取好名的清單，對帳在這裡發生。
+  raw = wallResponse(mixedWallAlerts());
+  clock.t += 60_000;
+  await rig.tick();
+
+  expect(rig.forgotten).toEqual(['alert:OncallWall', `alert:panel:${PANEL}`]);
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing', '告警/firing', 'Watchdog/firing']);
+  expect(rig.spoken.filter((s) => s.endsWith('/resolved'))).toEqual([]);
+});
+
+test('#85：換 label 的同一輪剛好不再燒的那則算「被取代」、不念恢復句（已知取捨）', async () => {
+  // 手上只有一份新命名的清單，分不出「它改名了」與「它恢復了」。一律當成取代 ——
+  // 行為與 #69 相同（那時候整面都當成取代），代價是少念那一句恢復。
+  const clock = { t: 1_000_000 };
+  let label = '';
+  let raw: unknown = wallResponse(mixedWallAlerts());
+  const rig = relabelRig(
+    () => label,
+    () => raw,
+    clock
+  );
+
+  await rig.tick();
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing']);
+
+  // 換 label 的同一輪，LegacyPlain 剛好恢復了（總規則仍在燒 → alertState 還是 alerting）。
+  label = 'wall_alertname';
+  raw = wallResponse(mixedWallAlerts(false));
+  clock.t += 60_000;
+  await rig.tick();
+
+  expect(rig.forgotten).toEqual(['alert:OncallWall', 'alert:LegacyPlain']);
+  expect(rig.spoken).toEqual(['OncallWall/firing', 'LegacyPlain/firing', 'Watchdog/firing']);
+  expect(rig.s.episodeCount()).toBe(1);
+
+  // 對照組：沒換 label 的那一輪，不再燒的那則照常念恢復（取捨只發生在換 label 的那一輪）。
+  raw = wallResponse([
+    {
+      state: 'Alerting',
+      labels: { alertname: 'OncallWall', wall_alertname: 'KubeletTooManyPods', severity: 'critical' },
+      annotations: { summary: 'pod 數量過多' },
+    },
+  ]);
+  clock.t += 60_000;
+  await rig.tick();
+  expect(rig.spoken).toEqual([
+    'OncallWall/firing',
+    'LegacyPlain/firing',
+    'Watchdog/firing',
+    'KubeletTooManyPods/firing',
+    'Watchdog/resolved',
+  ]);
+});

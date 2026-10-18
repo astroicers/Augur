@@ -144,6 +144,11 @@ export interface DirectorSettings {
    *
    * **只對排程靜音生效，不覆蓋 ADR-007 的每瀏覽器靜音**：那是觀看者自己按下的開關，
    * dashboard 的設定不該蓋過它（AC-6 的「任一個成立就不念」）。
+   *
+   * 開著時連帶生效的還有一條（#84）：**在時段內破了靜音而且真的念出來的那則 firing，
+   * 它的恢復句在同一段時段內也念**（人既然被叫醒了就該聽到結局）。沒破過靜音的告警
+   * 恢復時照舊不念。記錄與四個清空出口見 `QuietBreakLog`；留空或 `false` 時
+   * 整條路徑與沒有這個選項時完全相同。
    */
   quietAllowCritical?: boolean;
   /**
@@ -412,6 +417,12 @@ export function isQuietAt(range: QuietRange | null, minuteOfDay: number): boolea
     : at >= range.startMin || at < range.endMin;
 }
 
+/** 一段時段的長度（毫秒）。起訖相同解析不出來，所以結果恆為正。 */
+export function quietSpanMs(range: QuietRange): number {
+  const minutes = (((range.endMin - range.startMin) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return minutes * 60_000;
+}
+
 const QUIET_PROBLEM_TEXT: Record<QuietHoursProblem, string> = {
   empty: '',
   'not-a-range': '要用一個 `-` 分成起訖兩段，例如 22:00-07:00',
@@ -433,22 +444,127 @@ export function describeQuietHours(problem: QuietHoursProblem | null): string {
 }
 
 /**
- * 這一則能不能在**排程靜音時段內**破靜音（#63 AC-3）。
+ * 破靜音記錄的上限（#84 AC-4 的「不得無限增長」的機械底線）。
  *
- * 只有一種：`quietAllowCritical` 開著、而且它是一則 **`critical` 的 firing**。
- * 嚴重度走 `resolveSeverity` + `meetsMin`，與門檻**吃同一份別名解析結果**（`aliases`）
- * 與同一套排名、大小寫與前後空白規則 —— 兩邊各自比字串遲早會漂成
- * 「門檻放它過卻破不了靜音」。`critical` 是排名最高的那一級，所以 `meetsMin(…, 'critical')`
- * 就等於「它是 critical」。
- *
- * **`resolved` 不破靜音**，與門檻那條「resolved 不受門檻影響」刻意相反：那條的理由是
- * 「播過 firing 就該播恢復」，而這裡的語意是「半夜只有需要有人起來處理的事才出聲」，
- * 恢復不需要有人起來。代價誠實記下：破過靜音的那則 critical 在時段內恢復時不會有人聽到，
- * 要到早上看清單（清單在時段內照常更新）。
+ * 正常情形下根本碰不到：一筆只在「critical 的 firing **真的交到播報器**」時寫入，
+ * 所以要填滿它得在同一段靜音時段內念出這麼多句不同的 critical ——
+ * 那個佇列本身早就長到天亮。它是 backstop，不是調參旋鈕：擋的是
+ * 「fingerprint 每輪都變」這種病態來源（例如把時間戳寫進 label）把記憶體吃光。
+ * 滿了就丟**最舊的那一筆**（`Set` 保留插入順序）：代價是那一則的恢復句不會念，
+ * 與 #84 之前的行為相同 —— 退化的方向是「少念一句」而不是「多念一句」。
  */
-function breaksQuiet(item: BroadcastItem, settings: DirectorSettings, aliases: SeverityAliasMap): boolean {
-  if (settings.quietAllowCritical !== true || item.alert.status !== 'firing') {
+const QUIET_BREAK_LIMIT = 256;
+
+/**
+ * 「這些 fingerprint 的 firing 在**本段**靜音時段內破了靜音、而且真的被念出來」（#84）。
+ *
+ * **鍵是實際交付，不是 `breaksQuiet()` 的判定。** 兩者會分岔：ADR-007 的每瀏覽器靜音
+ * 排在交付之前，觀看者自己按了靜音鈕時，那則 critical 的 firing 判定得出「破得了靜音」
+ * 卻一句都沒出聲。若以判定為鍵，這台瀏覽器會記下「念過了」，等它解除靜音後冒出一句
+ * 沒有前文的「已恢復」，而同一面牆上的另一台（沒按靜音的）行為還不一樣。
+ * 所以寫入點在 `sink.enqueue()` **之後**，見 `evaluate()` 末段。
+ *
+ * 生命週期（AC-4）——**只在一段時段內有意義**，四條出口都會清：
+ *
+ *  1. 離開時段、或 `quietAllowCritical` 關掉 → `clear()`（每一輪都查，見 `evaluate()`）。
+ *     「不得殘留到下一段時段」就是這一條：昨晚念過的 critical 撐到今晚才恢復時，
+ *     那句恢復不會莫名其妙地破今晚的靜音。
+ *  2. 恢復句**在閘門上拿到通行證** → `forget()`：這筆就沒有用處了。**刻意不等交付** ——
+ *     等交付的話，被每瀏覽器靜音／沒有播報器擋下的那一輪會留下一筆過期的通行證，
+ *     之後同一個 fingerprint 那個破不了靜音的 episode 會拿它冒出一句沒有前文的
+ *     「已恢復」。寫入那一側仍然等交付，兩側刻意不對稱（見 `evaluate()` 的兩段註解）。
+ *  3. 來源層取代 episode（`onSupersede`）→ `forget()`，與 dedup、抖動狀態同一條路徑。
+ *  4. `dispose()` → `clear()`。
+ *
+ * 不是純的 `Set<string>` 而是一個小物件，為的是**它測得到**：導播不開內部狀態的後門
+ * （dedup 與抖動狀態同樣沒有），而 `dispose()` 之後整個導播永久擋下，
+ * 「清掉了沒有」從外面觀察不到。做成與 `createFlappingTracker` 同一種形狀的工廠之後，
+ * 上限與四個出口就能各自直接驗（見 `quietHours.test.ts`）。
+ */
+export interface QuietBreakLog {
+  /** 記下「這個 fingerprint 的 firing 剛剛破了靜音、而且真的念出去了」，連同寫入時刻。 */
+  remember(fingerprint: string, at: number): void;
+  /** 這個 fingerprint 在本段時段內破過靜音嗎？ */
+  has(fingerprint: string): boolean;
+  /** 忘掉一筆（恢復句念完、或來源層取代了 episode）。 */
+  forget(fingerprint: string): void;
+  /** 忘掉全部（離開時段、功能關閉、`dispose()`）。 */
+  clear(): void;
+  /**
+   * 忘掉寫入時刻距 `now` 已達 `maxAgeMs` 的那幾筆（`maxAgeMs` = 一段時段的長度）。
+   *
+   * 「離開時段就清」只在兩段時段之間**有跑過一輪**時成立；dashboard 沒開 auto-refresh、
+   * 主機休眠時根本沒有那一輪（獨立複審 M1）。同一段時段內的兩個時刻相差必然小於時段長度，
+   * 所以「比時段長度舊」= 「一定是前一段（或更早）時段寫下的」，不靠中間那一輪。
+   */
+  expire(now: number, maxAgeMs: number): void;
+  /** 目前記著幾筆。只有測試與上限的斷言用得到。 */
+  size(): number;
+}
+
+export function createQuietBreakLog(opts: { limit?: number } = {}): QuietBreakLog {
+  const limit = opts.limit ?? QUIET_BREAK_LIMIT;
+  /** fingerprint → 寫入時刻。`Map` 保留插入順序，淘汰最舊的那一筆照舊靠它。 */
+  const spoken = new Map<string, number>();
+  return {
+    remember(fingerprint, at) {
+      // 先刪再加：同一個 fingerprint 重播時要排到隊尾，淘汰的才會是真正最舊的那一筆。
+      spoken.delete(fingerprint);
+      spoken.set(fingerprint, at);
+      while (spoken.size > limit) {
+        const oldest = spoken.keys().next();
+        if (oldest.done === true) {
+          break;
+        }
+        spoken.delete(oldest.value);
+      }
+    },
+    has: (fingerprint) => spoken.has(fingerprint),
+    forget: (fingerprint) => void spoken.delete(fingerprint),
+    clear: () => spoken.clear(),
+    expire(now, maxAgeMs) {
+      for (const [fingerprint, at] of spoken) {
+        if (now - at >= maxAgeMs) {
+          spoken.delete(fingerprint);
+        }
+      }
+    },
+    size: () => spoken.size,
+  };
+}
+
+/**
+ * 這一則能不能在**排程靜音時段內**破靜音（#63 AC-3、#84）。
+ *
+ * 兩種：
+ *
+ *  1. `quietAllowCritical` 開著、而且它是一則 **`critical` 的 firing**（#63）。
+ *     嚴重度走 `resolveSeverity` + `meetsMin`，與門檻**吃同一份別名解析結果**（`aliases`）
+ *     與同一套排名、大小寫與前後空白規則 —— 兩邊各自比字串遲早會漂成
+ *     「門檻放它過卻破不了靜音」。`critical` 是排名最高的那一級，所以 `meetsMin(…, 'critical')`
+ *     就等於「它是 critical」。
+ *  2. 它是一則 `resolved`，**而且同一個 fingerprint 的 firing 在本段時段內破過靜音、
+ *     真的被念出來**（#84 AC-1）：人既然已經被這則 critical 從床上叫起來，就該聽到結局，
+ *     不必起身去看螢幕。這是 #63 誠實記下的那個取捨的反轉，由 PM 裁定。
+ *
+ * 第 2 種**不另外看嚴重度**：鍵是「我們把你吵醒了」這個事實，而不是恢復當下那一則的
+ * severity label（同一個 episode 中途改標籤時，照 severity 判會讓結局無聲無息地不見）。
+ * 記錄只在時段內累積（`evaluate()` 一離開時段就 `clear()`），所以**時段外念出的 firing
+ * 在時段內恢復時仍然不念**（#84 AC-3）—— 那個人沒有被吵醒，不需要被告知結局。
+ *
+ * 沒破過靜音的 firing（非 critical、或功能關著）照舊：它的恢復一樣不念（#84 AC-2）。
+ */
+function breaksQuiet(
+  item: BroadcastItem,
+  settings: DirectorSettings,
+  aliases: SeverityAliasMap,
+  brokeQuiet: (fingerprint: string) => boolean
+): boolean {
+  if (settings.quietAllowCritical !== true) {
     return false;
+  }
+  if (item.alert.status !== 'firing') {
+    return brokeQuiet(item.alert.fingerprint);
   }
   return meetsMin(resolveSeverity(item.alert.severity, aliases), 'critical');
 }
@@ -773,6 +889,13 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
    */
   const flapping = createFlappingTracker({ now });
 
+  /**
+   * 本段靜音時段內「破了靜音而且真的念出去」的 fingerprint（#84）。與 dedup、抖動狀態
+   * 同生同死，理由同第 2 條不變量 —— 沒有「只重建這份記錄」的入口。
+   * 四個清空出口與「鍵是實際交付」的理由寫在 `QuietBreakLog` 的註解。
+   */
+  const quietBreaks = createQuietBreakLog();
+
   const source = opts.createSource({
     // `applySettings` 必定在 `source.evaluate()` 之前跑完，所以來源層讀到的永遠是
     // 本輪的設定；`?? ''` 只是不寫 non-null 斷言（空字串在 `severity.ts` 等同 unknown）。
@@ -785,6 +908,10 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
     onSupersede: (fingerprint) => {
       dedup.forget(fingerprint);
       flapping.forget(fingerprint);
+      // 破靜音記錄也一起忘（#84 AC-4）：被取代的是**另一則**告警了，留著那筆的話，
+      // 新 episode 的恢復句會拿前一則 critical 的「吵醒過你」當通行證破今晚的靜音 ——
+      // 使用者聽到的是一句他從沒聽過它燒起來的「已恢復」。
+      quietBreaks.forget(fingerprint);
     },
   });
 
@@ -950,10 +1077,7 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
         candidates.push(item);
       }
 
-      if (items.length === 0) {
-        return { items, evaluated: true, pending: null };
-      }
-      // 排程靜音（#63）。
+      // 排程靜音（#63、#84）。
       //
       // ⚠️ 這道閘門在 dedup **之後**，而且刻意不能提前到過濾那一段：時段內的告警要照樣
       // 被 dedup 收下（記成「播過」），時段結束時才不會一口氣補念出來（AC-2 第三點）。
@@ -968,12 +1092,53 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       // 按靜音鈕無關，所以標記不受下面那個早退影響。真正受影響的是**交付** ——
       // `sink.enqueue()` 全部排在那個早退之後，所以 `quietAllowCritical` 在結構上
       // 依然不可能蓋過觀看者自己按下的開關（#63 AC-6）。
-      const quiet = isQuietAt(quietRangeFor(round.quietHours ?? ''), minuteOfDayAt(now()));
+      const quietAt = now();
+      const quietRange = quietRangeFor(round.quietHours ?? '');
+      const quiet = isQuietAt(quietRange, minuteOfDayAt(quietAt));
+      // ⚠️ **清空排在「這一輪無事」的早退之前**（#84 AC-4）：破靜音記錄只在**本段**時段內
+      // 有意義，而時段是被時鐘跨出去的，不是被告警跨出去的。放到早退之後的話，
+      // 白天每一輪都無事（最常見的情形）就一次都不會清 —— 昨晚念過的那則 critical
+      // 撐到今晚才恢復時，那句恢復會破今晚的靜音，正是「不得殘留到下一段時段」要擋的事。
+      // 功能關掉時一併清：關了再開不該讀到關掉之前的記錄（與抖動抑制關閉時的理由同一條）。
+      if (!quiet || round.quietAllowCritical !== true) {
+        quietBreaks.clear();
+      } else if (quietRange !== null) {
+        // 兩段時段之間一輪都沒跑時，上面那一條清不到（獨立複審 M1）：比一段時段長度還舊的
+        // 記錄必定是前一段寫下的，在這裡作廢。
+        quietBreaks.expire(quietAt, quietSpanMs(quietRange));
+      }
+      if (items.length === 0) {
+        return { items, evaluated: true, pending: null };
+      }
       const outgoing: BroadcastItem[] = [];
+      /** 這一輪**在時段內破了靜音**的那幾則 firing；真的交付之後才寫進記錄（見下方）。 */
+      const breaking: ParsedAlert[] = [];
+      /**
+       * 本輪已放行的 firing。記錄要等交付後才寫，所以同一輪裡的 resolved（例：抖動解除時補念的
+       * firing 與來源層同一輪吐出的恢復）在閘門上還看不到它（獨立複審 L1）——一併算數。
+       */
+      const breakingNow = new Set<string>();
+      const brokeQuiet = (fingerprint: string) => quietBreaks.has(fingerprint) || breakingNow.has(fingerprint);
       for (const item of candidates) {
-        if (quiet && !breaksQuiet(item, round, aliases)) {
-          item.suppressed = 'quiet';
-          continue;
+        if (quiet) {
+          if (!breaksQuiet(item, round, aliases, brokeQuiet)) {
+            item.suppressed = 'quiet';
+            continue;
+          }
+          if (item.alert.status === 'firing') {
+            breaking.push(item.alert);
+            breakingNow.add(item.alert.fingerprint);
+          } else {
+            breakingNow.delete(item.alert.fingerprint);
+            // ⚠️ **恢復側在這裡就把那一筆消掉，不等交付。** 寫入那一側等交付是對的（沒出聲
+            // 就不該記下「吵醒過你」），但**消除**那一側等交付會留下一筆過期的通行證：
+            // 這一輪若被下面兩道整輪的早退（沒有播報器、ADR-007 的每瀏覽器靜音）擋下，
+            // 那句恢復永遠不會再回到這道閘門（dedup 已經把它收下了），而記錄還留著。
+            // 同一個 fingerprint（來源層是 `alert:${名字}`，**不含 severity**）之後那個
+            // 破不了靜音的 episode 恢復時就會拿它當通行證，冒出一句使用者從沒聽過前文的
+            // 「已恢復」—— 正是 AC-2 要擋的事。退化方向刻意是「少念一句」。
+            quietBreaks.forget(item.alert.fingerprint);
+          }
         }
         outgoing.push(item);
       }
@@ -990,6 +1155,19 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
       for (const item of outgoing) {
         sink.enqueue(item.plan);
       }
+      // ⚠️ **記錄寫在 `enqueue()` 之後**（#84 AC-1 的「破了靜音**而被念出**」）：
+      // 上面那幾道整輪的早退（沒有播報器、ADR-007 的每瀏覽器靜音）都走不到這裡，
+      // 所以「判定破得了靜音卻一句都沒出聲」的那台瀏覽器不會記下任何東西 ——
+      // 它解除靜音後不會冒出一句沒有前文的「已恢復」。理由詳見 `QuietBreakLog`。
+      //
+      // `breaking` 只收 firing —— 恢復側那一筆在閘門上就消掉了（理由見上面那段），
+      // 所以記錄不會單調增長。
+      for (const alert of breaking) {
+        // 同一輪裡已經念到結局（恢復也放行了）的那一則不必再記。
+        if (breakingNow.has(alert.fingerprint)) {
+          quietBreaks.remember(alert.fingerprint, quietAt);
+        }
+      }
       return { items, evaluated: true, pending: sink.pending() };
     } finally {
       busy = false;
@@ -1001,6 +1179,9 @@ export function createBroadcastDirector(opts: BroadcastDirectorOptions): Broadca
     dispose() {
       disposed = true;
       dedup.close();
+      // 破靜音記錄跟著收（#84 AC-4）：之後每一次 `evaluate()` 都回 `BLOCKED_ROUND`，
+      // 沒有任何路徑讀得到它，留著只是佔記憶體 —— 與 `dedup.close()` 同一個理由。
+      quietBreaks.clear();
     },
   };
 }
