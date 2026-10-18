@@ -1,5 +1,6 @@
 /**
- * severity(+status) → Emotion，對映 `live2d/_archive/live2d-template-spec-v1.md` §6。
+ * severity(+status) → Emotion，對映 `docs/sprite/sprite-sheet-spec.md`〈附錄 B〉§6。
+ * （該節原在 `live2d-template-spec-v1.md`，已於 2026-10-18 逐字移入規格附錄、原檔刪除。）
  * resolved 一律 resolved；firing 時依 severity：critical/error→critical、
  * warning→warning、info/unknown（及其餘）→calm。
  * （§6 未列 error；rank 3 的 error 併入 critical。）

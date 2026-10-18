@@ -6,7 +6,7 @@
 
 > **狀態**：設計收斂完成，**尚未凍結**。凍結條件見 §10（待人類裁定）。
 > **角色（2026-10-04 專案主人裁定）**：「藍鯨布偶裝的疲憊男孩」（動漫 Q 版萌系）**取代**
-> `live2d-template-spec-v1.md` §7 的原角色。現行定義見 **SP-0.9**；SP-0.6／0.7／0.8 與 SP-6.0／6.1
+> 〈附錄 B〉§7（原 `live2d-template-spec-v1.md` §7）的原角色。現行定義見 **SP-0.9**；SP-0.6／0.7／0.8 與 SP-6.0／6.1
 > 的原角色外觀與色票作廢（保留作背景）。幾何錨點、三個視窗、記號詞彙（SP-0.5）與 §7 機械驗收不變。
 > ⚠️ **SP-2.6／SP-3.3 已於 2026-09-20 廢除**（見〈可讀性實測：三輪與它們證偽的東西〉）——
 > 瞳孔位移不再是要凍結的設計參數，改為交付時的驗收條件。
@@ -34,28 +34,28 @@
 > `enableTTS` / `ttsVoice` 六個欄位），故原文寫「P5 需新增，工作項見 SP-8.4」。
 > 現在的 `MascotPanelOptions` 有 12 個欄位，清單見 `docs/ARCHITECTURE.md`〈設定〉。
 
-**SP-0.3** `live2d/_archive/live2d-template-spec-v1.md` §3 的**絕對像素**錨點
+**SP-0.3** 〈附錄 B〉§3 的**絕對像素**錨點
 （畫布 768×1376、臉中軸 X≈384、眼線 Y≈285、瞳距≈100、頭高≈335）對本素材**作廢** ——
 那是全身基準圖的絕對座標，對 512 方格無意義（`docs/handoff/P2-handoff.md` §四已明文指出）。
 本規格改以格邊長 **S** 為單位於 §2 重新定義。
 另註：該節自己標「目測估值待校正」，而實測 A1 的虹膜中心為 (326,343)/(443,343) ——
 **眼線 Y 實為 ≈343 而非 285、瞳距 ≈117 而非 100**，臉中軸 X=384 正確。
 
-**SP-0.4** §3 真正釘住的**相對關係**逐項沿用（每個 §2 的 Y 值皆由此換算）：
+**SP-0.4** 〈附錄 B〉§3 真正釘住的**相對關係**逐項沿用（每個 §2 的 Y 值皆由此換算）：
 臉中軸置中、眼線位於頭高 58%、嘴中心位於頭高 87%、肩線位於頭高 148%。
-⚠️ **一處刻意的偏離必須被記錄**：瞳距。§3 的估值給出 100/335 = 0.299·頭高；
+⚠️ **一處刻意的偏離必須被記錄**：瞳距。〈附錄 B〉§3 的估值給出 100/335 = 0.299·頭高；
 實測 A1 給出 117/365 = 0.320·頭高；本規格取 0.180/0.520 = **0.346·頭高**。
 相對實測放大約 8%，理由是 128–256px 顯示尺寸下的方向可讀性。
 **這已經預支了 §3.3 風險緩解的一部分加碼空間** —— 後續若實測仍讀不出方向，
 加碼方向是虹膜直徑而非再加寬瞳距。（原引用的 SP-2.6 已於 2026-09-20 廢除，此處僅存設計意圖。）
 
-**SP-0.5** §6 的四個表情視覺語意原樣沿用，不新增記號詞彙：
+**SP-0.5** 〈附錄 B〉§6 的四個表情視覺語意原樣沿用，不新增記號詞彙：
 `part_ov_sweat`（汗滴）、`part_ov_gloom`（額前陰影直線）、`part_ov_anger`（怒紋/青筋）、
-`part_ov_sparkle`（閃光），外加 §6 resolved 用到的 `ParamCheek`（腮紅）。
+`part_ov_sparkle`（閃光），外加〈附錄 B〉§6 resolved 用到的 `ParamCheek`（腮紅）。
 四表情的參數值逐格沿用：MouthForm +0.2 / −0.2 / −0.6 / +0.6、Sweat=1、Gloom=0.5、
 Anger=1、Sparkle=1、Cheek=0.5。
 
-**SP-0.6** 【2026-10-04 作廢：原角色已被取代，見 SP-0.9】§7 已凍結的角色外觀（銀藍中長髮、齊瀏海、長側髮、右側瀏海星/雪花髮夾、
+**SP-0.6** 【2026-10-04 作廢：原角色已被取代，見 SP-0.9】〈附錄 B〉§7 已凍結的角色外觀（銀藍中長髮、齊瀏海、長側髮、右側瀏海星/雪花髮夾、
 紫羅蘭眼、深藍星點斗篷、炭灰高領上衣）沿用，**但有兩處經人類裁定的修改**
 （2026-09-20，見 SP-0.7）。
 
@@ -89,7 +89,7 @@ Anger=1、Sparkle=1、Cheek=0.5。
 ⚠️ **本項未裁定，需專案主人一句話。** 不自行改動的理由：SP-0.7 的兩項都是由人裁定的角色設定，
 髮色與它們同級；而且「把角色改暗一點」若由工具自行決定，下一次就會變成「工具說的算」。
 裁定後同步更新 SP-6.0 表、`docs/sprite/sprite-manifest.example.json` 的 `colours.hair`、
-以及 `live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述。
+以及〈附錄 B〉§7 的文字描述。
 
 > 附帶確認的三件事（**不需裁定**）：
 > 1. 斗篷最深陰影 `#203060` 實測 L = 0.033 < 0.047 —— 正是 SP-0.7 裁定「≥ 0.10 留餘裕」
@@ -642,14 +642,15 @@ Grafana 的 panel 型別有數十種，逐型別給格必然大量永遠用不�
 >   建議拆層後在 Photoshop 手工細分/手繪」，且 `eye_l` 的 desc 是
 >   「iris, eye white, eyelid and lashes **together**」一整顆。
 >   **也就是本規格需要的眼睛細件，這條管線產不出來。**
-> - `live2d/_archive/layerwork/layers/` 是**空目錄** —— 同一張基準圖的 `PROMPTS.md`
+> - `layerwork/layers/`（原在 live2d 封存目錄下，**整個目錄已於 2026-10-18 隨 #90 刪除**，
+>   實查結論見 git 歷史）是**空目錄** —— 同一張基準圖的 `PROMPTS.md`
 >   已產出 **16** 筆 prompt（不是 17），人工生圖那步從未完成。
 > - `assets/layers/` 的 6 張 `part_*.png` 是另一支工具 **l2d-factory** 的顏色分群輸出
 >   （capelet / dark_eyes_lineart / hair / leftover / skin / top），不是解剖部件 ——
 >   `part_dark_eyes_lineart.png` 的 bbox 為 (68,129)-(699,1348)，涵蓋整個人形線稿。
 >   **不得**以它們作為合成來源。（順帶：`README` 目前寫「assets/ = …拆出的分層 PNG（sprite 素材來源）」，
 >   這句話會誤導下一個人，P5 落地時要一併改掉。）
-> - `live2d/_archive/DEPRECATED.md` 廢除 Live2D 的理由正是
+> - `DEPRECATED.md`（同上，已於 2026-10-18 隨 #90 刪除）廢除 Live2D 的理由正是
 >   「GUI 手工、無法自動化…我(agent)做不到的一步…或外包 USD 50–150」。
 
 **SP-5.6 【解析度不是排除既有立繪的理由】** 實測 A1 髮頂 y=127、臉部皮膚下緣 y≈492 →
@@ -661,7 +662,7 @@ Grafana 的 panel 型別有數十種，逐型別給格必然大量永遠用不�
 以「沒有美術背景的專案主人」為前提時，它與自繪並列。
 委外時交付同時須取得**書面的著作權讓與或授權書**，掃描件路徑記入出處欄（SP-9.10）。
 
-**SP-5.8 【眉窗與嘴窗內禁止漸層與陰影】** 維持 §7 已凍結的平塗 cel shading，
+**SP-5.8 【眉窗與嘴窗內禁止漸層與陰影】** 維持〈附錄 B〉§7 已凍結的平塗 cel shading，
 否則不透明修補塊會被看見。
 
 ---
@@ -676,7 +677,7 @@ Grafana 的 panel 型別有數十種，逐型別給格必然大量永遠用不�
 
 `assets/a1-augur-calm.png` 已於 2026-09-21 退出版控（出處不可考，見
 `docs/asset-provenance.md`）。**角色本身沒有消失** —— 它的定義是
-`live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述加上下面這張表，
+〈附錄 B〉§7 的文字描述加上下面這張表，
 兩者都是本專案自己的產物。畫師拿的是文字與色票，本來就不是拿 A1 去描。
 
 刪檔前最後一次量測（2026-09-21，取 `assets/layers/` 各層 alpha > 200 的像素，
@@ -1343,7 +1344,7 @@ onStart: (plan) => {
 ~~🔴 出處鏈的根現在是斷的~~
 
 本套 sprite 的風格與色票依據是**本專案自己的兩份產物**：
-`live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述，以及下方 **SP-6.0 的色票表**。
+〈附錄 B〉§7 的文字描述，以及下方 **SP-6.0 的色票表**。
 
 原條文寫的是「以 `assets/a1-augur-calm.png` 為參考，而該圖的出處與授權兩欄是待補，
 該列必須先由專案主人補齊，否則 sprite 不得進版控」。**那個 blocker 已經消失，
@@ -1682,7 +1683,7 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 
 **衝突**：同一件事兩組數字，差 21%。頭越大在 128px 下視線越讀得出來，但構圖越擠。
 
-**裁決**：採 content 的 0.520。理由：(a) 兩者的眼線值意外一致（0.080+0.58×0.520=0.382；0.155+0.523×0.430=0.380），可見分歧只在頭的大小；(b) content 的三個 Y 值（眼線 0.380、嘴 0.530、肩線 0.850）由 live2d-template-spec §3 的相對關係 58%/87%/148% 逐項換算而來、內部自洽，geometry 的 0.430 沒有等價的推導鏈；(c) 本 plugin 的招牌功能是視線，頭大是正確的偏誤方向。geometry §3.2/§3.3/§3.4 不收。
+**裁決**：採 content 的 0.520。理由：(a) 兩者的眼線值意外一致（0.080+0.58×0.520=0.382；0.155+0.523×0.430=0.380），可見分歧只在頭的大小；(b) content 的三個 Y 值（眼線 0.380、嘴 0.530、肩線 0.850）由 live2d-template-spec §3（現為〈附錄 B〉§3）的相對關係 58%/87%/148% 逐項換算而來、內部自洽，geometry 的 0.430 沒有等價的推導鏈；(c) 本 plugin 的招牌功能是視線，頭大是正確的偏誤方向。geometry §3.2/§3.3/§3.4 不收。
 
 ### 7. content SP-1.7（stage 下限 96px）× geometry §1.7（side < 64 不渲染）× 兩位複驗者的實測
 
@@ -1718,7 +1719,7 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 
 **衝突**：被指派的複驗者實讀該 preset 並判定推翻。我複查屬實：`.claude/skills/image-layer-split/parts/live2d-character.json` 的 notes 逐字寫「眼睛細件(white/iris/highlight/lid/lash)與共用 overlay 不在此 preset，建議拆層後在 Photoshop 手工細分/手繪」，`eye_l` 的 desc 是「iris, eye white, eyelid and lashes **together**」一整顆。也就是 §A2 的虹膜、§A3 的眼皮與四個 overlay 在這條管線上沒有來源。
 
-**裁決**：§A1/§A4 的「程式合成」主推路徑不收。改為：交付物是**一個具備獨立眼（白/虹膜/高光/上下眼瞼/睫毛）、眉、嘴、記號圖層的分層原始檔**，由會用分層繪圖軟體的人產製（自繪或委外並列為主選項，不是第三備案）。image-layer-split 只能當身體／頭髮／斗篷粗胚的起點，眼睛無論如何都要手工。附證：`live2d/_archive/layerwork/layers/` 實查為**空目錄**（16 筆 prompt 的指定輸出從未落地），`assets/layers/` 的 6 張是另一支工具 l2d-factory 的顏色分群輸出（`part_dark_eyes_lineart.png` 的 bbox 橫跨整個人形），`DEPRECATED.md` 廢除 Live2D 的理由正是「GUI 手工、無法自動化…我(agent)做不到的一步…或外包 USD 50–150」。同時更正 content SP-5.3 的引用：PROMPTS.md 是 **16** 筆不是 17，且那 6 張分層不是這批 prompt 的殘骸。
+**裁決**：§A1/§A4 的「程式合成」主推路徑不收。改為：交付物是**一個具備獨立眼（白/虹膜/高光/上下眼瞼/睫毛）、眉、嘴、記號圖層的分層原始檔**，由會用分層繪圖軟體的人產製（自繪或委外並列為主選項，不是第三備案）。image-layer-split 只能當身體／頭髮／斗篷粗胚的起點，眼睛無論如何都要手工。附證：`layerwork/layers/`（原在 live2d 封存目錄下，已於 2026-10-18 隨 #90 刪除）實查為**空目錄**（16 筆 prompt 的指定輸出從未落地），`assets/layers/` 的 6 張是另一支工具 l2d-factory 的顏色分群輸出（`part_dark_eyes_lineart.png` 的 bbox 橫跨整個人形），`DEPRECATED.md` 廢除 Live2D 的理由正是「GUI 手工、無法自動化…我(agent)做不到的一步…或外包 USD 50–150」。同時更正 content SP-5.3 的引用：PROMPTS.md 是 **16** 筆不是 17，且那 6 張分層不是這批 prompt 的殘骸。
 
 ### 13. production §F7（新增 `src/images.d.ts` 內含 `declare module '*.png'`）× `.config/types/bundler-rules.d.ts` 的實際內容
 
@@ -1744,7 +1745,7 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 
 **裁決**：描邊寬度提到 **0.016·C**（S=512 時 8px；在本規格的下限 128 CSS px / dpr 1 下 = 2.0 裝置像素）。「二選一」的禁令放寬為：變體 A 為主線，若美術方向否決才改用變體 B，兩者不並用 —— 但下限 128px 的裁定（矛盾 7）已經讓變體 A 在整個尺寸範圍內成立，這條備案不預期被動用。
 
-### 17. geometry §7.2（剪影中面積 ≥1% 的色塊亮度必須落在 [0.047, 0.61]，僅豁免線稿與眼部高光）× 角色可讀性與 live2d-template-spec §7 的凍結色票
+### 17. geometry §7.2（剪影中面積 ≥1% 的色塊亮度必須落在 [0.047, 0.61]，僅豁免線稿與眼部高光）× 角色可讀性與 live2d-template-spec §7（現為〈附錄 B〉§7）的凍結色票
 
 **衝突**：複驗者實測眼白佔剪影面積 2.25%，超過 1% 會被夾到 ≤#CD —— 而眼白/瞳孔的邊界正是視線線索本身。同時該夾制禁掉典型動畫膚色（#F5D9C0 的 L=0.728）。另外它宣稱的 1.6:1 實際算出來是 1.59:1。
 
@@ -1768,7 +1769,7 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 
 **裁決**：改寫為「P5 需新增」，並明列要動的三處（`panelOptions.ts` 的 interface 與 `DEFAULT_OPTIONS`、`module.ts` 的兩個 `.addTextInput`），預設值為空字串（理由見 SP-8.4 的 [hash][ext]）。
 
-### 21. content SP-2.10（瀏海下緣 Y ≤ 0.255，眉窗必須完全露出）× live2d-template-spec §7 凍結的「straight blunt bangs」
+### 21. content SP-2.10（瀏海下緣 Y ≤ 0.255，眉窗必須完全露出）× live2d-template-spec §7（現為〈附錄 B〉§7）凍結的「straight blunt bangs」
 
 **衝突**：齊瀏海的慣例畫法直接壓到眉上；若不露出眉窗，情緒覆蓋層會蓋到頭髮，SP-5.5 的 alpha 產權切分就會含髮絲像素而變脆弱。
 
@@ -1789,11 +1790,11 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
   ✅ **已有答案 → §10〈已有答案〉第 1 項。** 2026-09-21 解決，但不是補齊出處而是**移除**：專案主人確認想不起來當初用的生成式服務，依 `docs/asset-provenance.md` 自身規則退出版控（SP-9.4），色票萃取保留為 SP-6.0。**所以 sprite 不得進版控這個推論已不成立** —— 定稿素材（2026-10-05，SP-0.9）有自己的出處鏈，見 `docs/sprite/SOURCE-PROMPTS.md` 與 SP-9.7。新素材自己那一列已在 `docs/asset-provenance.md` 補上（2026-10-05：SP-9.2 七項、sha256、原始檔存放處）。
 - **[ADR 層級]** 是否放行在 `AvatarController` 新增可選成員 `setReaction?(kind: 'click' | 'pending' | null): void`。這是 ADR-004 決策 5 明文繼承的介面異動。**同時請一併裁定它對 ADR-004〈待驗風險 4〉的回覆** —— 該條逐字寫著「emotion.ts 目前只有 4 個 emotion，吃不滿 9 格，**需擴充**」，而本規格選的是相反的路：不擴 Emotion（擴了會污染 `severityToEmotion` 的純函式語意，且 click/pending 根本不是 severity 的函數），改用可選契約成員承接。不放行的退路：reactions 的格 0（click）與格 8（pending）不畫，降為 7 格，其餘設計完全不受影響。
   ✅ **已有答案 → §10〈已有答案〉第 2 項。** **2026-09-18 經人類授權放行**，且一併裁定**不擴充 `Emotion`**（擴了會污染 `severityToEmotion` 的純函式語意，且 click/pending 不是 severity 的函數）—— 即本節建議的那條路。理由逐字記在 `src/avatar/AvatarController.ts` 的 `setReaction` 註解。「不放行就降為 7 格」那條退路**不會用到**。⚠️ ADR-004〈待驗風險 4〉的原文（「`emotion.ts`…需擴充」）仍與這個裁定相反，改寫需另一次授權 → `docs/ROADMAP.md`〈未完成項目〉的 **B4-1**。
-- **[角色設定]** §7 凍結的 dark navy hooded capelet 相對亮度約 0.02，低於 SP-6.2 的下限 0.047，在 Grafana dark panel `#181b1f` 上會直接溶掉。重新打光、提高明度、還是改色？改到什麼程度仍算「同一個 Augur」？
+- **[角色設定]** 〈附錄 B〉§7 凍結的 dark navy hooded capelet 相對亮度約 0.02，低於 SP-6.2 的下限 0.047，在 Grafana dark panel `#181b1f` 上會直接溶掉。重新打光、提高明度、還是改色？改到什麼程度仍算「同一個 Augur」？
   ✅ **已有答案 → §10〈已有答案〉第 3 項。** **2026-09-20 裁定：提高明度至 L ≥ 0.10，navy 色相不變**（見 SP-0.7）—— 即「重新打光、提高明度」那條，不改色相。
-- **[角色設定]** §7 的「straight blunt bangs」與 SP-2.10「瀏海下緣 ≤ 0.255·S（眉窗必須完全露出）」衝突。改髮型（瀏海提高、露出額頭與眉）還是改錨點（讓表情覆蓋層連瀏海一起重畫）？本規格建議改髮型，但這是角色設定的更動。
+- **[角色設定]** 〈附錄 B〉§7 的「straight blunt bangs」與 SP-2.10「瀏海下緣 ≤ 0.255·S（眉窗必須完全露出）」衝突。改髮型（瀏海提高、露出額頭與眉）還是改錨點（讓表情覆蓋層連瀏海一起重畫）？本規格建議改髮型，但這是角色設定的更動。
   ✅ **已有答案 → §10〈已有答案〉第 4 項。** **2026-09-20 裁定：改髮型，提高瀏海下緣至 Y ≤ 0.255**（見 SP-0.7）—— 採本節的建議，不走「讓覆蓋層連瀏海一起重畫」那條。
-- **[產製／預算]** master frame 由誰畫、用什麼工具？本規格已裁定 image-layer-split 的 `live2d-character` preset 產不出獨立的虹膜/高光/眼瞼圖層（preset 自己的 notes 寫明），`assets/layers/` 的 6 張是顏色分群不是解剖部件。需要一個會用分層繪圖軟體的人 —— 自己畫、找人畫、還是委外（`DEPRECATED.md` 記的行情是 USD 50–150）？委外的話 §9 要求同時取得書面的著作權讓與或授權書。
+- **[產製／預算]** master frame 由誰畫、用什麼工具？本規格已裁定 image-layer-split 的 `live2d-character` preset 產不出獨立的虹膜/高光/眼瞼圖層（preset 自己的 notes 寫明），`assets/layers/` 的 6 張是顏色分群不是解剖部件。需要一個會用分層繪圖軟體的人 —— 自己畫、找人畫、還是委外（已刪除的 `DEPRECATED.md` 記的行情是 USD 50–150，見 git 歷史）？委外的話 §9 要求同時取得書面的著作權讓與或授權書。
   🔴 **仍然開著 → §10〈仍然開著〉第 2 項**（SP-5.7，該表唯一還帶 🔴 的一條）。⚠️ 但問題的形狀變了：素材已於 **2026-10-05 由專案主人自行以 Gemini 生成並定稿**（SP-0.9），所以「自己畫／找人畫／委外」這一題**沒有擋住交付**，`docs/ROADMAP.md` 的 **B2-2**（發包 brief）已作廢。仍然開著的是**下一版素材**要走哪條路。
 - **[範圍／排程]** panel 版面重排由誰在哪一階段做？目前 `hostRef` 是 header flex row 裡一個 `flex: 0 0 auto` 的小 div（DiagnosticAvatar 自己撐到約 34px），而本規格的 stage 需要 128–256px 的獨立方形區塊（建議 width ≥ 320 時左圖右 feed）。這是 P5 還是 P6？同時請確認可以讓 `MascotPanel` 直接設定 hostRef 的 width/height（本規格選這條，以避免為 `setSize()` 再開一次介面）。
   ✅ **已有答案 → §10〈已有答案〉第 6 項。** **已於 2026-09-21 做完**（A3-5）：方形 stage、SP-1.9 的 dpr 監聽、左圖右 feed 都已落地，且確認由 `MascotPanel` 直接設定 `hostRef` 的 width/height（不為 `setSize()` 再開一次介面）—— 即本節選的那條。
@@ -1843,3 +1844,123 @@ A1 那一列已於 2026-09-21 隨檔案一起退出，見 SP-9.4，不要去找�
 - ~~**`docs/sprite/` 與現有空目錄 `docs/specs/` 是否合併，未定。**~~
   **【2026-09-21 寫定】** `docs/specs/` 不在版控裡（git 不追蹤空目錄），對 clone 的人不存在。
   一律用 `docs/sprite/`。
+
+---
+
+## 附錄 B：自 `live2d-template-spec-v1.md` 移入的 §3 / §6 / §7
+
+> **2026-10-18 自 `live2d-template-spec-v1.md` 移入，原檔隨 #90 刪除。**
+> AIRI 路線已於 2026-10-18 由專案主人裁定廢棄，存放原檔的 live2d 封存目錄一併退出版控
+> （內容見 git 歷史）。但該檔的 §3（像素錨點）、§6（四表情對映）、§7（原角色文字描述）
+> 仍被本規格（SP-0.3／SP-0.4／SP-0.5／SP-6.0／SP-9.4）、`docs/sprite/production-sop.md`
+> 與 `src/core/emotion.ts`／`src/core/types.ts` 引用，故**先逐字搬進這裡再刪檔**。
+>
+> **以下三節逐字照搬，內容一字未改**（只把原檔的 `##` / `###` 標題各降一級以嵌入本檔）。
+> 注意：節內的「見 §4a／§5／§9」等交互引用、以及相對連結指向的是**原檔**的章節，
+> 原檔已不存在，不要照著跳；每節後面另加一條標明日期的註，註不是原文的一部分。
+> §3 的錨點對本素材早已作廢（理由見 SP-0.3），搬進來是為了保住 SP-0.4 換算的來源。
+
+### §3 比例錨點（基準 = ~~`assets/a1-augur-calm.png`~~ · 估值待校正）
+
+> ⚠️ 基準圖已於 2026-09-21 退出版控。本節的絕對像素錨點對新 sprite **已作廢**
+> （見 `docs/sprite/sprite-sheet-spec.md` SP-0.3），僅存歷史。
+
+所有角色(Phase B)都會被正規化對齊到這組錨點(SOP 的 B2);因此**先用核准的 A1 calm 基準圖量一次、凍結**。
+
+下表為**我從 A1 目測估值**(畫布 768×1376)。`≈` 標記者請在影像軟體用尺規/座標工具讀游標像素**校正後再凍結**(校正前足以開始 A3 拆層;Phase B 正規化前務必校正精確)。
+
+| 錨點 | 值 (px) | 說明 |
+|---|---|---|
+| 畫布尺寸 W×H | **768 × 1376** | 基準畫布(已定) |
+| 臉中軸 X | ≈ 384 | 置中(鼻樑/對稱中線) |
+| 眼線 Y | ≈ 285 | 左右瞳孔中心連線高度 |
+| 瞳距 | ≈ 100 | 左右瞳孔中心水平距 |
+| 嘴中心 Y | ≈ 380 | 閉口時嘴的垂直位置 |
+| 頭頂 Y / 下巴 Y | ≈ 90 / ≈ 425 | → 頭高 ≈ 335 |
+| 肩線 Y | ≈ 585 | 兩肩連線高度(斗篷下) |
+
+> 校正後 §7 prompt 產的新角色與分層 PSD 都要縮放/平移對齊上表(否則套不上母模型)。
+
+> **2026-10-18 註（非原文）**：本節提到的 `docs/sprite/sprite-sheet-spec.md` SP-0.3 就是本檔；
+> 「§7 prompt 產的新角色」那條約束已不適用 —— 現行角色是「藍鯨布偶裝的疲憊男孩」（SP-0.9）。
+
+---
+
+### §6 四表情 `.exp3.json`（部件/參數此版定義齊全;檔案與切換延後）
+
+對應 Augur 的 `ParsedAlert`:`severity`(critical/warning/info)與 `status`(resolved)。
+
+| 表情 | 對應 | 參數設定(Overwrite) |
+|---|---|---|
+| `calm` | info / idle | `ParamMouthForm`=+0.2、眉中性、所有 `ParamOv*`=0 |
+| `warning` | warning | 眉略下、`ParamOvSweat`=1、`ParamOvGloom`=0.5、`ParamMouthForm`=-0.2 |
+| `critical` | critical | 眉下壓、`ParamOvAnger`=1、`ParamMouthForm`=-0.6、眼略放大 |
+| `resolved` | resolved(已恢復) | `ParamMouthForm`=+0.6、`ParamOvSparkle`=1、`ParamCheek`=0.5 |
+
+`.exp3.json` 格式範本(warning 為例):
+```json
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    { "Id": "ParamBrowLY", "Value": -0.5, "Blend": "Overwrite" },
+    { "Id": "ParamBrowRY", "Value": -0.5, "Blend": "Overwrite" },
+    { "Id": "ParamMouthForm", "Value": -0.2, "Blend": "Overwrite" },
+    { "Id": "ParamOvSweat", "Value": 1, "Blend": "Overwrite" },
+    { "Id": "ParamOvGloom", "Value": 0.5, "Blend": "Overwrite" }
+  ]
+}
+```
+
+> **v1 不接切換**:bridge 目前只能送 `input:text`、無觸發表情路徑。這 4 個檔在「server-sdk 表情切換調查」通了之後再產製與接線(見 §9)。先把參數/部件定義齊,日後只補 `.exp3.json`、**不必重綁**。
+
+> **2026-10-18 註（非原文）**：本節末尾所說的 bridge 與 §9 的 AIRI／server-sdk 路線
+> **已於 2026-10-18 廢棄**（AIRI 這個概念整體作廢，Node 導播與 bridge 早已刪除，見 ADR-004）。
+> 現行實作不產 `.exp3.json`，四表情由 `src/core/emotion.ts` 的 `severityToEmotion` 對映，
+> 再由 `src/avatar/SpriteController.ts` 切 reactions 精靈圖的格子。
+> **仍然有效的是這張表的視覺語意與參數值** —— 它們由 SP-0.5 逐格沿用。
+
+---
+
+### §7 Gemini（Nano Banana）prompt 模板（`[角色外觀]` 待用 A1 反推填實）
+
+**calm 基準角色 prompt**(英文;產 A1 與 Phase B 每隻角色用,只換 `[CHARACTER_APPEARANCE]`):
+
+```
+A single anime character, [CHARACTER_APPEARANCE], front-facing, looking at the
+viewer, neutral calm expression, mouth closed, eyes open. Upper body (waist up),
+symmetric pose, arms relaxed at sides. Flat anime cel-shading, clean line art,
+soft even lighting, no harsh shadows. Each part clearly separated and fully
+visible (hair not heavily covering the face, no occluded limbs), suitable for
+Live2D rigging. Plain solid background / transparent. High resolution, vertical.
+```
+
+**綁定友善約束(務必保留)**:正面、對稱、平塗、無強陰影、部件可分離、無遮擋、純背景、閉口中性。
+
+**表情變體 prompt(參考用)**:在 calm prompt 後改最後的表情描述 ——
+- warning:`worried expression, slight frown, one sweat drop`
+- critical:`alarmed/serious expression, furrowed brows`
+- resolved:`relieved gentle smile, soft blush`
+
+> `[CHARACTER_APPEARANCE]` 由核准的 A1 圖反推(髮型/髮色/眼睛/服裝/配件等),填實後凍結,確保 Phase B 產出同一角色族系。
+
+#### 已凍結角色外觀（v1）
+
+> **這一段就是角色的定義。** 原基準圖 `assets/a1-augur-calm.png` 已於 2026-09-21
+> 退出版控，但下面這段文字是本專案自己的產物、不受影響；
+> 對應的色票已量測並記在 `docs/sprite/sprite-sheet-spec.md` SP-6.0。
+
+把下面這段填入上方 prompt 的 `[CHARACTER_APPEARANCE]`(已核准):
+
+```
+named "Augur", a calm young female oracle mascot: medium-length silver-blue
+hair with straight blunt bangs and long side locks, a small pale-blue
+star/snowflake hairclip on her right bangs, soft violet eyes, wearing a dark
+navy hooded capelet with a subtle white starry-speckle pattern over a
+charcoal-grey high-neck long-sleeve top
+```
+
+色票(供 Cubism/拆層對齊):髮 銀藍 silver-blue、眼 violet、斗篷 navy + 白點星紋、上衣 charcoal-grey。
+
+> **2026-10-18 註（非原文）**：本節的角色外觀已於 2026-10-04 由專案主人裁定**取代**
+> （現行定義見 SP-0.9）；保留在此的理由是 SP-6.0 的色票表與 `docs/asset-provenance.md`
+> 的出處鏈都以這段文字為根（SP-9.4），拿掉它會把那條鏈再次弄斷。
