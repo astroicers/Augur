@@ -613,6 +613,193 @@ test('#63：改時段設定後的下一次 evaluate 讀到新設定（不變量 
 });
 
 // ---------------------------------------------------------------------------
+// #84：破靜音念過的 critical，恢復時也念
+//
+// 全部以**注入的時鐘**驅動。`ALLOW` 是「功能開著」那一組設定 ——
+// 每一支都要同時設 `quietHours` 與 `quietAllowCritical`，少一個就測到別的東西。
+// ---------------------------------------------------------------------------
+
+/** 功能開著的那一組設定（#84 只在這一組底下有新行為）。 */
+const ALLOW: Partial<DirectorSettings> = { quietHours: NIGHT, quietAllowCritical: true };
+
+test('#84 AC-1：時段內破靜音念出的 critical，同一段時段內恢復也念得出來', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken.map((p) => p.emotion)).toEqual(['critical']);
+
+  // 被叫醒的人聽得到結局 —— 不必起身去看螢幕。
+  h.setClock(at(16, 3, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken.map((p) => p.emotion)).toEqual(['critical', 'resolved']);
+  expect(round.items).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBeUndefined();
+  expect(round.pending).toBe(2);
+});
+
+test('#84 AC-1：恢復念完就忘掉那一筆 —— 同一個 fingerprint 後來以 warning 再燒起來，恢復不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  h.setClock(at(15, 22, 40));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(2);
+
+  // 同一段時段、同一個 fingerprint，這次只是 warning：破不了靜音（沒人被叫醒），
+  // 所以它的恢復也不該借用前一輪那筆已經結案的記錄。
+  h.setClock(at(15, 22, 50));
+  await h.run([alert({ fingerprint: 'fp-a', severity: 'warning' })], ALLOW);
+  h.setClock(at(15, 23, 0));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(2);
+});
+
+test('#84 AC-2：時段內被擋下的非 critical，恢復時照舊不念（items 照回並標 quiet）', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ severity: 'warning', fingerprint: 'fp-w' })], ALLOW);
+  expect(h.spoken).toHaveLength(0);
+
+  h.setClock(at(15, 23, 30));
+  const round = await h.run([alert({ severity: 'warning', fingerprint: 'fp-w', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(0);
+  expect(round.items).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+  expect(round.pending).toBeNull();
+});
+
+test('#84 AC-2：firing 被擋下時功能是關的 —— 之後才打開，那一則的恢復仍然不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  // 功能關著：critical 的 firing 一樣不出聲，所以沒有人被叫醒。
+  await h.run([alert({ fingerprint: 'fp-a' })], { quietHours: NIGHT, quietAllowCritical: false });
+  expect(h.spoken).toHaveLength(0);
+
+  h.setClock(at(15, 23, 0));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(0);
+});
+
+test('#84 AC-1：記錄的鍵是**實際交付** —— 觀看者按了靜音的那台，解除後不念那句恢復', async () => {
+  // ADR-007 的每瀏覽器靜音排在交付之前：這台判定得出「破得了靜音」卻一句都沒出聲，
+  // 記下「念過了」的話，解除靜音後會冒出一句它從沒聽過前文的「已恢復」，
+  // 而同一面牆上沒按靜音的那台行為還不一樣。
+  const h = harness();
+  h.setMuted(true);
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(0);
+
+  h.setMuted(false);
+  h.setClock(at(15, 23, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(0);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
+test('#84 AC-1：記錄的鍵是**實際交付** —— 那一刻沒有播報器時同樣不記', async () => {
+  const h = harness();
+  h.setSink(null);
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+
+  h.setSink({ enqueue: () => void 0, pending: () => 0 });
+  h.setClock(at(15, 23, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+  expect(round.pending).toBeNull();
+});
+
+test('#84 AC-3：時段**外**念出的 firing，恢復落在時段內仍然不念', async () => {
+  const h = harness();
+  // 中午念出來：那個人沒有被吵醒，不需要在半夜被告知結局。
+  h.setClock(at(15, 12, 0));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  h.setClock(at(15, 23, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
+test('#84 AC-4：記錄不殘留到下一段時段 —— 昨晚念過的 critical，今晚才恢復時不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  // 白天的那一輪**沒有任何告警要播**（最常見的情形）—— 清空不能排在「這一輪無事」的早退之後。
+  h.setClock(at(16, 7, 30));
+  expect((await h.run([], ALLOW)).items).toHaveLength(0);
+
+  // 隔天晚上才恢復：那是另一段時段，昨晚那次叫醒不該讓今晚出聲。
+  h.setClock(at(16, 23, 0));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
+test('#84 AC-4：功能關掉的那一輪就清空 —— 關了再開，先前念過的那則恢復不念', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  // 同一段時段內把開關關掉再打開（編輯 dashboard）：記錄跟著那一輪清掉。
+  h.setClock(at(15, 22, 40));
+  await h.run([], { quietHours: NIGHT, quietAllowCritical: false });
+
+  h.setClock(at(15, 23, 0));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+});
+
+test('#84 AC-4：來源層取代 episode（onSupersede）時連記錄一起忘', async () => {
+  const h = harness();
+  h.setClock(at(15, 22, 30));
+  await h.run([alert({ fingerprint: 'fp-a' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+
+  // 取代 = 這個 fingerprint 底下換成**另一則**告警（dedup 與抖動狀態同一條路徑）。
+  h.hooks().onSupersede('fp-a');
+
+  // 新 episode 只是 warning：破不了靜音，所以它的恢復不該拿前一則 critical 當通行證。
+  h.setClock(at(15, 22, 50));
+  await h.run([alert({ fingerprint: 'fp-a', severity: 'warning' })], ALLOW);
+  h.setClock(at(15, 23, 10));
+  const round = await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], ALLOW);
+  expect(h.spoken).toHaveLength(1);
+  expect(round.items[0]!.suppressed).toBe('quiet');
+});
+
+test('#84 AC-4：dispose() 的本體把記錄清掉（dispose 之後導播永久擋下，只驗得到原始碼）', () => {
+  // 清空本身在外面觀察不到：`dispose()` 之後每一輪都回 `BLOCKED_ROUND`，
+  // 而導播不開內部狀態的後門（dedup 與抖動狀態同樣沒有）。記錄這一面的四個出口裡
+  // 另外三個都有上面的行為測試；這一條只能機械比對，與檔尾那支 import 清單的測試同一種做法。
+  const code = fs.readFileSync(path.resolve(__dirname, '../BroadcastDirector.ts'), 'utf8');
+  const body = /dispose\(\) \{\n([\s\S]*?)\n    \},/.exec(code)?.[1] ?? '';
+  expect(body).toContain('dedup.close()');
+  expect(body).toContain('quietBreaks.clear()');
+});
+
+test('#84 AC-5：quietAllowCritical 關著時，恢復側與沒有這個功能時完全相同', async () => {
+  const h = harness();
+  // 時段外念出 firing（照常），時段內恢復：BASE 沒有 quietAllowCritical 這個鍵。
+  h.setClock(at(15, 12, 0));
+  await h.run([alert({ fingerprint: 'fp-a' })], { quietHours: NIGHT });
+  h.setClock(at(15, 23, 0));
+  await h.run([alert({ fingerprint: 'fp-a', status: 'resolved' })], { quietHours: NIGHT });
+  expect(h.spoken.map((p) => p.emotion)).toEqual(['critical']);
+
+  // 沒設時段時整條路徑照舊：firing 與 resolved 都念。
+  h.setClock(at(16, 23, 0));
+  await h.run([alert({ fingerprint: 'fp-b' })], {});
+  await h.run([alert({ fingerprint: 'fp-b', status: 'resolved' })], {});
+  expect(h.spoken.map((p) => p.emotion)).toEqual(['critical', 'critical', 'resolved']);
+});
+
+// ---------------------------------------------------------------------------
 // #71：speakValue 隨每一輪的設定帶進來（不變量 1 的同一條：設定不經 ref）
 
 test('#71 AC-1：不帶 speakValue 的設定（既有 fixture）念出的句子含數值子句', async () => {
@@ -816,13 +1003,15 @@ test('#64：抖動抑制在靜音閘門之前 —— 兩者同時成立時標記
   const over = { flappingThreshold: 5, flappingWindowMin: 10, quietHours: NIGHT, quietAllowCritical: true };
   // 22:00 起每分鐘翻一次，全程落在靜音時段內。
   const rounds = await flipRounds(h, 7, over, at(15, 22, 0));
-  // critical 的 firing 破靜音（第 1／3／5 輪），resolved 破不了 → 標 quiet。
-  expect(h.spoken.map((p) => p.status)).toEqual(['firing', 'firing', 'firing']);
-  expect(rounds[5]!.items[0]!.suppressed).toBe('quiet');
+  // critical 的 firing 破靜音（第 1／3／5 輪）；**#84 起**它們的 resolved（第 2／4／6 輪）
+  // 也跟著破 —— 被叫醒的人聽得到結局，所以前六輪都出得了聲（破靜音記錄的鍵是實際交付）。
+  expect(h.spoken.map((p) => p.status)).toEqual(['firing', 'resolved', 'firing', 'resolved', 'firing', 'resolved']);
+  expect(rounds[5]!.items[0]!.suppressed).toBeUndefined();
   // 第 7 輪是 critical 的 firing（本來破得了靜音），但它正被抖動抑制 → 標 flapping、不出聲。
+  // 這才是本支要釘的事：抖動抑制在靜音閘門之前，#84 的恢復側語意同樣越不過它。
   expect(rounds[6]!.items[0]!.alert.status).toBe('firing');
   expect(rounds[6]!.items[0]!.suppressed).toBe('flapping');
-  expect(h.spoken).toHaveLength(3);
+  expect(h.spoken).toHaveLength(6);
 });
 
 test('#64：抑制中的一則落在靜音時段內、而且破不了靜音 —— 標記是 flapping，不是 quiet', async () => {

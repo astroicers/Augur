@@ -106,7 +106,7 @@ export const plugin = new PanelPlugin<MascotPanelOptions>(MascotPanel)
         path: 'quietAllowCritical',
         name: '靜音時段內仍念 critical',
         description:
-          '開了之後，靜音時段內 critical 的告警照常念（其餘照舊只更新畫面）。嚴重度經「嚴重度別名」對映後判斷，與最低播報嚴重度吃同一份設定。恢復句不會念 —— 半夜只有需要有人起來處理的事才出聲。只對上面這個時段生效：標題列那顆靜音鈕按下去時，critical 也不會念。',
+          '開了之後，靜音時段內 critical 的告警照常念（其餘照舊只更新畫面）。嚴重度經「嚴重度別名」對映後判斷，與最低播報嚴重度吃同一份設定。破靜音念過的 critical，恢復時也會念：既然已經把人叫醒，就該讓他聽到結局。反過來說，沒破過靜音念出來的告警（非 critical、或這個開關關著時）恢復時照舊不念 —— 不是所有 critical 的恢復都會念。只認同一段時段內的那一次：昨晚念過、撐到今晚才恢復的不念；標題列那顆靜音鈕按下去的那台瀏覽器因為一句都沒出聲，恢復句也不會念。只對上面這個時段生效：標題列那顆靜音鈕按下去時，critical 也不會念。',
         defaultValue: DEFAULT_OPTIONS.quietAllowCritical ?? false,
         showIf: (c) => c.enableTTS && (c.quietHours ?? '').trim() !== '',
       })

@@ -2,7 +2,10 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-16（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
+> 最後更新：2026-10-18（#84：`quietAllowCritical` 開著時，在時段內破靜音**念出來**的
+> critical，它的恢復句在同一段時段內也念——導播記下「真的交付過」的 fingerprint，
+> 離開時段／關掉功能／`onSupersede`／`dispose()` 都會清）。
+> 前一次是 2026-10-16（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
 > 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
 > 前一次是 2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
 > 去重單位，一條總規則底下的每則告警各自播報；#64：新增 `flappingThreshold`／`flappingWindowMin`
@@ -47,7 +50,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                         └ core/format.ts     buildBroadcastPlan → {text, emotion, …}
                         交付閘門（依序）：抖動抑制（#64，窗內翻太多次就先不念，穩定滿窗後
                           解除並補念當下狀態）→ 值班靜音時段（#63，dashboard 層級，瀏覽器
-                          本地時間；quietAllowCritical 只放 critical 的 firing 過）
+                          本地時間；quietAllowCritical 放 critical 的 firing 過，#84 起
+                          連同「破靜音念出來過」的那幾則的恢復句）
                           → 每瀏覽器靜音（ADR-007，整輪的開關）
                           任一個成立就不交給播報器 —— items 照回（前兩道會留 suppressed
                           標記：'flapping'／'quiet'），清單與表情照常更新
@@ -92,7 +96,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 |---|---|
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
-| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
+| `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
 | `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
@@ -156,7 +160,7 @@ Panel options 共 **19 個**。權威是 `src/module.ts` 的 `setPanelOptions`�
 | `speakValue` | `true`（念） | 播報句與播報紀錄要不要帶「目前數值 N」子句（#71）。條件只是 0／1 或查 `ALERTS`（值恆為 1）時數值沒有意義，關掉只少那一段、其餘子句逐字不變 |
 | `enableTTS` | `true` | 關掉就只更新畫面不發聲（對所有觀看者生效；panel 標題列的語音開關只管自己這台瀏覽器） |
 | `quietHours` | `''`（無排程） | 值班靜音時段 `22:00-07:00`：時段內照樣更新畫面，只是不念（#63）。**起點含、終點不含**；跨午夜與不跨午夜都支援。留空或格式錯誤即與沒有這個選項時完全相同 |
-| `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing（恢復句不念）。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果 |
+| `quietAllowCritical` | `false` | 排程靜音時段內仍念 `critical` 的 firing。嚴重度經 `severityAliases` 對映後判斷，與門檻同一份解析結果。**破靜音念過的 critical，恢復時也會念**（#84）；反面同樣成立——沒破過靜音念出來的告警（非 critical、或這個開關關著）恢復時照舊不念 |
 | `flappingThreshold` | `0`（關閉） | 抖動抑制（#64）：同一則在窗內 firing↔resolved 翻幾次就先不念。例「10 分鐘內翻 4 次就先不念，穩定 10 分鐘後恢復」。**達到門檻的那一次仍會念**，之後的翻轉才不念。`0` 或留空即與沒有這個選項時完全相同 |
 | `flappingWindowMin` | `10` | 抖動抑制的窗長（分），同時是「穩定多久就解除抑制」的長度。不是大於 0 的數字（含 `0`）→ 整個抖動抑制視同關閉 |
 | `ttsVoice` | `''`（自動） | 指名聲線，**可只填名稱的一段**；空字串優先挑 zh-TW 本機引擎 |
@@ -215,6 +219,24 @@ ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號�
 兩者都是「照樣評估、照樣經過 dedup、照樣回 `items`，只是不交付」——
 所以時段結束時不會把時段內的告警一口氣補念出來。`quietAllowCritical` **只對排程靜音生效**：
 觀看者自己按了靜音，critical 也不念。
+
+`quietAllowCritical` 開著時還有恢復側的一條（#84）：**在時段內破靜音念出來的那則 critical，
+它的恢復句在同一段時段內也念** —— 使用者既然已經被叫醒，就該聽到結局，而不是起身去看螢幕。
+反面同樣是規格的一部分：**沒破過靜音念出來的告警（非 critical、或開關關著）恢復時照舊不念**，
+所以這不是「所有 critical 的恢復都會念」。導播為此記一份 fingerprint 的集合
+（`createQuietBreakLog`，與 dedup、抖動狀態同生同死）：
+
+- **鍵是實際交付，不是 `breaksQuiet()` 的判定。** 寫入點在 `sink.enqueue()` 之後，
+  所以 ADR-007 的靜音鈕按下去的那台瀏覽器（判定得出「破得了靜音」卻一句都沒出聲）
+  不會記下任何東西 —— 否則它解除靜音後會冒出一句沒有前文的「已恢復」，
+  而同一面牆上沒按靜音的那台行為還不一樣。
+- **只在一段時段內有效**，四個出口都會清：離開時段或關掉 `quietAllowCritical`（每一輪都查，
+  **排在「這一輪無事」的早退之前** —— 時段是被時鐘跨出去的，不是被告警跨出去的）、
+  恢復句真的念出去了、來源層 `onSupersede`、`dispose()`。昨晚念過的 critical 撐到今晚才恢復時
+  因此不會破今晚的靜音。上限 256 筆（滿了丟最舊的）是對付「fingerprint 每輪都變」的 backstop。
+- **時段外念出的 firing、時段內恢復 → 仍然不念**（記錄只在時段內累積）。那個人沒有被吵醒，
+  不需要在半夜被告知結局；要改成「念」的話，得先決定記錄要往回追多久，那是另一張票。
+
 時段用的是**每個觀看者瀏覽器的本地時間**（`new Date(ms).getHours()`），
 代價是跨時區的觀看者各自落在不同的絕對時刻、日光節約轉換當天不保證 ——
 要全站同一個絕對時段得改成帶時區的設定，那是另一張票。
@@ -231,7 +253,8 @@ ADR-007 那顆鈕存在 `localStorage`（每個瀏覽器各自，viewer 帳號�
 （沒有播報器／每瀏覽器靜音）排在交付之前 —— 所以 `quietAllowCritical` 在結構上
 蓋不過觀看者自己按下的靜音鈕。抖動排在時段之前，所以兩者同時成立時標記是 `'flapping'`
 而不是 `'quiet'`，而且 `quietAllowCritical` 救不回一則正在抖動的 critical ——
-一則在 10 分鐘內翻 4 次的 critical 正是這個選項要安靜掉的噪音。
+一則在 10 分鐘內翻 4 次的 critical 正是這個選項要安靜掉的噪音。#84 的恢復側語意同樣
+越不過抖動那一道：被抖動抑制擋下的恢復句連靜音閘門都走不到（它在 `candidates` 之外）。
 抑制期間照樣經過 dedup（理由同靜音時段），但**解除**是三道閘門裡唯一會「多念一句」的：
 維持同一個狀態滿一個窗沒再翻轉就解除，而且**解除當下**就念當下的實際狀態
 （與抑制前最後念出去的那個狀態不同時）。不這樣做的話，抑制期間翻完、最後停在 resolved

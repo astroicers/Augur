@@ -10,7 +10,13 @@
  * **時刻一律自己算**：`new Date(2026, 9, 15, 22, 30)` 是**本地時間**的建構式，
  * 所以不論 jest 把 `TZ` 設成什麼，這些斷言都成立（根 `jest.config.js` 目前固定 UTC）。
  */
-import { describeQuietHours, isQuietAt, minuteOfDayAt, parseQuietHours } from '../BroadcastDirector';
+import {
+  createQuietBreakLog,
+  describeQuietHours,
+  isQuietAt,
+  minuteOfDayAt,
+  parseQuietHours,
+} from '../BroadcastDirector';
 
 /** `HH:MM` → 當天的第幾分鐘（測試自己算一份，不借用受測碼的內部函式）。 */
 const min = (hours: number, minutes: number) => hours * 60 + minutes;
@@ -186,4 +192,68 @@ test('AC-2：minuteOfDayAt 與本地時間建構式一致，日界線兩側判�
   const range = parseQuietHours('22:00-07:00').range;
   expect(isQuietAt(range, minuteOfDayAt(new Date(2026, 9, 15, 21, 59).getTime()))).toBe(false);
   expect(isQuietAt(range, minuteOfDayAt(new Date(2026, 9, 16, 0, 1).getTime()))).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// 破靜音記錄（#84 AC-4）—— 純資料結構，沒有時鐘也沒有告警。
+//
+// 住在這一支的理由與上面四個函式相同（它也住在 `director/BroadcastDirector.ts`）。
+// 導播那一側的行為（什麼時候寫入、什麼時候清）由 `BroadcastDirector.test.ts` 的
+// #84 那一段釘住；這裡只驗這個結構自己：四個出口與上限。
+// ---------------------------------------------------------------------------
+
+test('#84 AC-4：記下的 fingerprint 查得到，忘掉之後查不到', () => {
+  const log = createQuietBreakLog();
+  expect(log.has('fp-a')).toBe(false);
+  log.remember('fp-a');
+  expect(log.has('fp-a')).toBe(true);
+  expect(log.size()).toBe(1);
+
+  log.forget('fp-a');
+  expect(log.has('fp-a')).toBe(false);
+  expect(log.size()).toBe(0);
+  // 忘掉沒記過的不拋例外（來源層取代一則從沒破過靜音的告警時就是這條路）。
+  expect(() => log.forget('fp-nope')).not.toThrow();
+});
+
+test('#84 AC-4：同一個 fingerprint 記兩次只佔一筆', () => {
+  const log = createQuietBreakLog();
+  log.remember('fp-a');
+  log.remember('fp-a');
+  expect(log.size()).toBe(1);
+});
+
+test('#84 AC-4：clear() 一次清光（離開時段、功能關閉、dispose 都走這條）', () => {
+  const log = createQuietBreakLog();
+  log.remember('fp-a');
+  log.remember('fp-b');
+  expect(log.size()).toBe(2);
+
+  log.clear();
+  expect(log.size()).toBe(0);
+  expect(log.has('fp-a')).toBe(false);
+  expect(log.has('fp-b')).toBe(false);
+});
+
+test('#84 AC-4：記錄不會無限增長 —— 超過上限就丟最舊的那一筆', () => {
+  // 上限正常情形下碰不到（一筆要有一句真的念出去的 critical），它擋的是
+  // 「fingerprint 每輪都變」這種病態來源。退化的方向是「少念一句」而不是「多念一句」。
+  const log = createQuietBreakLog({ limit: 3 });
+  for (const fp of ['fp-1', 'fp-2', 'fp-3', 'fp-4']) {
+    log.remember(fp);
+  }
+  expect(log.size()).toBe(3);
+  expect(log.has('fp-1')).toBe(false);
+  expect(['fp-2', 'fp-3', 'fp-4'].every((fp) => log.has(fp))).toBe(true);
+});
+
+test('#84 AC-4：重複記下的那一筆排到隊尾，淘汰的仍是真正最舊的', () => {
+  const log = createQuietBreakLog({ limit: 2 });
+  log.remember('fp-1');
+  log.remember('fp-2');
+  log.remember('fp-1'); // 又念了一次 fp-1 → 它現在是最新的
+  log.remember('fp-3');
+  expect(log.has('fp-2')).toBe(false);
+  expect(log.has('fp-1')).toBe(true);
+  expect(log.has('fp-3')).toBe(true);
 });
