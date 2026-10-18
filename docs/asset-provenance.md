@@ -1,6 +1,13 @@
 # 素材出處與授權
 
 > 本 repo 是**公開的 Apache-2.0**。任何進版控的美術資產都必須在此表有一列。
+>
+> ⚠️ **2026-10-18（#90）**：`live2d/_archive/`（含 `nami/`、`layerwork/`）與根目錄 `avatar/`
+> 這兩個目錄**已隨 AIRI／Live2D 路線廢棄一併刪除**，內容見 git 歷史。
+> 本文件**刻意保留**它們的路徑與出處紀錄 —— 出處欄的用途就是指出當初版控裡的實際位置，
+> 把路徑改掉等於把紀錄弄斷。下文凡出現這兩個目錄，一律指「已刪除的那個目錄」。
+> 其中 `live2d/_archive/live2d-template-spec-v1.md` §3／§6／§7 已逐字移入
+> `docs/sprite/sprite-sheet-spec.md`〈附錄 B〉。
 > 建立於 2026-09-16，起因是 review 發現 `live2d/_archive/nami/` 有 2.0MB 角色美術
 > 零出處地進了版控 —— 而同一個 repo 對 three-vrm、Cubism Core、Hiyori、page-mascot
 > 都已經逐項標過授權。三次做對、一次漏掉，所以改成用一張表釘住。
@@ -9,7 +16,7 @@
 
 | 路徑 | 內容 | 出處 | 授權 | 備註 |
 |---|---|---|---|---|
-| `live2d/_archive/nami/layout.json`<br>`live2d/_archive/nami/manifest.json` | 純座標與 z-order，**無美術資料** | 自產（拆層工具輸出） | 隨 repo Apache-2.0 | 對應的 34 張圖已移除，見下 |
+| `live2d/_archive/nami/layout.json`<br>`live2d/_archive/nami/manifest.json` | 純座標與 z-order，**無美術資料** | 自產（拆層工具輸出） | 隨 repo Apache-2.0 | 對應的 34 張圖已移除，見下。**目錄已於 2026-10-18 刪除**（#90，AIRI／Live2D 路線廢棄），兩個 json 連同整個 `live2d/_archive/` 退出版控，內容見 git 歷史 |
 | `src/img/logo.svg` | plugin 圖示 | `@grafana/create-plugin` 7.11.0 腳手架 | Apache-2.0（隨腳手架） | 尚未替換成自有圖示 |
 | `src/img/sprite/directions.png`<br>`src/img/sprite/reactions.png`<br>`src/img/sprite/sprite-manifest.json` | 角色「藍鯨布偶裝的疲憊男孩」（2026-10-05 定稿，規格 SP-0.9）：兩張精靈圖與 manifest：說話動嘴、眨眼、表情 5 格；視線格同一張臉（SP-0.10，`features.gaze = false`） | **AI 生成＋後製**（SP-9.2 七項）：① 產品 **Google Gemini**；② 版本 **App 未公開版本**；③ 生成日期：不晚於 2026-10-05（專案主人提供當日；確切日期未保留）；④ 操作者：專案主人；⑤ 逐字 prompt：[`docs/sprite/SOURCE-PROMPTS.md`](sprite/SOURCE-PROMPTS.md)；⑥ 輸入參考圖：無（專案主人只給文字 prompt）；⑦ 後製（操作者：Claude，2026-10-05）：BiRefNet 去背（模型 MIT，經 ComfyUI-RMBG 節點於本機執行）＋噴水處以 OpenCV GrabCut 補回、`tools/sprite-gen/face-edits.py` 從原圖像素修改嘴與眼並疊上表情記號（汗滴、怒筋、腮紅、閃光，皆為程式繪製）、`tools/sprite-gen/assemble.mjs` 組裝。ComfyUI 局部重繪試過未採用 | **(a) 生成服務條款**：Google 服務條款（https://policies.google.com/terms ，生效日 2026-07-30，查證 2026-10-05）逐字：「Some of our services allow you to generate original content. Google won't claim ownership over that content.」；Generative AI Prohibited Use Policy（https://policies.google.com/terms/generative-ai/use-policy ，最後修改 2024-12-17）禁止侵權與謊稱人類創作 —— 本列即明示為 AI 生成。**(b) 專案主張**：專案自有，以專案實際持有之權利為限，隨 repo Apache-2.0 釋出。**否定聲明（SP-9.7，依實改寫，見規格 SP-9.7 的 2026-10-05 註）**：未以任何指名畫師風格或未授權的參考圖作為生成輸入；**prompt 以「有點像小埋的感覺」描述氛圍，點名了第三方角色作為風格參考**。生成圖背景另有 Gemini 自行加入的第三方作品海報（原神、SPY×FAMILY、疑似小埋），已於去背時全數去除；交付物只含原創造型的角色，不含小埋的造型元素（金色長髮、倉鼠斗篷）。純 AI 生成內容在部分法域不受著作權保護 | sha256：directions `97d7816d10d497519bf4f7024cd8cf42f657037a38d88cffe968f830a8d0df62`、reactions `00d976c691113c773bb02e065acf03c707afcf38afd61b4b72df95b218c373af`（與 manifest 同值，SP-9.8）。**原始檔（SP-9.11）**：Gemini 原圖、去背遮罩、四張來源圖與 `align.json` 存於專案主人本機 `assets/sprite-src/`（不進版控，負責人：專案主人）；**本 repo 無法單獨重建此素材**。前一版程式畫的暫定圖與其產生器 `whale-boy.mjs` 已刪除（見 git 歷史） |
 
@@ -22,13 +29,16 @@
 `assets/a1-augur-calm-cutout.png`、`assets/layers/` 的 6 張 `part_*.png` 與
 `_preview_segmentation.png`、`live2d/_archive/layerwork/_source.png`（與 A1 位元組相同）、
 `live2d/_archive/layerwork/_cutout.png`。原檔仍在本機，只是不進版控。
+（**`live2d/_archive/layerwork/` 這個目錄本身已於 2026-10-18 刪除**，#90；
+`.gitignore` 裡只為它存在的兩條規則同時移除。）
 
 > **2026-10-04 更新**：原角色已被「藍鯨布偶裝的疲憊男孩」取代（規格 SP-0.9），下面這段描述的
 > 是當時的狀態。A1 的出處問題因此不會再影響新素材 —— 新角色的出處見上表。
 
 **角色沒有消失。** 它的定義是兩份本專案自己的產物：
-`live2d/_archive/live2d-template-spec-v1.md` §7 的文字描述，
-以及 `docs/sprite/sprite-sheet-spec.md` **SP-6.0 的色票表**
+`docs/sprite/sprite-sheet-spec.md`〈附錄 B〉§7 的文字描述
+（2026-10-18 前在 `live2d/_archive/live2d-template-spec-v1.md`），
+以及同檔 **SP-6.0 的色票表**
 （刪檔前從各分層量測出來的 16 個 hex 值與相對亮度）。
 畫師拿的本來就是文字與色票，不是拿 A1 去描。
 
@@ -86,7 +96,7 @@ b 的期望成本低得多，仍建議先走 b。
 
 - `live2d/_archive/layerwork/PROMPTS.md` 的標題是「**Nano Banana 2** 拆層 prompt」——
   但那是**拆層**步驟，A1 是它的**輸入**而非產出。
-- `live2d/_archive/live2d-template-spec-v1.md` §7 明寫
+- `live2d/_archive/live2d-template-spec-v1.md` §7（2026-10-18 起為 `docs/sprite/sprite-sheet-spec.md`〈附錄 B〉§7）明寫
   「`[CHARACTER_APPEARANCE]` 由**核准的 A1 圖反推**」—— 那段生成 prompt 寫在 A1 之後，
   是給**未來**同族角色用的，不是用來產生 A1 的。
 - `live2d/_archive/README.md` 的待辦欄寫「A1 calm 基準角色圖 → **需使用者提供**」。
@@ -108,7 +118,7 @@ nami 是可辨識的**第三方角色**，風險是著作權侵害；A1 是本�
 **待專案主人做的一件事**：回想並確認當初用的服務，實讀其條款對「輸出歸屬」與
 「商業／再散布」的規定，把結論與一級來源 URL 逐字填進上表。
 **若條款不允許**，remedy 是比照 nami 處理 —— A1 移出版控、角色重新設計，
-屆時 `live2d-template-spec-v1.md` §7 的角色凍結與本 repo 所有沿用該設定的素材一併作廢。
+屆時〈附錄 B〉§7（原 `live2d-template-spec-v1.md` §7）的角色凍結與本 repo 所有沿用該設定的素材一併作廢。
 
 **在確認之前**：A1 維持現狀（已在版控中），但**新的 sprite 素材必須在產生的當下就記錄出處**
 （見 `docs/sprite/production-sop.md` 階段 5）。這條規則對新素材沒有例外。
@@ -119,7 +129,7 @@ nami 是可辨識的**第三方角色**，風險是著作權侵害；A1 是本�
 
 | 路徑 | 原因 |
 |---|---|
-| `live2d/_archive/nami/` 的 34 張 png | 「娜美風」角色美術，零出處、零授權記錄。2026-09-16 從 branch 歷史移除（分支當時尚未推送，故只需改寫本地 commit）。原檔留在本機備份 |
+| `live2d/_archive/nami/` 的 34 張 png | 「娜美風」角色美術，零出處、零授權記錄。2026-09-16 從 branch 歷史移除（分支當時尚未推送，故只需改寫本地 commit）。原檔留在本機備份。**該目錄已於 2026-10-18 刪除**（#90） |
 | `web/public/avatar.vrm`（11MB） | 體積 + 授權；原由 `web/scripts/fetch-assets.sh` 下載。`web/` 已於 `fbd81f4` 刪除 |
 | `web/public/live2dcubismcore.min.js` | **Live2D Cubism Core 為專有軟體，不可再散布** |
 | `web/public/models/Hiyori.*` | Live2D 官方範例模型，Free Material License，不隨本專案散布 |

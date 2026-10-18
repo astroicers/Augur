@@ -31,7 +31,7 @@ export interface ParsedAlert {
   panelURL?: string
 }
 
-/** 表情狀態 — 對映 `live2d/_archive/live2d-template-spec-v1.md` §6（severity/status → 表情）。 */
+/** 表情狀態 — 對映 `docs/sprite/sprite-sheet-spec.md`〈附錄 B〉§6（severity/status → 表情）。 */
 export type Emotion = 'calm' | 'warning' | 'critical' | 'resolved'
 
 /**

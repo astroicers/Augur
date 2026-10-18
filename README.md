@@ -194,9 +194,8 @@ npm run blindtest:fixture       # 產編號假 sheet，用來驗盲測頁本身
 |---|---|
 | `src/core/` | 來源中立的核心邏輯：`ParsedAlert` 型別、嚴重度排名、表情映射、播報文字組句、去重防洪。不依賴瀏覽器或 Node，從舊架構整包繼承、`ParsedAlert` 這條邊界沒動——但內部**改過**：`dedup.ts` 為兩次真實的永久靜音缺陷加了 `forget()`（commit「fix(sources): 泛用 episode 被取代後，降級路徑會永久靜音」）與 `setWindow()`（commit「fix(panel): 會讓面板永久靜音的三條路徑，以及 speaker.ts 的第一份測試」），`severity.ts` 補過缺值收斂，`format.ts` 改過髒值處理與別名參數（#39、#46、#51）等。行數會變，別寫死。 |
 | `monitoring/` | docker-compose 開發環境 + 8 條 Windows 主機 alert rule（3 條效能、5 條 Loki 事件），另有 2 條 POC 用的合成規則 |
-| ~~`assets/`~~ | 已於 2026-09-21 退出版控：出處查不到，依 `docs/asset-provenance.md` 自訂的規則移除。角色定義改由 `live2d-template-spec-v1.md` §7 的文字描述 + `sprite-sheet-spec.md` SP-6.0 的色票表承擔，兩者都是本專案自己的產物。 |
-| `live2d/_archive/` | 已廢棄的 Live2D 路線。但 `live2d-template-spec-v1.md` §6 仍在用：它定義了 calm/warning/critical/resolved 四個表情的視覺語意，是 sprite 反應圖的內容大綱。 |
-| `avatar/` | VRM / THA 選型研究備忘錄（歷史，已不在關鍵路徑上） |
+| ~~`assets/`~~ | 已於 2026-09-21 退出版控：出處查不到，依 `docs/asset-provenance.md` 自訂的規則移除。角色定義改由 `sprite-sheet-spec.md`〈附錄 B〉§7 的文字描述 + 同檔 SP-6.0 的色票表承擔，兩者都是本專案自己的產物。 |
+| ~~`live2d/_archive/`~~<br>~~`avatar/`~~ | 已廢棄的 Live2D 路線與 VRM / THA 選型研究備忘錄。**兩個目錄都已於 2026-10-18 刪除**（AIRI 這個概念整體廢棄），內容見 git 歷史。仍被引用的 `live2d-template-spec-v1.md` §3／§6／§7（像素錨點、四表情視覺語意、原角色文字描述）已逐字移入 `docs/sprite/sprite-sheet-spec.md`〈附錄 B〉。注意 `src/avatar/` 是現行程式碼，不受影響。 |
 | `tools/` | `asp-test.sh`（11 道本地檢查電池）；它呼叫的 `check-js-suffix.sh`、`check-monitoring.mjs`、`check-bundle-deps.mjs`、`stroke-battery.mjs`；`check-sprite-sheets.mjs`（SP-7 素材驗收，零依賴）與它的 selftest；`lib/`（手寫 PNG / GIF 編解碼、檢查邏輯、合成假人）；`blind-test/`（SP-V.1 盲測頁）；`check-server.sh`（`npm run server` 的註冊確認）；`tts-server/`（ADR-005 的外部語音服務參考實作：Qwen3-TTS 年輕男聲，Python，不進 plugin）；`sprite-gen/`（`face-edits.py` 改臉、`assemble.mjs` 組圖，定稿素材的產製鏈）；`package.sh`（打包 zip）；`jest/fileMock.js`（jest 的圖片 stub，`jest.config.js` 引用） |
 | `docs/sprite/` | 精靈圖規格（`sprite-sheet-spec.md`）、製作 SOP、manifest 樣板。發包給畫師時給這三份。 |
 | `docs/handoff/` | 歷史交接文件。`remaining-plan.md` 已於 2026-10-02 退役，仍有效的項目在 `docs/ROADMAP.md`〈未完成項目〉 |

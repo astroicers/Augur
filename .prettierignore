@@ -3,7 +3,10 @@
 # 在 ASP 治理下讓 prettier 批次重排 ADR 是不可接受的副作用。
 docs/
 monitoring/
-live2d/
+# `avatar/` 沒有前綴 `/`，在 gitignore 語義下會匹配任意深度的同名目錄 ——
+# 根目錄 `avatar/` 已於 2026-10-18（#90）刪除，但這一行同時擋著現行程式碼 `src/avatar/`
+# （`prettier --file-info src/avatar/gaze.ts` 實測 `ignored: true`），故保留；
+# #90 只移除了唯一僅為 live2d 封存目錄存在的那一條。
 avatar/
 assets/
 .claude/

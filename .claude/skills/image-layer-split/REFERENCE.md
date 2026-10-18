@@ -84,4 +84,4 @@ python3 scripts/compose_cropped.py <partsdir> --layout <layout.json> --out <dir>
 
 本 skill 產的是**分層圖庫（素材）**,對應 SOP 的 **A3 拆層**。之後仍要:
 - 眼睛細件(white/iris/highlight/lid/lash)、共用 overlay(汗滴/怒紋…)→ 手工細分/手繪。
-- **A5 Cubism 綁定** → 進 Cubism 手做或外包（本 skill 不涵蓋,見 `Augur/live2d/RUNBOOK.md`）。
+- **A5 Cubism 綁定** → 進 Cubism 手做或外包（本 skill 不涵蓋;原 Augur live2d 封存目錄下的 `RUNBOOK.md` 已於 2026-10-18 隨 #90 刪除,見 git 歷史）。

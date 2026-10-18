@@ -46,7 +46,7 @@ P6: 根 README、`src/README.md`、CHANGELOG 對齊現況（2026-09-21）。
 P8: ADR-005 外部語音（Accepted 2026-10-06）、ADR-006 播報紀錄（Accepted 2026-10-14）、語音開關（#25，v0.2.1）；發版 v0.1.0、v0.2.0、v0.2.1。語音開關的設計決策補進 ADR-007（Retrospective）→ #32，由 PR #52 完成（2026-10-15）。
 
 ## now — P7 未完成項目收斂 / P9 播報強化 / P10 結構重構
-P7: 〈未完成項目〉「不卡人」那一類逐條收斂，含 `src/core/` 的缺陷修補與文件同步。第一批已完成（2026-10-14～15）：`emotion.ts` 同類缺陷 → #30；文件與程式現況對齊 → #31；ADR-007 語音開關（Retrospective）→ #32（PR #52）；`format.ts` 會念出 undefined → #39；同類缺陷擴及其他欄位 → #46；獨立複審留下的測試與邊界缺口 → #47。第二批已完成（2026-10-15）：交接與 sprite 規格的狀態（A0-1、A0-6、A0-7）→ #60（PR #66）；過期事實（散落-2、asset、`speakableSeverity` 措辭、一條測試名稱）→ #61（PR #67）。已知待開票的小項：`src/plugin.json` 描述仍寫 watches the cursor（併 P11 的 metadata）；`src/avatar/AvatarController.ts` 的註解仍寫 core「零修改」（散落-2 的殘留，產品碼註解）。其餘不卡人的條目（散落-3、A2-1、A2-3、A5-2、B7-6、B3-4，以及 P5 移來的 B2-1 凍結、B2-6 門檻、logo）由主管層逐批開票。「卡在人」那一類移到 P12。
+P7: 〈未完成項目〉「不卡人」那一類逐條收斂，含 `src/core/` 的缺陷修補與文件同步。第一批已完成（2026-10-14～15）：`emotion.ts` 同類缺陷 → #30；文件與程式現況對齊 → #31；ADR-007 語音開關（Retrospective）→ #32（PR #52）；`format.ts` 會念出 undefined → #39；同類缺陷擴及其他欄位 → #46；獨立複審留下的測試與邊界缺口 → #47。第二批已完成（2026-10-15）：交接與 sprite 規格的狀態（A0-1、A0-6、A0-7）→ #60（PR #66）；過期事實（散落-2、asset、`speakableSeverity` 措辭、一條測試名稱）→ #61（PR #67）。已知待開票的小項：`src/plugin.json` 描述仍寫 watches the cursor（併 P11 的 metadata）；`src/avatar/AvatarController.ts` 的註解仍寫 core「零修改」（散落-2 的殘留，產品碼註解）。其餘不卡人的條目（散落-3、A2-1、A2-3、A5-2、B7-6、~~B3-4~~（已於 2026-10-18 隨 #90 結案），以及 P5 移來的 B2-1 凍結、B2-6 門檻、logo）由主管層逐批開票。「卡在人」那一類移到 P12。
 P7 判準: 〈未完成項目〉每一條都有處置——完成、作廢附理由，或移到 P11 / P12；每張票的 `npm run typecheck`、`npm run lint`、`npm run test:unit`、`npm run build` 全綠。
 P9: 播報強化——只靠 jest 單元測試、typecheck、lint、build 就能驗收，不新增相依、維持零後端（ADR-004）。第一批已完成（2026-10-15）：嚴重度別名對應 → #35，逾時後以 #51 重開（PR #55）；跨 panel 偵測降級後可恢復（附錄-7）→ #36。第二批：靜音／值班時段 → #63（PR #68，已完成 2026-10-15）；抖動告警（flapping）抑制 → #64（PR #74，已完成 2026-10-16；獨立複審抓到取代與關閉時的兩條整段不出聲路徑，合併前已修）。值班牆需求（eks-infra#1210，Augur PM session 開票）已完成 2026-10-16：以指定 label 當告警名與去重單位 → #69（PR #73）；播報紀錄的名字也跟著它 → #70（PR #75）；可關掉「目前數值」子句 → #71（PR #76）。**發版 v0.3.0（2026-10-16）**：收 v0.2.1 之後 P7／P9／P10 的 18 張票（PR #78；發版前以 zip 在隔離的 Grafana 12.4.12 實測總規則逐則播報、不念數值、單則恢復）。EKS 以「語音值班台」上線（eks-infra#1209、#1211，總規則 `MerakWallAlerts` 鏡像兩面值班牆，取代 4 條手寫副本）。待開票（改 `MascotPanel.tsx` 畫面層）：播報紀錄篩選與匯出、別名設定寫錯時在面板上提示（#51 的 `describeSkippedAliases` 目前沒有 UI 使用者）、時段內破靜音的 critical 是否也要念恢復句（#63 的已知取捨）、換 `alertNameLabel` 時只重念名字真的變了的那幾則（#69 的已知取捨）、抖動被抑制時在清單上標示（`suppressed` 已有，畫面上還看不到）。
 P9 判準: 每項功能都有可觀察的行為（panel 選項或畫面狀態）與單元測試；選項留空時行為與現在完全相同；`src/README.md` 與 `docs/ARCHITECTURE.md` 同步。
@@ -57,7 +57,7 @@ P10 判準: 每張票的既有測試不修改且全綠；以可機械驗證的�
 P11: 1.0 的前置——有視線的素材（連同 B7-3 視線閒置回中央）、D2「先不上架 catalogue」的重議、logo 與 `plugin.json` metadata、簽署。
 
 ## later — P12 卡在人的實機驗證、授權與 ADR 修訂
-P12: 〈未完成項目〉「卡在人」的那一類——B2-3 分層原始檔與授權書、D1 A1 衍生 blob、B3-3 憑證作廢、B7-1 / B7-4 什麼該公開、B4-1~B4-7 ADR-004 下一次修訂、B5-1 / B5-2 實機驗證、V-4 語音候選 KittenTTS（授權裁定與中文試聽）。都需要專案主人裁定或親手操作，AI 不代處理。
+P12: 〈未完成項目〉「卡在人」的那一類——B2-3 分層原始檔與授權書、D1 A1 衍生 blob、B7-1 / B7-4 什麼該公開、B4-1~B4-7 ADR-004 下一次修訂、B5-1 / B5-2 實機驗證、V-4 語音候選 KittenTTS（授權裁定與中文試聽）。（B3-3 憑證作廢與 B3-4 已於 2026-10-18 結案，見〈卡在人〉。）都需要專案主人裁定或親手操作，AI 不代處理。
 
 ## 未完成項目
 
@@ -93,8 +93,8 @@ P12: 〈未完成項目〉「卡在人」的那一類——B2-3 分層原始檔�
 
 **授權與「什麼該公開」**
 - **D1　A1 衍生 blob 是否從 main 歷史移除** —— main 可抵達的 24 個 commit 的 tree 仍含 `assets/a1-*`，且已推上 GitHub。移除＝改寫 `14a481d` 之後的全部 commit（71+ 個換 SHA）並 force-push main，屬破壞性操作、需逐次授權；GitHub 端還要另請 Support 清除。**先做便宜的那一步**：專案主人回想當初用的生成服務並實讀條款 —— 條款允許，改寫就不必做。
-- **B3-3　輪換或作廢 WEBHOOK_SECRET** —— WEBHOOK_SECRET 曾進過 Grafana 容器環境與 provisioning 檔，要由人輪換，讓舊值失效。不論 B3-1 怎麼裁都要做；AI 不代處理，也不編輯 .env。 本次（2026-10-02）刪除 contactpoints 後它已無任何消費者，作廢即可。
-- **B3-4　根目錄 `.env.example` 與 `docs/sample-grafana-firing.json` 的去留** —— 根 `.env.example` 全是已刪的 bridge/AIRI 設定（ADR-004 決策 7 拿它當 dormant 污染的反例）；`docs/sample-grafana-firing.json` 同屬舊架構。`monitoring/.env.example` 的 WEBHOOK_SECRET 三行已於 2026-10-02 隨 contactpoints 刪除拿掉。
+- ~~**B3-3　輪換或作廢 WEBHOOK_SECRET**~~ ✅ **2026-10-18 結案**：**作廢已經成立，不需要另外輪換** —— 2026-10-02 刪除 contactpoints 後它已無任何消費者，專案主人本機的根目錄 `.env` 也已於 2026-10-15 刪除，最後一份樣板（根 `.env.example`）隨 B3-4 於本次刪除。原文 —— WEBHOOK_SECRET 曾進過 Grafana 容器環境與 provisioning 檔，要由人輪換，讓舊值失效。不論 B3-1 怎麼裁都要做；AI 不代處理，也不編輯 .env。
+- ~~**B3-4　根目錄 `.env.example` 與 `docs/sample-grafana-firing.json` 的去留**~~ ✅ **2026-10-18 結案**：**AIRI 這個概念已由專案主人裁定廢棄，兩個檔都在本票（#90）刪除**（同一裁定也刪了 `avatar/` 與 live2d 封存目錄）。原文 —— 根 `.env.example` 全是已刪的 bridge/AIRI 設定（ADR-004 決策 7 拿它當 dormant 污染的反例）；`docs/sample-grafana-firing.json` 同屬舊架構。`monitoring/.env.example` 的 WEBHOOK_SECRET 三行已於 2026-10-02 隨 contactpoints 刪除拿掉。**`monitoring/.env.example` 不動**，那是開發環境用的另一份檔案（`docs/ARCHITECTURE.md` 引用的是它）。
 - **B7-1　`.claude/settings.json` 移出版控** —— .claude/settings.json 仍在公開版控裡：deny 10 條、ask 10 條（2026-10-15 實數：三條 v4 hook 已於 asp-ng 接入時移除，2026-10-10；`gh pr merge` 的 deny/ask 依使用者授權於 2026-10-15 移除，PR #56）。移出前要先替 deny 規則與 ship-gate 找好著落，而且不能把 pretooluse-ship-gate.sh 直接搬到全域（其他 repo 沒有 .asp-test-result.json）。.claude/skills/ 下的 11 個專案資產不要一起移。這是「什麼該公開」的問題，需專案主人裁定。
 - **B7-4　`.config/AGENTS/` 四個檔的去留** —— A4-7 已讀完 .config/AGENTS/ 四個檔（instructions.md、e2e-testing.md、skills/build-plugin.md、skills/validate-plugin.md）：沒有本機絕對路徑、沒有憑證，內容是腳手架帶進來的公開文件摘要，建議四個都留在公開版控。需專案主人一句裁定，因為屬「什麼該公開」。這份審查結論目前只寫在退役檔裡，搬移時要一起帶走。
 
@@ -182,7 +182,8 @@ P12: 〈未完成項目〉「卡在人」的那一類——B2-3 分層原始檔�
    改用 `AvatarController.setReaction?()` 承接 click / pending，
    理由是它們不是 severity 的函數，擴充會污染 `severityToEmotion` 的純函式語意。
 3. 「風格參考 `assets/layers/`」**該目錄已於 2026-09-21 退出版控**（出處不可考）。
-   替代品是 `live2d-template-spec-v1.md` §7 的文字描述 + 規格 SP-6.0 的色票表。
+   替代品是規格〈附錄 B〉§7 的文字描述 + 規格 SP-6.0 的色票表
+   （原在 `live2d/_archive/live2d-template-spec-v1.md`，該檔已於 2026-10-18 隨 #90 刪除）。
 
 ### P6 — 文件
 
