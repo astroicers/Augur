@@ -2,7 +2,11 @@
 
 > **Augur ＝ 一個 Grafana panel plugin，讓吉祥物住在 dashboard 裡把告警念出來。**
 > 本檔是**導覽**；每個決策的「為什麼」以 `docs/adr/` 為權威。**維護規則見文末。**
-> 最後更新：2026-10-18（#82：純提取式重構——`MascotPanel.tsx` 的 CSS 搬到
+> 最後更新：2026-10-18（#83：純提取式重構——語音開關（ADR-007）的狀態、同頁／跨分頁
+> 同步與補念觸發收成 `src/components/useVoiceSwitch.ts`，補念佇列抽成**不 import React、
+> 不讀時鐘**（`now` 注入）的 `src/speech/blockedQueue.ts`；元件這一側語音開關相關的
+> `useEffect` 與 `useRef` 歸零，只剩三個接線 callback，對外行為不變）。
+> 同日（#82：純提取式重構——`MascotPanel.tsx` 的 CSS 搬到
 > `src/components/MascotPanel.styles.ts`（逐字不變）、每瀏覽器靜音的本機儲存與
 > 同頁／跨分頁同步搬到 `src/speech/muteStore.ts`（不 import React；鍵名與事件名
 > 是 ADR-007 的相容面，不得更名）、`unavailableSpeaker` 搬到
@@ -69,7 +73,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                           解除並補念當下狀態）→ 值班靜音時段（#63，dashboard 層級，瀏覽器
                           本地時間；quietAllowCritical 放 critical 的 firing 過，#84 起
                           連同「破靜音念出來過」的那幾則的恢復句）
-                          → 每瀏覽器靜音（ADR-007，整輪的開關）
+                          → 每瀏覽器靜音（ADR-007，整輪的開關；開關的狀態、同步與
+                            補念在 components/useVoiceSwitch.ts，#83）
                           任一個成立就不交給播報器 —— items 照回（前兩道會留 suppressed
                           標記：'flapping'／'quiet'），清單與表情照常更新
                                  │  BroadcastItem[]（時間順序）
@@ -123,8 +128,10 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
 | `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
-| `src/components/MascotPanel.tsx` | 接線 + 呈現。**只剩接線與 JSX**（#82 把三類與元件邏輯無關的東西搬走：CSS → `MascotPanel.styles.ts`、每瀏覽器靜音的儲存與同步 → `src/speech/muteStore.ts`、`unavailableSpeaker` → `src/speech/unavailableSpeaker.ts`、`errorText` → `src/sources/errorText.ts`）。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#81 的兩處畫面行為同樣只是接線：清單列的 `data-suppressed` 與標記、編輯模式（`isPanelEditor(data.request?.app)`）才渲染的那一行別名提示——文字全在 `src/feed/feedNotices.ts`。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
+| `src/components/MascotPanel.tsx` | 接線 + 呈現。**只剩接線與 JSX**（#82 把三類與元件邏輯無關的東西搬走：CSS → `MascotPanel.styles.ts`、每瀏覽器靜音的儲存與同步 → `src/speech/muteStore.ts`、`unavailableSpeaker` → `src/speech/unavailableSpeaker.ts`、`errorText` → `src/sources/errorText.ts`；#83 再把語音開關整塊收進 `useVoiceSwitch`）。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、跨 panel 互動與播報紀錄的 UI。語音開關（ADR-007）自 #83 起**不在這裡**——本檔只剩三個接線 callback（`currentSpeaker`／`silenceAvatar`／`clearSpeechErr`）與 JSX，與它有關的 `useEffect` 與 `useRef` 皆為 0。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX）。#81 的兩處畫面行為同樣只是接線：清單列的 `data-suppressed` 與標記、編輯模式（`isPanelEditor(data.request?.app)`）才渲染的那一行別名提示——文字全在 `src/feed/feedNotices.ts`。#80 的匯出在這裡只有兩支模組層函式：`exportFeedRowsAsCsv`（讀「現在」當檔名的時間戳）與 `downloadTextFile`（Blob + `a[download]`，全專案唯一一處下載動作）——CSV 的格式與檔名規則在 `src/feed/feedCsv.ts` |
 | `src/components/MascotPanel.styles.ts` | `MascotPanel` 的 emotion CSS（#82 原樣搬出來，一個字元沒改）。搬出來只為閱讀性，**不是**為了共用：唯一的呼叫端仍是 `MascotPanel`，簽名也刻意維持零參數（`useStyles2(getStyles)` 的呼叫形狀不變；顏色一律沿用容器的 `currentColor`，不寫死色票）。⚠️ SP-1.5 的 `background-size` 禁令**檔案層面**掃的是整個 `src/`（本檔在掃描範圍內），但它的正規式只讀得到**帶引號的值**（`backgroundSize: '300% 300%'` 這一形）——本檔的 CSS 全寫在 emotion 的模板字串裡，裸 CSS 的 `background-size: auto 300%` 加進來**不會**被判紅（實測過）。這不是 #82 造成的 —— SP-1.5 一向只讀屬性賦值那一形，所以 `SpriteController.ts` 刻意以 `el.style.backgroundSize = …` 寫（見該檔 `makeLayer` 上方註解）；真要在本檔寫精靈圖背景時，同樣得寫成屬性賦值才受管 |
+| `src/components/useVoiceSwitch.ts` | 語音開關（ADR-007）的狀態、同頁／跨分頁同步與補念觸發（#83 從 `MascotPanel.tsx` 搬出來）。回傳 `{muted, blocked, isMuted, recordBlocked, noteVoiceName, toggle}`：`muted` 給畫面、`isMuted()` 給導播的 `muted()`（**同步**讀，不等 React 重繪——同頁同步是在同一個 click 事件裡派送的）、`blocked` 是「開著但瀏覽器擋著」（判定抽成可單測的純函式 `voiceBlockedBy`：`speechErr === 'not-allowed'`，或聲線標籤含 `AUTOPLAY_BLOCKED` 且不是使用者已經按過的那一個，複審 F3／N1）、`toggle()` 在被擋時是「叫醒 + 補念」、否則是「切換靜音」。**儲存與事件不在這裡**（`speech/muteStore.ts`），**補念的時限與去重也不在這裡**（`speech/blockedQueue.ts`）——本檔只有順序：叫醒 → 認下標籤 → 清錯誤 → 依序補念 → 回報佇列長度。元件那一側要做的收尾（停嘴型、歸零 speaking）由 `onSilenced`／`onPending`／`onReplay` 三個 callback 注入，所以本檔不碰 avatar、不碰 feed、不碰導播 |
+| `src/speech/blockedQueue.ts` | 被瀏覽器以 `not-allowed` 擋下的告警句（補念佇列，ADR-007 決策 2／3；#83 從 `MascotPanel.tsx` 的 `blockedRef` 搬出來）：`record`（寫入時就修剪——丟掉過期的、同一個 `plan.name` 只留最新一筆）、`take`（回傳窗內的那幾則**並整個清空**，連已經過期、不會被回傳的也丟）、`clear`（切到靜音走這條）、`size`（「取出後清空」看得見，不是推論出來的）。**不 import React**、不碰 DOM、**不讀時鐘**（`now` 從參數注入），所以窗長邊界驗得到：`BLOCKED_REPLAY_WINDOW_MS`（10 分鐘）**邊界含**——被擋下的時間剛好等於窗長時仍補念。同名去重只有 `record` 一處（`take` 刻意不重做，否則是沒有測試殺得掉的死碼）|
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、取名（`historyAlertNameOf`，跟著 `alertNameLabel`，#70）、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
@@ -136,7 +143,7 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 回報（#81 起**面板真的在用它**：編輯模式下的那一行提示，並多一個 `lang` 參數，預設 `'zh'` ＝ #81 之前的輸出逐字相同） |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
-| `src/speech/muteStore.ts` | 每瀏覽器靜音（ADR-007）的本機儲存與同頁／跨分頁同步（#82 從 `MascotPanel.tsx` 搬出來）：`readMuted`／`writeMuted`（讀寫都包 try/catch —— 無痕模式與配額滿時 `localStorage` 會拋，靜音仍要在本分頁即時生效、只是不持久）、`publishMuted`（寫本機 + 發同頁事件，寫入失敗照發）、`mutedFromStorageEvent`（**過濾條件在這裡**：不是我們那個鍵就回 `null`，否則別人寫本機會把吉祥物靜音）、`watchMuted`（訂閱兩種事件，回解除訂閱）。**不 import React**、不碰 `@grafana/*`。⚠️ 鍵名 `augur-mascot-panel.muted` 與事件名 `augur-mascot-panel:muted` 是 ADR-007 的相容面，不得更名 |
+| `src/speech/muteStore.ts` | 每瀏覽器靜音（ADR-007）的本機儲存與同頁／跨分頁同步（#82 從 `MascotPanel.tsx` 搬出來）：`readMuted`／`writeMuted`（讀寫都包 try/catch —— 無痕模式與配額滿時 `localStorage` 會拋，靜音仍要在本分頁即時生效、只是不持久）、`publishMuted`（寫本機 + 發同頁事件，寫入失敗照發）、`mutedFromStorageEvent`（**過濾條件在這裡**：不是我們那個鍵就回 `null`，否則別人寫本機會把吉祥物靜音）、`watchMuted`（訂閱兩種事件，回解除訂閱）。**不 import React**、不碰 `@grafana/*`。⚠️ 鍵名 `augur-mascot-panel.muted` 與事件名 `augur-mascot-panel:muted` 是 ADR-007 的相容面，不得更名。#83 起**唯一的消費端是 `components/useVoiceSwitch.ts`**（元件不再直接呼叫這五支） |
 | `src/speech/unavailableSpeaker.ts` | 沒有 `speechSynthesis` 的環境裡的 `Speaker`（#82 從 `MascotPanel.tsx` 搬出來）：每一則都以 `no-speech-synthesis` 報錯、佇列照走（吞掉的話畫面像在念卻沒有聲音也沒有錯誤）。原樣轉交 plan **物件身分**（試聽與補念靠它分辨）|
 | `src/speech/remoteSpeaker.ts` | 外部語音服務的播報器（ADR-005）。同一個 `Speaker` 介面；逐句取音訊、Web Audio 播放（CSP 的 `media-src 'none'` 會擋 `<audio>`）、音量包絡驅動嘴型；任何一則失敗或逾時就把**那一則**交回 Web Speech |
 | `src/avatar/AvatarController.ts` | avatar-agnostic 契約（繼承 ADR-002 §2） |
