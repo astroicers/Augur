@@ -2093,7 +2093,10 @@ test('#80 AC-4：清單是空的時候匯出鈕 disabled，而且按下去不下
     await waitFor(() => expect(view.container.textContent).toContain('這段時間範圍內沒有播報紀錄'));
     const btn = view.getByTestId('feed-export') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    // disabled 的按鈕不會發 click，但程式裡還有一道早退 —— 直接呼叫 onClick 也不該下載。
+    // 這裡驗到的是「按下去沒有下載」這個可觀察的結果 —— 擋住它的是 `disabled`，
+    // 不是 `exportFeedRowsAsCsv` 的零列早退：React 依 `disabled` **prop** 決定要不要送
+    // click，從 DOM 上拿掉那個屬性也送不進去，所以那一道早退從元件這一側走不到、
+    // 本檔也沒有任何一支驗得到它（它是純防禦，拿掉它沒有測試會紅 —— QA #80 實測）。
     fireEvent.click(btn);
     expect(cap.downloads).toEqual([]);
   } finally {
