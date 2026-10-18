@@ -5,6 +5,8 @@
 > 最後更新：2026-10-18（#84：`quietAllowCritical` 開著時，在時段內破靜音**念出來**的
 > critical，它的恢復句在同一段時段內也念——導播記下「真的交付過」的 fingerprint，
 > 離開時段／關掉功能／`onSupersede`／`dispose()` 都會清）。
+> 同日（#79：feed 列的合併、篩選與空清單判斷抽成純函式
+> `src/feed/feedRows.ts`——`MascotPanel` 只把結果映射成 JSX，對外行為不變）。
 > 前一次是 2026-10-16（#70：播報紀錄的名字也跟著 `alertNameLabel`——紀錄端與播報端
 > 同一個選項、同一個時機讀，所以同一則告警在兩邊同名）。
 > 前一次是 2026-10-15（#69：新增 `alertNameLabel`——以指定的 instance label 當告警名與
@@ -88,6 +90,8 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
                       MascotPanel 的 feed —— 組句走同一支 buildBroadcastPlan，
                       所以紀錄句與播報句逐字相同；**永不進語音佇列**（決策 5）
                       名字跟著 `alertNameLabel`（#70），與播報端同一個選項
+                      ▼ 要顯示哪幾列（與本分頁念過的句子合併、篩選、空清單提示）
+                      src/feed/feedRows.ts（純函式，#79）→ 元件只映射成 JSX
 ```
 
 ## 檔案
@@ -97,11 +101,12 @@ Grafana（panel plugin 與 dashboard 同一個 document，不是 iframe）
 | `src/module.ts` | `PanelPlugin` 註冊。**缺 `.setDataSupport({alertStates:true})` 的話 `alertState` 恆為空** |
 | `src/panelOptions.ts` | panel 設定。承自舊架構 `config.ts` 的環境變數清單 |
 | `src/director/BroadcastDirector.ts` | **導播**（#58）。取告警結果 → 別名前置正規化 → 嚴重度門檻 → 去重防洪 → `BroadcastPlan` → 決定交給 speaker 的內容，整條管線在這一支。**不依賴 React**（不 import `react`、不碰 DOM，時鐘與來源層注入），所以它的單元測試不 render 任何東西。先前靠 effect 宣告順序維持的三條不變量改由明確的呼叫順序與狀態保證（檔頭逐條列出）。**交付閘門**（逐則：#64 的抖動抑制 → #63 的值班靜音時段；整輪：每瀏覽器靜音，排在交付之前）也在這一支，連同兩組純函式：時段解析（`parseQuietHours`／`isQuietAt`／`minuteOfDayAt`／`describeQuietHours`／`createQuietBreakLog`）與抖動（`parseFlapping`／`describeFlapping`／`createFlappingTracker`） |
-| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡 |
+| `src/components/MascotPanel.tsx` | 接線 + 呈現。panel props → 導播，導播結果 → feed／表情／播報器；另含 avatar、靜音（ADR-007）、跨 panel 互動與播報紀錄的 UI。導播本體自 #58 起不在這裡，feed 的合併／篩選／空清單判斷自 #79 起也不在這裡（`src/feed/feedRows.ts`，元件只映射成 JSX） |
 | `src/sources/panelAlerts.ts` | 來源層。**唯一產生 `ParsedAlert` 的地方** |
 | `src/sources/rulesFetcher.ts` | Alerting rules 端點的正式實作。獨立成一支，好讓來源層能用假 fetcher 做單元測試 |
 | `src/sources/history.ts` | 播報紀錄的純邏輯（ADR-006）：annotation 文字解析、規則樣板填值、條件欄挑選、取名（`historyAlertNameOf`，跟著 `alertNameLabel`，#70）、`HistoryEntry[]` 組裝。組句一律走 `buildBroadcastPlan`，**不另寫一套措辭** |
 | `src/sources/historyFetcher.ts` | 紀錄的資料來源（annotations + rules + ruler 三個端點）。獨立成一支的理由同 `rulesFetcher.ts`：讓 `history.ts` 能在 jest 裡不拖進 `@grafana/runtime` 地測 |
+| `src/feed/feedRows.ts` | feed 要顯示哪幾列（#79）：本分頁念過的句子與播報紀錄的合併（同文字**而且**時間在 `SESSION_MATCH_WINDOW_MS` 內才算同一件事）、篩選（大小寫不敏感，同時比對句子與 label 值）、三種空清單提示。**純函式**：不 import React、不碰 DOM；合併與篩選只比兩個既有時間戳、不讀「現在」，唯一讀時鐘的 `formatHistoryWhen`（分辨今天）可從參數注入 |
 | `src/core/severityAliases.ts` | 嚴重度別名的解析與前置正規化（#51）。純函式、只 import `severity.ts`；格式錯誤的項目略過不拋，`describeSkippedAliases` 可回報 |
 | `src/core/` | 來源中立的核心。**從舊 push 架構整包繼承**，`ParsedAlert` 這條邊界未動；之後內部改過，例：為真實 bug 加過 `dedup.forget()`／`setWindow()`、`severity` 的缺值收斂、`format.ts` 的髒值處理與別名參數（#39、#46、#51）；#51 另新增 `severityAliases.ts`（上一列）。行數會變，別寫死 |
 | `src/speech/speaker.ts` | Web Speech 封裝。常數全部來自實測 |
