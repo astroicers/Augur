@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { LoadingState, PanelProps } from '@grafana/data';
-import { css } from '@emotion/css';
 import { useStyles2, useTheme2 } from '@grafana/ui';
 import type { MascotPanelOptions } from '../panelOptions';
 import type { BroadcastPlan, Emotion } from '../core/types';
@@ -33,13 +32,11 @@ import {
   shouldRenderSprite,
   spriteSide,
 } from '../avatar/spriteSheet';
+import { publishMuted, readMuted, watchMuted } from '../speech/muteStore';
+import { unavailableSpeaker } from '../speech/unavailableSpeaker';
+import { errorText } from '../sources/errorText';
+import { getStyles } from './MascotPanel.styles';
 
-/**
- * 每個瀏覽器自己的靜音開關（存在本機）。值班牆要出聲、座位上的人可能想安靜 —— 這不是 dashboard 的設定，
- * 是「我這台」的偏好，所以不放 panel 選項。同一個瀏覽器裡所有吉祥物 panel 共用。
- * 本機儲存可能被封鎖（無痕、清除網站資料），讀寫都包 try/catch，失敗就當作沒靜音、只在這次分頁內記得。
- */
-const MUTE_STORAGE_KEY = 'augur-mascot-panel.muted';
 /** 試聽句的 plan.name（只用來組 plan；判斷「是不是試聽」改看物件身分，見 PREVIEW_PLANS）。 */
 const PREVIEW_NAME = 'preview';
 /**
@@ -53,27 +50,8 @@ const PREVIEW_PLANS = new WeakSet<BroadcastPlan>();
  * 第一次有人點下去不該補念幾十句過時的話（複審 F2）。
  */
 const BLOCKED_REPLAY_WINDOW_MS = 10 * 60 * 1000;
-/** 同一頁其他吉祥物 panel 的靜音同步事件（同分頁）；跨分頁靠瀏覽器的 storage 事件（複審 F4）。 */
-const MUTE_EVENT = 'augur-mascot-panel:muted';
 /** 外部語音被自動播放政策擋下時，remoteSpeaker 寫在聲線標籤裡的原因字串。 */
 const AUTOPLAY_BLOCKED = 'autoplay-blocked';
-
-function readMuted(): boolean {
-  try {
-    return window.localStorage.getItem(MUTE_STORAGE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeMuted(muted: boolean): void {
-  try {
-    window.localStorage.setItem(MUTE_STORAGE_KEY, muted ? '1' : '0');
-  } catch {
-    /* 存不了就只在這次分頁內有效 */
-  }
-}
-
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
 
@@ -88,152 +66,6 @@ interface Props extends PanelProps<MascotPanelOptions> {}
  * 認得出點到哪一個 panel；看不到就把兩者限縮在自己的容器內。
  * 降級狀態顯示在畫面上 —— 不顯示的話 G-ADR004-4 沒有東西可以驗。
  */
-const getStyles = () => ({
-  wrap: css`
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    overflow: hidden;
-  `,
-  head: css`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  `,
-  chip: css`
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 999px;
-    letter-spacing: 0.02em;
-  `,
-  scopeChip: css`
-    font-size: 10px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    border: 1px solid currentColor;
-    opacity: 0.75;
-  `,
-  body: css`
-    display: flex;
-    gap: 10px;
-    flex: 1 1 auto;
-    min-height: 0;
-  `,
-  /*
-   * ⚠️ 這裡**不能**有 \`align-items: flex-start\`。
-   * 它會讓 feed 這個 flex item 收縮成內容高度，於是 \`overflow-y: auto\` 永遠不觸發 ——
-   * 在真 Grafana 上實測：602×398 的 panel 塞 20 行播報，feed 的 clientHeight 與
-   * scrollHeight 都是 950px（不可捲動），而 panel 底只到 503px，**583px 的內容被切掉且沒有捲軸**。
-   * stage 自己用 \`align-self: flex-start\` 固定在上緣，不需要父層代勞。
-   */
-  bodyStacked: css`
-    flex-direction: column;
-  `,
-  /**
-   * SP-1.8 的方形 stage。寬高由 `MascotPanel` 顯式設定（見下方 `stageSide`），
-   * **契約不新增 `setSize()`** —— SP-8.17 明文要求避免再開一次 ADR-004 決策 5 的介面異動。
-   * `aspect-ratio: 1` 是保險：顯式寬高已經是方的，但若日後有人只改一邊，這裡會把它拉回來。
-   */
-  stage: css`
-    flex: 0 0 auto;
-    aspect-ratio: 1;
-    align-self: flex-start;
-    /* SP-1.7：邊長要等於內容區，padding / border 一律為 0。 */
-    padding: 0;
-    border: 0;
-    box-sizing: border-box;
-  `,
-  /** feed 欄：篩選框、提示與紀錄清單。min-width/min-height 歸零的理由同下方 feed。 */
-  feedCol: css`
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  `,
-  filter: css`
-    font: inherit;
-    font-size: 12px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    border: 1px solid rgba(127, 127, 127, 0.4);
-    background: transparent;
-    color: inherit;
-  `,
-  notice: css`
-    font-size: 11px;
-    opacity: 0.75;
-  `,
-  feed: css`
-    flex: 1 1 auto;
-    min-width: 0;
-    /* flex item 的預設 min-height 是 auto（＝內容高度），不歸零的話 overflow 不會生效。 */
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
-  `,
-  line: css`
-    display: flex;
-    gap: 6px;
-    align-items: baseline;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: rgba(127, 127, 127, 0.1);
-  `,
-  when: css`
-    font-family: ui-monospace, monospace;
-    font-size: 10px;
-    opacity: 0.6;
-    flex-shrink: 0;
-  `,
-  /*
-   * 「這句為什麼沒念」的標記（#81）。**自己一個 class，不動上面的 `line`** ——
-   * 沒有 `suppressed` 的列要與先前逐字相同（AC-1），而 `line` 是每一列共用的。
-   *
-   * `flex-shrink: 0` ＋ `white-space: nowrap`：窄面板（:701 的切換點之下改成上下堆疊）
-   * 時標記不折成兩行、也不被句子擠掉；句子本身是 flex item 裡的文字，照樣自己換行，
-   * 所以擠的時候是句子多佔幾行而不是標記破版。檔頭 :78 那段 feed 的 overflow 踩坑
-   * 與這裡無關（那是高度，這裡只動一列之內的水平配置）。
-   */
-  suppressedMark: css`
-    font-size: 10px;
-    font-weight: 600;
-    padding: 0 5px;
-    border-radius: 999px;
-    border: 1px solid currentColor;
-    opacity: 0.8;
-    flex-shrink: 0;
-    white-space: nowrap;
-  `,
-  empty: css`
-    opacity: 0.55;
-    font-size: 12px;
-    font-style: italic;
-  `,
-  btn: css`
-    font: inherit;
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    border: 1px solid currentColor;
-    background: transparent;
-    color: inherit;
-    /* 清單是空的時候匯出鈕是 disabled（#80 AC-4）—— 停用要看得出來，否則按不動像壞掉。 */
-    &:disabled {
-      cursor: not-allowed;
-      opacity: 0.45;
-    }
-  `,
-});
-
 export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height }) => {
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
@@ -249,6 +81,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
 
   const [feed, setFeed] = useState<FeedLine[]>([]);
   // 靜音：state 給畫面，ref 給播報 effect 讀（不讓開關變動去重跑那個 effect）。
+  // 本機儲存與同頁／跨分頁的同步在 `src/speech/muteStore.ts`（ADR-007：鍵名與事件名是相容面）。
   const [muted, setMuted] = useState<boolean>(readMuted);
   const mutedRef = useRef(muted);
   // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。導播已把它們記為念過，
@@ -965,27 +798,14 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       }
       const next = !mutedRef.current;
       applyMuted(next);
-      writeMuted(next);
-      window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: next }));
+      // 寫本機 + 通知同頁其他吉祥物 panel（鍵名、事件名與寫入失敗的退路都在 muteStore）。
+      publishMuted(next);
     },
     [applyMuted, voiceName]
   );
 
-  // 同頁其他吉祥物 panel 按了開關（MUTE_EVENT），或另一個分頁改了本機儲存（storage 事件）：跟著同步。
-  useEffect(() => {
-    const onMute = (e: Event) => applyMuted(Boolean((e as CustomEvent<boolean>).detail));
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === MUTE_STORAGE_KEY) {
-        applyMuted(e.newValue === '1');
-      }
-    };
-    window.addEventListener(MUTE_EVENT, onMute);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener(MUTE_EVENT, onMute);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [applyMuted]);
+  // 同頁其他吉祥物 panel 按了開關，或另一個分頁改了本機儲存：跟著同步（訂閱與過濾條件在 muteStore）。
+  useEffect(() => watchMuted(applyMuted), [applyMuted]);
   // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
   const preview = useCallback(() => {
     speakerRef.current?.unlock();
@@ -1202,9 +1022,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
               aria-label="篩選播報紀錄"
             />
           )}
-          {historyError && (
-            <span className={styles.notice}>讀不到告警歷史：{historyError}。只顯示本分頁的播報。</span>
-          )}
+          {historyError && <span className={styles.notice}>讀不到告警歷史：{historyError}。只顯示本分頁的播報。</span>}
           {history?.truncated === 'display' && (
             <span className={styles.notice}>只顯示最新 {HISTORY_DISPLAY_LIMIT} 條，要看更早的請縮小時間範圍。</span>
           )}
@@ -1258,27 +1076,4 @@ function downloadTextFile(text: string, filename: string, type: string): void {
   // 立刻 revoke 在部分瀏覽器會把還沒開始的下載取消掉，所以排到下一個 task 再回收 ——
   // 不回收的話這個 blob 會活到分頁關掉為止（匯出鈕是可以連按的）。
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-/** 錯誤物件 → 給人看的一行原因。backendSrv 丟出來的是 `{ status, statusText, data: { message } }`。 */
-function errorText(e: unknown): string {
-  if (e instanceof Error) {
-    return e.message;
-  }
-  const r = e as { status?: number; statusText?: string; data?: { message?: string } } | undefined;
-  const parts = [r?.status, r?.statusText, r?.data?.message].filter((x) => x !== undefined && x !== '');
-  return parts.length ? parts.join(' ') : '未知錯誤';
-}
-
-/** 沒有 speechSynthesis 的環境裡，外部語音降級時的接手者：每一則都直接報錯，佇列照走。 */
-function unavailableSpeaker(ev: SpeakerEvents): Speaker {
-  return {
-    unlock() {},
-    enqueue: (plan) => ev.onError?.('no-speech-synthesis', plan),
-    pending: () => 0,
-    isSpeaking: () => false,
-    stop() {},
-    voiceName: () => null,
-    dispose() {},
-  };
 }
