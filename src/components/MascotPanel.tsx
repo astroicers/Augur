@@ -15,6 +15,7 @@ import type { AlertStateLike } from '../sources/panelAlerts';
 import { fetchPanelRules } from '../sources/rulesFetcher';
 import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
 import { fetchPanelHistory } from '../sources/historyFetcher';
+import { buildFeedRows, type FeedLine } from '../feed/feedRows';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
 import { watchDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
@@ -30,14 +31,6 @@ import {
   shouldRenderSprite,
   spriteSide,
 } from '../avatar/spriteSheet';
-
-/**
- * 本分頁念過的一句，和紀錄裡同文字的一筆，時間差多少以內算「同一件事」。
- * 紀錄時間是 Grafana 評估出狀態變化的時刻；panel 要到下一次 refresh 才念，所以念出時刻會晚一些
- * （refresh 間隔＋評估間隔）。窗開寬一點無妨：同一條規則在十分鐘內又出現同一句，本來就是同一類事件。
- * 上限：refresh 間隔超過 10 分鐘時，同一事件可能同時出現一列紀錄列與一列本分頁列 —— 只是重複，資訊不錯。
- */
-const SESSION_MATCH_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * 每個瀏覽器自己的靜音開關（存在本機）。值班牆要出聲、座位上的人可能想安靜 —— 這不是 dashboard 的設定，
@@ -214,14 +207,6 @@ const getStyles = () => ({
     color: inherit;
   `,
 });
-
-interface FeedLine {
-  key: string;
-  when: string;
-  /** 念出的時刻（epoch ms）。紀錄模式要拿它和紀錄的時間比，判斷「這一句是不是已經在紀錄裡」。 */
-  at: number;
-  plan: BroadcastPlan;
-}
 
 export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height }) => {
   const styles = useStyles2(getStyles);
@@ -986,52 +971,18 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     speakerRef.current?.enqueue(plan);
   }, [alertLang]);
 
+  // 顯示哪幾列（合併、篩選、空清單判斷）全在 `buildFeedRows`（#79）——這裡只把結果映射成 JSX。
   // 紀錄模式顯示告警歷史（ADR-006）；讀不到時退回本分頁念過的句子（決策 7）。
   const renderFeedLines = () => {
-    if (history) {
-      const q = historyFilter.trim().toLowerCase();
-      // 本分頁念過、但紀錄裡沒有的句子：典型是範圍開始前就在燒的告警 —— 載入時照樣念，
-      // 但那次狀態變化不在範圍內。不補上就會「念了、清單上卻找不到」。它們是剛念的，排在最上面。
-      // 「已經在紀錄裡」要同文字**而且時間對得上**：紀錄時間在念出時刻前後的窗內。
-      // 只比文字的話，數值沒變的 firing 或沒有數值的 resolved，會被幾小時前同文字的舊紀錄吃掉（複審 L3）。
-      const sessionOnly = feed.filter(
-        (l) => !history.entries.some((e) => e.text === l.plan.text && Math.abs(e.time - l.at) <= SESSION_MATCH_WINDOW_MS)
-      );
-      const rows = [
-        ...sessionOnly.map((l) => ({
-          key: l.key,
-          origin: 'session',
-          when: l.when,
-          text: l.plan.text,
-          search: l.plan.text.toLowerCase(),
-        })),
-        ...history.entries.map((e) => ({
-          key: e.key,
-          origin: 'history',
-          when: formatWhen(e.time),
-          text: e.text,
-          search: e.search,
-        })),
-      ];
-      const shown = q ? rows.filter((r) => r.search.includes(q)) : rows;
-      if (!shown.length) {
-        return <span className={styles.empty}>{q ? '沒有符合的紀錄。' : '這段時間範圍內沒有播報紀錄。'}</span>;
-      }
-      // data-origin 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。
-      return shown.map((r) => (
-        <div key={r.key} className={styles.line} data-origin={r.origin}>
-          <span className={styles.when}>{r.when}</span>
-          <span>{r.text}</span>
-        </div>
-      ));
+    const { rows, emptyText } = buildFeedRows(feed, history, historyFilter);
+    if (emptyText !== null) {
+      return <span className={styles.empty}>{emptyText}</span>;
     }
-    if (!feed.length) {
-      return <span className={styles.empty}>尚無播報。持續 firing 只會念一次 —— 那是 dedup 在生效。</span>;
-    }
-    return feed.map((l) => (
-      <div key={l.key} className={styles.line} data-origin="session">
-        <span className={styles.when}>{l.when}</span>
-        <span>{l.plan.text}</span>
+    // data-origin 讓探測與測試分得出「紀錄列」與「本分頁念過的列」（複審 H1）。
+    return rows.map((r) => (
+      <div key={r.key} className={styles.line} data-origin={r.origin}>
+        <span className={styles.when}>{r.when}</span>
+        <span>{r.text}</span>
       </div>
     ));
   };
@@ -1179,12 +1130,6 @@ function errorText(e: unknown): string {
   const r = e as { status?: number; statusText?: string; data?: { message?: string } } | undefined;
   const parts = [r?.status, r?.statusText, r?.data?.message].filter((x) => x !== undefined && x !== '');
   return parts.length ? parts.join(' ') : '未知錯誤';
-}
-
-/** 今天的紀錄只顯示時間；更早的連日期一起顯示，翻舊紀錄時才分得出是哪一天。 */
-function formatWhen(time: number): string {
-  const d = new Date(time);
-  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString() : d.toLocaleString();
 }
 
 /** 沒有 speechSynthesis 的環境裡，外部語音降級時的接手者：每一則都直接報錯，佇列照走。 */
