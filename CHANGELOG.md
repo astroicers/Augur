@@ -18,10 +18,12 @@ in what the mascot shows and says.
 
 - A row that was held back now says so: **抖動中，未念** (flapping suppression) or
   **靜音時段，未念** (quiet hours). Hover it for the reason. Rows that were spoken look exactly
-  as before. Only rows from this tab can carry the mark: the record comes from Grafana's own
-  history, which does not know whether this tab spoke.
+  as before. When the same event also appears in the record list, the record row carries the
+  mark. Events from before this tab was opened carry none: only this tab knows what it held
+  back.
 - In the panel editor, a line now lists the **嚴重度別名** entries that were skipped and why.
-  Before, a typo in that option failed silently. The line never shows on a wall screen.
+  Before, a typo in that option failed silently. The line shows only while you edit that
+  panel, never on a wall screen. A panel with no query at all does not get it.
 
 ### Changes
 
@@ -41,7 +43,7 @@ in what the mascot shows and says.
 
 - The list rows, the voice switch, the replay queue for refused sentences, the per-browser mute
   storage and the panel styles each moved out of the panel component into their own module
-  with tests. The component went from 1,284 to 1,031 lines. Unit tests went from 632 to 834.
+  with tests. The component went from 1,284 to 1,026 lines. Unit tests went from 632 to 878.
 - Files left over from the abandoned AIRI design were removed from the repository: the root
   `.env.example`, `docs/sample-grafana-firing.json`, `avatar/` and `live2d/_archive/`.
 
