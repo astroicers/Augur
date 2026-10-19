@@ -363,8 +363,13 @@ describe('#99：被抑制的標記在合併時轉到紀錄列（真實部署幾�
   test('AC-2：同文字但時間在合併窗外 → 兩列都留，紀錄列不帶標記（久遠的紀錄不被誤標）', () => {
     // 這一條堵的是另一條「讓標記出現」的達成路徑：把比對窗放寬。
     // 比對鍵與窗長一律不動，只改「留下的那一列帶誰的 suppressed」。
+    //
+    // **窗外那一刻寫死成字面值（11 分鐘）而不是從 `SESSION_MATCH_WINDOW_MS` 算**（QA #99）：
+    // 寫成 `T0 - SESSION_MATCH_WINDOW_MS - 1` 的話，輸入會跟著常數一起動 —— 窗放寬到幾小時
+    // 這支照樣綠，等於沒堵到它要堵的那條路。實測過：把窗改成 30 分鐘，全庫 846 支一支都不紅。
+    // 這裡斷言的是行為（「十分鐘前念的那一句，和現在這筆紀錄不是同一件事」），不是抄常數。
     const l = held('同一句話、不同次事件', T0, 'quiet');
-    const rec = entry(l.plan.text, T0 - SESSION_MATCH_WINDOW_MS - 1);
+    const rec = entry(l.plan.text, T0 - 11 * 60_000);
     const { rows } = buildFeedRows([l], history([rec]), '', when);
     expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([
       ['session', 'quiet'],
@@ -390,6 +395,18 @@ describe('#99：被抑制的標記在合併時轉到紀錄列（真實部署幾�
     expect(buildFeedRows([near, far], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
     // feed 的順序不影響結果（「最接近」是時間上的，不是陣列位置）。
     expect(buildFeedRows([far, near], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
+  });
+
+  test('多對一：兩句與紀錄等距 → 取 feed 裡較前面的（呼叫端維持「新的在前」，即較新的）', () => {
+    // 平手規則是本票自己裁定的（原始碼註解寫著「同距離取 feed 裡較前面的」），
+    // 所以要有一支釘住它：沒有的話「先到先得」改成「後到覆蓋」也照樣綠。
+    const earlier = held('同一件事', T0 - 60_000, 'quiet');
+    const later = held('同一件事', T0 + 60_000, 'flapping');
+    const rec = entry(earlier.plan.text, T0);
+    expect(buildFeedRows([earlier, later], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
+    expect(buildFeedRows([later, earlier], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual([
+      'flapping',
+    ]);
   });
 
   test('多對一：最接近的那一句其實念了 → 不從較遠的那一句撿一個原因來標', () => {
