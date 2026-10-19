@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.4.0 — 2026-10-19
+
+No new options. Panels configured for 0.3.0 keep working as they are; the changes below are
+in what the mascot shows and says.
+
+### Take the record with you
+
+- New button **匯出 CSV** next to the voice switch. It downloads the rows currently in the list,
+  after the filter is applied, as a CSV with three columns: time (ISO 8601, UTC), source
+  (record or this tab), and the sentence. Commas, quotes and line breaks are escaped. Cells
+  starting with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading `'`, so a
+  spreadsheet does not run them as formulas. The file name carries the dashboard uid, the
+  panel id and the time. The button is greyed out while the list is empty.
+
+### See why something was not spoken
+
+- A row that was held back now says so: **抖動中，未念** (flapping suppression) or
+  **靜音時段，未念** (quiet hours). Hover it for the reason. Rows that were spoken look exactly
+  as before. Only rows from this tab can carry the mark: the record comes from Grafana's own
+  history, which does not know whether this tab spoke.
+- In the panel editor, a line now lists the **嚴重度別名** entries that were skipped and why.
+  Before, a typo in that option failed silently. The line never shows on a wall screen.
+
+### Changes
+
+- **靜音時段內仍念 critical**: when a critical alert breaks the quiet hours, its recovery is now
+  spoken too, within the same quiet window. In 0.3.0 the recovery stayed silent.
+- **告警名稱取自哪個 label**: changing this option now re-speaks only the alerts whose name
+  actually changed. Alerts without that label, and switching between empty and `alertname`,
+  re-speak nothing. In 0.3.0 every firing alert was spoken again.
+
+### Correction to the 0.3.0 notes
+
+- 0.3.0 said that once a flapping alert stays in one state for a full window, the mascot speaks
+  its current state. More precisely: it speaks only if that state differs from the last one it
+  announced. If they match, it stays quiet. The hover text on the new mark says this.
+
+### Under the hood
+
+- The list rows, the voice switch, the replay queue for refused sentences, the per-browser mute
+  storage and the panel styles each moved out of the panel component into their own module
+  with tests. The component went from 1,284 to 1,031 lines. Unit tests went from 632 to 834.
+- Files left over from the abandoned AIRI design were removed from the repository: the root
+  `.env.example`, `docs/sample-grafana-firing.json`, `avatar/` and `live2d/_archive/`.
+
 ## 0.3.0 — 2026-10-16
 
 Every new option below is off or empty by default. Leaving them that way keeps the panel
