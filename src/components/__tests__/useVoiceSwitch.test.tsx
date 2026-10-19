@@ -204,14 +204,18 @@ describe('#83 AC-3：ADR-007 決策 1 —— 每瀏覽器靜音（不經替身�
     expect(btn().textContent).toBe('on');
   });
 
-  test('卸載後同頁事件不再改狀態（訂閱有解除）', () => {
-    const { view } = mount();
+  test('卸載後同頁事件不再走進 applyMuted —— 播報器沒被停、元件那一側沒被收尾（訂閱有解除）', () => {
+    const { view, sp, calls } = mount();
     view.unmount();
-    expect(() =>
-      act(() => {
-        window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: true }));
-      })
-    ).not.toThrow();
+    act(() => {
+      window.dispatchEvent(new CustomEvent<boolean>(MUTE_EVENT, { detail: true }));
+    });
+    // ⚠️ 不能只斷言「不拋」：React 18 對卸載後的 setState 是**靜默** no-op，
+    // 所以訂閱漏掉沒解除時那一形照樣不拋（實測：拿掉 useEffect 的 cleanup，0 支轉紅）。
+    // 驗得到的是 applyMuted 的**副作用**有沒有發生 —— 那幾支是注入進來的，卸載後也還活著。
+    expect(sp.calls.stop).toBe(0);
+    expect(calls.silenced).toBe(0);
+    expect(calls.pending).toEqual([]);
   });
 
   test('本機儲存讀寫丟例外時照樣能用（預設語音開，切換仍生效）', () => {
