@@ -20,6 +20,7 @@ import { FEED_CSV_MIME, feedCsvFilename, feedRowsToCsv } from '../feed/feedCsv';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
 import { watchDashboardDom, type DashboardDom } from '../dom/dashboardPanels';
+import { downloadTextFile } from '../dom/downloadTextFile';
 import { DiagnosticAvatar } from '../avatar/DiagnosticAvatar';
 import { CLICK_REACTION_MS, SpriteController } from '../avatar/SpriteController';
 import type { AvatarController } from '../avatar/AvatarController';
@@ -1012,7 +1013,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
  * **放在元件外面**是刻意的：它要讀「現在」（檔名的時間戳），而「現在」只有在按下去的那一刻
  * 才該被讀 —— 寫在 render 裡的話那是個會讓 render 不純的呼叫（react-hooks 的 purity 規則也會擋）。
  * 這一支自己不決定任何格式：CSV 的內容與檔名在 `src/feed/feedCsv.ts`（純函式、有自己的單元測試），
- * DOM 的部分在下面那一支。
+ * DOM 的部分在 `src/dom/downloadTextFile.ts`（#101 從本檔搬過去）。
  *
  * 零列時直接回頭不下載空檔（#80 AC-4）。畫面上按不到這條路：清單是空的時候按鈕是 disabled；
  * 這道早退是第二層，免得日後有人把 `disabled` 拿掉就靜默下載一份只有標題列的檔案。
@@ -1022,26 +1023,4 @@ function exportFeedRowsAsCsv(rows: readonly FeedRow[], dashboardUid: string | un
     return;
   }
   downloadTextFile(feedRowsToCsv(rows), feedCsvFilename({ dashboardUid, panelId, at: Date.now() }), FEED_CSV_MIME);
-}
-
-/**
- * 把一段文字當檔案下載下來（匯出 CSV 的唯一一處 DOM 動作，#80）。
- *
- * **刻意與 `feedRowsToCsv` 分開**（AC-3）：「CSV 長什麼樣」是純函式的事、有自己的單元測試；
- * 這裡只有 Blob + `a[download]`。零後端（ADR-004）—— 檔案在瀏覽器裡生出來，沒有任何網路請求，
- * `createObjectURL` 的 `blob:` URL 也不會離開這個分頁。
- */
-function downloadTextFile(text: string, filename: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  // Firefox 要求這個 a 在 document 裡才會觸發下載；`display:none` ＋ 立刻移走，畫面上看不到它。
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // 立刻 revoke 在部分瀏覽器會把還沒開始的下載取消掉，所以排到下一個 task 再回收 ——
-  // 不回收的話這個 blob 會活到分頁關掉為止（匯出鈕是可以連按的）。
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }

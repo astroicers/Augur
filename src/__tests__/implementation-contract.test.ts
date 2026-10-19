@@ -134,3 +134,26 @@ test('#100：import @grafana/runtime 的生產碼只有指定的那幾支薄檔'
     'src/sources/rulesFetcher.ts',
   ]);
 });
+
+/**
+ * #101：下載動作（`a[download]` ＋ object URL）全專案只有 `src/dom/downloadTextFile.ts` 一處。
+ *
+ * 這條規則本來也只寫在散文裡（`docs/ARCHITECTURE.md`：「全專案唯一一處下載動作」）。#101 之後
+ * 它變成**行為上的**約束而不只是整潔：那一支在點擊派送期間於 window 的捕獲階段掛了屏蔽，
+ * 頁面層的連結攔截器才收不到這個點擊（否則檔名退回 blob 路徑的 uuid）。任何在別處直接寫
+ * `createElement('a')` ＋ `a.download = …` 的新下載都會**靜默地**少掉那道屏蔽 ——
+ * 測試不會紅、typecheck 不會紅，只有真的在 Grafana 頁面上按下去才看得出來。
+ */
+test('#101：寫 a.download 與 URL.createObjectURL 的生產碼只有 src/dom/downloadTextFile.ts', () => {
+  const hits: string[] = [];
+  for (const f of srcFiles()) {
+    const code = fs
+      .readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    if (/\.download\s*=/.test(code) || /URL\.createObjectURL/.test(code)) {
+      hits.push(path.relative(ROOT, f).split(path.sep).join('/'));
+    }
+  }
+  expect(hits.sort()).toEqual(['src/dom/downloadTextFile.ts']);
+});
