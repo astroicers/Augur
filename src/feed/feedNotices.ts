@@ -78,9 +78,12 @@ export function suppressedMark(reason: SuppressReason, lang: AlertLang): Suppres
 export const PANEL_EDITOR_APP = 'panel-editor';
 
 /**
- * 現在是不是在編輯模式。
+ * `data.request?.app` 是不是編輯器那個值。
  *
- * ⚠️ **判定來源是 `data.request?.app`，而 `data.request` 在真實部署裡會缺**
+ * ⚠️ **這一支只是聯集裡的一個訊號，不要單獨當「在不在編輯模式」用** —— 它在
+ * Grafana 12.4.12 實測不成立（#100），判定請走下面的 `isPanelEditing`。
+ *
+ * ⚠️ **`data.request` 在真實部署裡會缺**
  * （`MascotPanel.tsx` 的 dashboard uid 那兩處註解記著 12.3.x 實測過的同一件事）。
  * panel plugin 拿不到現成的 `isEditing` 布林，`props.data.request.app` 是公開型別
  * （`@grafana/data` 的 `DataQueryRequest`）上唯一說得出「誰發起這次查詢」的欄位。
@@ -91,6 +94,56 @@ export const PANEL_EDITOR_APP = 'panel-editor';
  */
 export function isPanelEditor(app: unknown): boolean {
   return app === PANEL_EDITOR_APP;
+}
+
+/**
+ * 網址上的 `editPanel` 查詢參數指的是不是**本** panel（#100）。
+ *
+ * ⚠️ **查詢參數是字串、`PanelProps.id` 是數字**：`'3' === 3` 為 false，直接比會讓提示
+ * 在自己的編輯器裡也不出現 —— 那正是本票要修的症狀換一個成因。所以這裡先轉型再比。
+ *
+ * 只認**純十進位整數**（`/^\d+$/`）：`Number('')` 是 0、`Number(' 7 ')` 是 7，
+ * 用 `Number()` 當守門員的話 `?editPanel=` 這種空值會在 `id === 0` 的 panel 上誤判成編輯中。
+ * 參數缺席（`null`／`undefined`，＝網址上沒有這一個鍵）一律回 false。
+ *
+ * 本支**不讀網址** —— 參數由元件邊界的 `useEditPanelParam()` 讀進來（本檔的不變量是
+ * 「零 React、零 Grafana 相依的純文字決定」，`locationService` 來自 `@grafana/runtime`）。
+ */
+export function isEditPanelParamFor(editPanel: string | null | undefined, panelId: number): boolean {
+  return typeof editPanel === 'string' && /^\d+$/.test(editPanel) && Number(editPanel) === panelId;
+}
+
+/**
+ * 現在是不是在**編輯本 panel**（#100 取代 `isPanelEditor(data.request?.app)` 單打）。
+ *
+ * #81 當初只看 `data.request?.app === 'panel-editor'`。v0.4.0 發版前在 Grafana 12.4.12
+ * 實測（`/d/rel030?editPanel=3`，該 panel 有 Prometheus query 所以 `data.request` 存在）：
+ * **提示沒有出現** —— 12.x 的編輯器傳進來的 `app` 不是 `CoreApp.PanelEditor`。於是本支改成
+ * 兩個訊號取**聯集**：
+ *
+ *  1. `app === 'panel-editor'`（舊訊號，留著 —— 它在哪些版本成立我們只實測過它在 12.4.12
+ *     *不*成立，沒有證據說它在別處也不成立；拿掉等於多冒一次險）；
+ *  2. 網址的 `editPanel` 等於本 panel 的 `id`（12.x 的編輯器網址是 `/d/<uid>?editPanel=<id>`）。
+ *
+ * `hasRequest` 這道閘門**刻意保留**（AC-3）：`data.request` 缺席時一律回 false，即使網址上
+ * 有 `editPanel`。退化方向不變 —— 牆面螢幕上多一行設定錯誤的提示，比編輯者少看到一行糟得多。
+ * 代價誠實記下：完全沒有 query 的 panel（`data.request` 從頭到尾不存在）在編輯器裡也看不到
+ * 這一行，新訊號救不了它，因為救它就等於拆掉這道閘門。
+ */
+export function isPanelEditing(args: {
+  /** `data.request?.app`。 */
+  app: unknown;
+  /** `data.request` 這個欄位存不存在（AC-3 的閘門；缺席＝當作觀看模式）。 */
+  hasRequest: boolean;
+  /** 網址上的 `editPanel`（由元件邊界讀進來；沒有這個鍵時是 `null`）。 */
+  editPanel: string | null | undefined;
+  /** 本 panel 的 `PanelProps.id`。 */
+  panelId: number;
+}): boolean {
+  if (!args.hasRequest) {
+    return false;
+  }
+  return isPanelEditor(args.app) || isEditPanelParamFor(args.editPanel, args.panelId);
 }
 
 /**

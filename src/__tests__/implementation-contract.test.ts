@@ -102,3 +102,58 @@ test('SP-8.3：spriteAssets.ts 以 `import x from` 取兩張 png 的 URL —— 
   const imports = code.match(/^import\s+\w+\s+from\s+['"]\.\.\/img\/sprite\/(?:directions|reactions)\.png['"];?$/gm);
   expect(imports).toHaveLength(2);
 });
+
+/**
+ * #100：讀 `@grafana/runtime` 的檔案只有這幾支 —— 其餘模組要能在 jest 裡不靠替身地測。
+ *
+ * 這條規則本來只寫在散文裡（`src/sources/rulesFetcher.ts` 的檔頭：「獨立成一支是為了讓
+ * `panelAlerts.ts` 不必 import `@grafana/runtime`」）。#100 把 `locationService` 引進專案時
+ * 最容易踩的是「順手寫進 `src/feed/feedNotices.ts`」—— 那支是純文字模組，而且從此
+ * 每一個碰到它的測試都要長出本專案的第一個 `jest.mock('@grafana/runtime')`。
+ *
+ * 清單用**全等**而不是「不得包含 feedNotices」：多一支薄檔是刻意的決定，該在這裡被看見
+ * （改這份清單時請一併說明為什麼那支非 runtime 不可），少一支也會紅。
+ */
+test('#100：import @grafana/runtime 的生產碼只有指定的那幾支薄檔', () => {
+  const hits: string[] = [];
+  for (const f of srcFiles()) {
+    const code = fs
+      .readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    if (/from\s+['"]@grafana\/runtime['"]/.test(code)) {
+      hits.push(path.relative(ROOT, f).split(path.sep).join('/'));
+    }
+  }
+  expect(hits.sort()).toEqual([
+    // 編輯模式的新訊號（locationService 讀網址上的 editPanel）。
+    'src/components/useEditPanelParam.ts',
+    // 告警歷史（getBackendSrv）。
+    'src/sources/historyFetcher.ts',
+    // Alerting rules 端點（getBackendSrv）。
+    'src/sources/rulesFetcher.ts',
+  ]);
+});
+
+/**
+ * #101：下載動作（`a[download]` ＋ object URL）全專案只有 `src/dom/downloadTextFile.ts` 一處。
+ *
+ * 這條規則本來也只寫在散文裡（`docs/ARCHITECTURE.md`：「全專案唯一一處下載動作」）。#101 之後
+ * 它變成**行為上的**約束而不只是整潔：那一支在點擊派送期間於 window 的捕獲階段掛了屏蔽，
+ * 頁面層的連結攔截器才收不到這個點擊（否則檔名退回 blob 路徑的 uuid）。任何在別處直接寫
+ * `createElement('a')` ＋ `a.download = …` 的新下載都會**靜默地**少掉那道屏蔽 ——
+ * 測試不會紅、typecheck 不會紅，只有真的在 Grafana 頁面上按下去才看得出來。
+ */
+test('#101：寫 a.download 與 URL.createObjectURL 的生產碼只有 src/dom/downloadTextFile.ts', () => {
+  const hits: string[] = [];
+  for (const f of srcFiles()) {
+    const code = fs
+      .readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    if (/\.download\s*=/.test(code) || /URL\.createObjectURL/.test(code)) {
+      hits.push(path.relative(ROOT, f).split(path.sep).join('/'));
+    }
+  }
+  expect(hits.sort()).toEqual(['src/dom/downloadTextFile.ts']);
+});

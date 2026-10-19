@@ -16,6 +16,8 @@
 import React from 'react';
 import { render, act, waitFor, fireEvent } from '@testing-library/react';
 import { LoadingState, PanelProps } from '@grafana/data';
+// #100：編輯模式的新訊號走它的 memory history（jest 下不需要替身，見 useEditPanelParam.ts 檔頭）。
+import { locationService } from '@grafana/runtime';
 
 import { MascotPanel } from '../MascotPanel';
 import type { MascotPanelOptions } from '../../panelOptions';
@@ -2330,4 +2332,125 @@ test('#81 AC-3：編輯模式那一行也跟著 alertLang', async () => {
   expect(notice.textContent).toContain('2 entries skipped');
   expect(notice.textContent).toContain('no `=`');
   expect(notice.textContent).not.toContain('缺');
+});
+
+// ─── #100：別名提示在 Grafana 12 的編輯器裡要出現（data.request.app 不是 panel-editor）──
+
+/**
+ * v0.4.0 發版前在 Grafana 12.4.12 實測：`/d/rel030?editPanel=3` 的編輯器裡把
+ * `severityAliases` 寫錯，**提示沒有出現**。那個 panel 有 Prometheus query 所以
+ * `data.request` 存在 —— 可見 12.x 的編輯器傳進來的 `app` 不是 `'panel-editor'`。
+ *
+ * 這一族驗的是接線：判定改成「舊的 `app` ∪ 網址的 `editPanel` 等於本 panel 的 `id`」。
+ * 轉型與邊界（`'7'` vs `7`、`?editPanel=` 空值）由 `feedNotices.test.ts` 的
+ * `isEditPanelParamFor` 逐條釘；網址怎麼讀、怎麼訂閱由 `useEditPanelParam.test.tsx` 釘。
+ *
+ * **沒有 `jest.mock('@grafana/runtime')`**：jest 下 `locationService` 走的是 memory
+ * history，用公開的 `replace()` 擺網址就行（理由寫在 `useEditPanelParam.ts` 的檔頭）。
+ * 既有的每一支測試都在「網址是 `/`」的狀態下跑，所以一行斷言都不必改。
+ */
+describe('#100：編輯模式改看網址上的 editPanel', () => {
+  /** 寫錯的設定（兩項都會被略過），與 #81 那幾支同一份。 */
+  const BAD_ALIASES = { severityAliases: '亂寫, sev2=nonsense' };
+  /** 12.4.12 實測到的狀態：`data.request` 在，但 `app` 不是 `'panel-editor'`。 */
+  const REQUEST_NOT_EDITOR = { app: 'dashboard', dashboardUID: 'dash-1' };
+
+  afterEach(() => {
+    locationService.replace('/');
+  });
+
+  test('AC-1：網址是 /d/<uid>?editPanel=<本 panel 的 id> 時提示出現，即使 app 不是 panel-editor', async () => {
+    mockedFetch.mockResolvedValue([]);
+    // props() 的 id 是 7。這就是本票的回歸測試：修好之前這一支紅。
+    locationService.replace('/d/rel030?editPanel=7');
+    const view = render(
+      <MascotPanel {...props({ alertState: OK, request: REQUEST_NOT_EDITOR, options: BAD_ALIASES })} />
+    );
+
+    await settle();
+    const notice = view.getByTestId('alias-notice');
+    expect(notice.textContent).toContain('2 項');
+    expect(notice.textContent).toContain('亂寫');
+    expect(notice.textContent).toContain('sev2=nonsense');
+  });
+
+  test('AC-2：觀看模式（網址上沒有 editPanel）不顯示 —— 值班牆上不得多出這一行', async () => {
+    mockedFetch.mockResolvedValue([]);
+    locationService.replace('/d/rel030?from=now-6h&to=now');
+    const view = render(
+      <MascotPanel {...props({ alertState: OK, request: REQUEST_NOT_EDITOR, options: BAD_ALIASES })} />
+    );
+
+    await settle();
+    expect(view.queryByTestId('alias-notice')).toBeNull();
+  });
+
+  test('AC-2：editPanel 指向別的 panel 時不顯示（同一片牆上別人開著編輯器）', async () => {
+    mockedFetch.mockResolvedValue([]);
+    locationService.replace('/d/rel030?editPanel=8');
+    const view = render(
+      <MascotPanel {...props({ alertState: OK, request: REQUEST_NOT_EDITOR, options: BAD_ALIASES })} />
+    );
+
+    await settle();
+    expect(view.queryByTestId('alias-notice')).toBeNull();
+  });
+
+  test('AC-3：`data.request` 缺席時，連網址寫著本 panel 也不顯示（fail 方向不變）', async () => {
+    mockedFetch.mockResolvedValue([]);
+    locationService.replace('/d/rel030?editPanel=7');
+    // 沒有 query 的 panel 從頭到尾不會有 data.request。新訊號刻意救不了它 ——
+    // 救它就等於拆掉這道閘門，而牆面螢幕多一行比編輯者少一行糟。
+    const view = render(<MascotPanel {...props({ alertState: OK, options: BAD_ALIASES })} />);
+
+    await settle();
+    expect(view.queryByTestId('alias-notice')).toBeNull();
+  });
+
+  test('切進／切出編輯器時跟著變 —— 不必等 Grafana 重掛 panel（票上留言 (c)）', async () => {
+    mockedFetch.mockResolvedValue([]);
+    const panel = <MascotPanel {...props({ alertState: OK, request: REQUEST_NOT_EDITOR, options: BAD_ALIASES })} />;
+    const view = render(panel);
+    await settle();
+    expect(view.queryByTestId('alias-notice')).toBeNull();
+
+    // 同一次掛載內換網址（view.rerender 的是**同一份** props，panel 沒有被卸載）。
+    await act(async () => {
+      locationService.replace('/d/rel030?editPanel=7');
+    });
+    await waitFor(() => expect(view.queryByTestId('alias-notice')).not.toBeNull());
+
+    // 關掉編輯器：那一行要消失，否則留在牆上。
+    await act(async () => {
+      locationService.replace('/d/rel030');
+    });
+    await waitFor(() => expect(view.queryByTestId('alias-notice')).toBeNull());
+  });
+
+  test('舊訊號留著：app 是 panel-editor 而網址沒有 editPanel 時照舊顯示（聯集，不是取代）', async () => {
+    mockedFetch.mockResolvedValue([]);
+    const view = render(
+      <MascotPanel {...props({ alertState: OK, request: { app: 'panel-editor' }, options: BAD_ALIASES })} />
+    );
+
+    await settle();
+    expect(view.queryByTestId('alias-notice')).not.toBeNull();
+  });
+
+  test('編輯器裡但設定全對時仍然不顯示 —— 新訊號只改「在不在編輯模式」，不改「有沒有話要說」', async () => {
+    mockedFetch.mockResolvedValue([]);
+    locationService.replace('/d/rel030?editPanel=7');
+    const view = render(
+      <MascotPanel
+        {...props({
+          alertState: OK,
+          request: REQUEST_NOT_EDITOR,
+          options: { severityAliases: 'P1=critical, sev2=warning' },
+        })}
+      />
+    );
+
+    await settle();
+    expect(view.queryByTestId('alias-notice')).toBeNull();
+  });
 });
