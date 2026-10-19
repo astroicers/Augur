@@ -32,10 +32,10 @@ import {
   shouldRenderSprite,
   spriteSide,
 } from '../avatar/spriteSheet';
-import { publishMuted, readMuted, watchMuted } from '../speech/muteStore';
 import { unavailableSpeaker } from '../speech/unavailableSpeaker';
 import { errorText } from '../sources/errorText';
 import { getStyles } from './MascotPanel.styles';
+import { useVoiceSwitch } from './useVoiceSwitch';
 
 /** 試聽句的 plan.name（只用來組 plan；判斷「是不是試聽」改看物件身分，見 PREVIEW_PLANS）。 */
 const PREVIEW_NAME = 'preview';
@@ -45,13 +45,6 @@ const PREVIEW_NAME = 'preview';
  * 外部語音降級時回呼帶的也是同一個 plan 物件（remoteSpeaker 以物件身分轉交）。
  */
 const PREVIEW_PLANS = new WeakSet<BroadcastPlan>();
-/**
- * 補念的時間上限：被擋超過這麼久的句子不補。牆面螢幕可能好幾小時沒人點，
- * 第一次有人點下去不該補念幾十句過時的話（複審 F2）。
- */
-const BLOCKED_REPLAY_WINDOW_MS = 10 * 60 * 1000;
-/** 外部語音被自動播放政策擋下時，remoteSpeaker 寫在聲線標籤裡的原因字串。 */
-const AUTOPLAY_BLOCKED = 'autoplay-blocked';
 /** 三分鐘沒有新播報就回 calm —— 否則一則 resolved 播完，臉會頂著閃光停在那裡直到下一次告警。 */
 const EMOTION_DECAY_MS = 3 * 60 * 1000;
 
@@ -80,13 +73,6 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const flapRef = useRef<FlapDriver | null>(null);
 
   const [feed, setFeed] = useState<FeedLine[]>([]);
-  // 靜音：state 給畫面，ref 給播報 effect 讀（不讓開關變動去重跑那個 effect）。
-  // 本機儲存與同頁／跨分頁的同步在 `src/speech/muteStore.ts`（ADR-007：鍵名與事件名是相容面）。
-  const [muted, setMuted] = useState<boolean>(readMuted);
-  const mutedRef = useRef(muted);
-  // 被瀏覽器以 not-allowed 擋下的告警句（使用者還沒在頁面上互動過）。導播已把它們記為念過，
-  // 不留下來的話就永遠不會再念；使用者按「點一下啟用語音」時重送。試聽句不收（那不是告警）。
-  const blockedRef = useRef<Array<{ plan: BroadcastPlan; at: number }>>([]);
   // ADR-006：播報紀錄。history 有值＝紀錄模式；historyError 有值＝降級回本分頁 feed（決策 7）。
   const [history, setHistory] = useState<HistoryResult | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -115,9 +101,6 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const [stateSeenAt, setStateSeenAt] = useState<string | null>(null);
   /** 播報器挑到的聲線名稱（onVoice 回報）；null = 引擎預設。 */
   const [voiceName, setVoiceName] = useState<string | null>(null);
-  // 使用者已經為「外部語音被擋」按過一次的那個聲線標籤。標籤要等下一次外部語音成功才會改回，
-  // 不記下來的話按鈕會一直停在「點一下啟用語音」、按不到靜音（第二輪複審 N1）。標籤一旦不再是被擋，就清掉。
-  const [autoplayAck, setAutoplayAck] = useState<string | null>(null);
   /** 目前送給 avatar 的反應種類。只在它**改變**時才呼叫 setReaction。 */
   const reactionRef = useRef<'click' | 'pending' | null>(null);
   /**
@@ -223,6 +206,41 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   useEffect(() => {
     speakingRef.current = speaking;
   }, [speaking]);
+
+  // ---- 語音開關（ADR-007）----
+  //
+  // 狀態、同頁／跨分頁同步與補念觸發全在 `useVoiceSwitch`（#83）；補念佇列的三條行為
+  // （窗內、同名只留最後一則、取出後清空）在不 import React 的 `speech/blockedQueue.ts`。
+  // 本檔這一側只剩三個接線函式 —— 它們全都只碰 ref 與 setState，所以 `useCallback([])`
+  // 是**真的**穩定，靜音的訂閱因此只掛一次。
+  //
+  // ⚠️ 宣告位置在 `speakingRef` 之後、avatar mount effect 之前：`silenceAvatar` 會寫
+  // `speakingRef`，而 hook 自己那個 effect 只訂閱事件、不碰 avatar，排在哪都一樣。
+  const currentSpeaker = useCallback(() => speakerRef.current, []);
+  /** 切到靜音時的收尾（播報器自己的 stop() 由 hook 呼叫）。 */
+  const silenceAvatar = useCallback(() => {
+    flapRef.current?.stop();
+    avatarRef.current?.setMouthOpen?.(0);
+    avatarRef.current?.setSpeaking(false);
+    speakingRef.current = false;
+    setSpeaking(false);
+  }, []);
+  const clearSpeechErr = useCallback(() => setSpeechErr(null), []);
+  const {
+    muted,
+    blocked: voiceBlocked,
+    isMuted,
+    recordBlocked,
+    noteVoiceName,
+    toggle: toggleVoice,
+  } = useVoiceSwitch({
+    speaker: currentSpeaker,
+    voiceName,
+    speechErr,
+    onSilenced: silenceAvatar,
+    onPending: setPending,
+    onReplay: clearSpeechErr,
+  });
 
   /**
    * `alertState.state` 的原值。
@@ -483,23 +501,26 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const directorRef = useRef<BroadcastDirector | null>(null);
   /** 手上那個導播是為哪一個 panel id 建的（`id` 變了要換一個新的，連 source 與 dedup 一起）。 */
   const directorPanelRef = useRef<number | null>(null);
-  const directorFor = useCallback((panelId: number): BroadcastDirector => {
-    const held = directorRef.current;
-    if (held && directorPanelRef.current === panelId) {
-      return held;
-    }
-    held?.dispose();
-    const next = createBroadcastDirector({
-      createSource: panelAlertSource(panelId, fetchPanelRules),
-      // 播報器與靜音都是**交付當下才讀**：換語音選項（重建播報器）或按靜音，
-      // 都不該動到導播手上的 source／dedup。
-      speaker: () => speakerRef.current,
-      muted: () => mutedRef.current,
-    });
-    directorRef.current = next;
-    directorPanelRef.current = panelId;
-    return next;
-  }, []);
+  const directorFor = useCallback(
+    (panelId: number): BroadcastDirector => {
+      const held = directorRef.current;
+      if (held && directorPanelRef.current === panelId) {
+        return held;
+      }
+      held?.dispose();
+      const next = createBroadcastDirector({
+        createSource: panelAlertSource(panelId, fetchPanelRules),
+        // 播報器與靜音都是**交付當下才讀**：換語音選項（重建播報器）或按靜音，
+        // 都不該動到導播手上的 source／dedup。
+        speaker: () => speakerRef.current,
+        muted: isMuted,
+      });
+      directorRef.current = next;
+      directorPanelRef.current = panelId;
+      return next;
+    },
+    [isMuted]
+  );
 
   // 卸載時收掉導播。只有 cleanup、沒有 mount 行為，所以與其他 effect 的宣告順序無關。
   useEffect(
@@ -521,9 +542,8 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     const events: SpeakerEvents & { onMouth?: (open: number) => void } = {
       onVoice: (name) => {
         setVoiceName(name);
-        if (!(name ?? '').includes(AUTOPLAY_BLOCKED)) {
-          setAutoplayAck(null);
-        }
+        // 標籤一旦不再是「被擋」，hook 會把「已確認」清掉 —— 之後再被擋會再提示（N1）。
+        noteVoiceName(name);
       },
       // ⚠️ plan 必須用起來。先前寫成 `onStart: () => {}` 把它丟掉，
       // 結果一批三則時臉會定在 plans[0] 的情緒長達 42 秒（實測語速 5.6 字/秒、
@@ -553,14 +573,9 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         }
       },
       onError: (e, plan) => {
+        // 試聽句不收（那不是告警，F7 以**物件身分**判斷）。窗內過濾與同名去重在 blockedQueue。
         if (e === 'not-allowed' && plan && !PREVIEW_PLANS.has(plan)) {
-          // 寫入時就修剪（第二輪複審 N2）：丟掉超出補念時限的、同一則告警只留最新一筆。
-          // 沒人點的牆面螢幕配上重播間隔時，清單才不會一直長。
-          const now = Date.now();
-          blockedRef.current = [
-            ...blockedRef.current.filter((b) => b.at >= now - BLOCKED_REPLAY_WINDOW_MS && b.plan.name !== plan.name),
-            { plan, at: now },
-          ];
+          recordBlocked(plan);
         }
         setSpeechErr(e);
         flapRef.current?.stop();
@@ -609,7 +624,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
       speakingRef.current = false;
       setSpeaking(false);
     };
-  }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate, ttsEndpoint, ttsTimeoutSec]);
+  }, [enableTTS, ttsVoice, alertLang, ttsPitch, ttsRate, ttsEndpoint, ttsTimeoutSec, noteVoiceName, recordBlocked]);
 
   useEffect(() => {
     // D10：載入中或查詢失敗時 data.series 可能是空的。在 threshold 路徑上
@@ -748,64 +763,6 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, id, minSeverity, alertLang, speakValue, severityAliasSpec]);
 
-  // 套用靜音狀態（本 panel 的按鈕、同頁其他 panel、或其他分頁都會走這裡）。
-  // 切到靜音：停掉正在念與排隊中的、嘴型驅動也停、嘴型歸零（stop 之後不會再有 onEnd，複審 F1）。
-  // 切回開：叫醒引擎。同頁同步是在同一個 click 事件裡同步派送，仍算使用者手勢。
-  const applyMuted = useCallback((next: boolean) => {
-    if (mutedRef.current === next) {
-      return;
-    }
-    mutedRef.current = next;
-    setMuted(next);
-    const sp = speakerRef.current;
-    if (next) {
-      blockedRef.current = [];
-      sp?.stop();
-      flapRef.current?.stop();
-      avatarRef.current?.setMouthOpen?.(0);
-      avatarRef.current?.setSpeaking(false);
-      speakingRef.current = false;
-      setSpeaking(false);
-      setPending(sp?.pending() ?? 0);
-    } else {
-      sp?.unlock();
-    }
-  }, []);
-
-  const toggleVoice = useCallback(
-    (blocked: boolean) => {
-      const sp = speakerRef.current;
-      if (blocked) {
-        // 瀏覽器擋著：這一下是使用者手勢，叫醒引擎、補念被擋的句子，狀態維持「開」（不是切成靜音）。
-        // 補念只取最近 10 分鐘內的；同一則告警只留最後的狀態（被擋期間已恢復的就只念恢復句）（複審 F2）。
-        sp?.unlock();
-        if ((voiceName ?? '').includes(AUTOPLAY_BLOCKED)) {
-          setAutoplayAck(voiceName);
-        }
-        const cutoff = Date.now() - BLOCKED_REPLAY_WINDOW_MS;
-        const recent = blockedRef.current.filter((b) => b.at >= cutoff);
-        blockedRef.current = [];
-        const lastIndex = new Map<string, number>();
-        recent.forEach((b, i) => lastIndex.set(b.plan.name, i));
-        setSpeechErr(null);
-        recent.forEach((b, i) => {
-          if (lastIndex.get(b.plan.name) === i) {
-            sp?.enqueue(b.plan);
-          }
-        });
-        setPending(sp?.pending() ?? 0);
-        return;
-      }
-      const next = !mutedRef.current;
-      applyMuted(next);
-      // 寫本機 + 通知同頁其他吉祥物 panel（鍵名、事件名與寫入失敗的退路都在 muteStore）。
-      publishMuted(next);
-    },
-    [applyMuted, voiceName]
-  );
-
-  // 同頁其他吉祥物 panel 按了開關，或另一個分頁改了本機儲存：跟著同步（訂閱與過濾條件在 muteStore）。
-  useEffect(() => watchMuted(applyMuted), [applyMuted]);
   // 試聽：用目前的聲線、音高、語速念一句固定的話，方便在 panel 編輯畫面調聲音。
   const preview = useCallback(() => {
     speakerRef.current?.unlock();
@@ -882,12 +839,6 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
   const customSprite = useSprite && (directionsImgUrl.trim() !== '' || reactionsImgUrl.trim() !== '');
   // 「啟用語音」鈕的門檻與 stage 的門檻各自獨立、不共用（SP-1.8 末段明文）。
   const roomy = width >= 320 && height >= 180;
-  // 開著但瀏覽器擋著（使用者還沒在頁面上互動）：按鈕要邀請「啟用」，不能讓人一按就變靜音。
-  // 外部語音（ADR-005）被自動播放政策擋下時不會丟錯誤，而是降級並把原因寫進聲線標籤；
-  // 喚醒 AudioContext 需要在使用者手勢裡呼叫 unlock，所以也算「被擋」（複審 F3）。
-  const voiceBlocked =
-    !muted &&
-    (speechErr === 'not-allowed' || ((voiceName ?? '').includes(AUTOPLAY_BLOCKED) && voiceName !== autoplayAck));
   // 左圖右 feed 的切換點。窄於此改為上下堆疊，否則 feed 會被擠成一條。
   const sideBySide = width >= 320;
 
@@ -912,7 +863,7 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
         {roomy && enableTTS && (
           <button
             className={styles.btn}
-            onClick={() => toggleVoice(voiceBlocked)}
+            onClick={() => toggleVoice()}
             type="button"
             aria-pressed={muted}
             data-testid="voice-toggle"
