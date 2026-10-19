@@ -2,7 +2,8 @@
  * feed 要顯示哪幾列（#79）。
  *
  * 從 `MascotPanel.tsx` 的 `renderFeedLines` 抽出來的三件事：
- *  1. 合併 —— 本分頁念過、但紀錄裡沒有的句子（sessionOnly）補在紀錄前面；
+ *  1. 合併 —— 本分頁念過、但紀錄裡沒有的句子（sessionOnly）補在紀錄前面；講同一件事的
+ *     兩邊都有時只留紀錄那一列，並把「為什麼沒念」帶過去（#99）；
  *  2. 篩選 —— 篩選框的字串，大小寫不敏感，同時比對句子與 label 值；
  *  3. 空清單 —— 三種情境各自的提示文字。
  *
@@ -17,7 +18,7 @@
  * 它的「現在」是參數，而且整個 formatter 可從第四個參數注入 —— 測試因此不必看時鐘臉色。
  */
 import type { BroadcastPlan, SuppressReason } from '../core/types';
-import type { HistoryResult } from '../sources/history';
+import type { HistoryEntry, HistoryResult } from '../sources/history';
 
 /**
  * 本分頁念過的一句，和紀錄裡同文字的一筆，時間差多少以內算「同一件事」。
@@ -61,10 +62,11 @@ export interface FeedRow {
   /**
    * 這一列**沒有**被念出來的原因（#81）；`undefined` ＝ 念了，那一列的畫面與 #81 之前逐字相同。
    *
-   * **只有本分頁的列（`origin: 'session'`）可能有值。** 紀錄列來自 Grafana 自己的狀態歷史
-   * （ADR-006），那份資料記的是「狀態變化」而不是「這個分頁念了沒有」—— 抑制是本分頁的導播
-   * 當下的決定，紀錄裡沒有、也不該猜。所以同一件事若兩邊都有（合併窗內會只留紀錄那一列），
-   * 標記會跟著本分頁那一列一起消失；誠實記在 `src/README.md`。
+   * 紀錄列（`origin: 'history'`）本身不帶這個資訊 —— Grafana 的狀態歷史（ADR-006）記的是
+   * 「狀態變化」而不是「這個分頁念了沒有」。但合併時紀錄列會**取代**講同一件事的本分頁列
+   * （`sameEvent`），而被取代掉的那一列知道答案，所以原因跟著轉移過來（#99）：被抑制的是
+   * 「這個分頁沒念這件事」，換哪一列顯示不改變這個事實。沒有本分頁列對得上的紀錄列
+   * （例如分頁打開之前就發生的事）一律 `undefined` —— 紀錄裡沒有的就不猜。
    */
   suppressed?: SuppressReason;
 }
@@ -95,6 +97,78 @@ export const FEED_EMPTY_TEXT = {
 export function formatHistoryWhen(time: number, now: number = Date.now()): string {
   const d = new Date(time);
   return d.toDateString() === new Date(now).toDateString() ? d.toLocaleTimeString() : d.toLocaleString();
+}
+
+/**
+ * 紀錄裡的一筆和本分頁念過的一句，是不是「同一件事」：同文字**而且**時間對得上
+ * （紀錄時間落在念出時刻前後 `SESSION_MATCH_WINDOW_MS` 的窗內）。
+ *
+ * 合併（留哪一列）與抑制原因的轉移（#99）讀的是**同一個**判定，而且比對鍵與窗長都不動：
+ * 另開一套比對鍵、或把窗放寬，也能讓標記「出現」而單元測試照樣綠 —— 代價是久遠的紀錄
+ * 被誤標成本分頁抑制的。本票只改「留下的那一列帶誰的 `suppressed`」。
+ */
+function sameEvent(entry: Pick<HistoryEntry, 'text' | 'time'>, line: FeedLine): boolean {
+  return entry.text === line.plan.text && Math.abs(entry.time - line.at) <= SESSION_MATCH_WINDOW_MS;
+}
+
+/**
+ * 合併的結果：哪幾列本分頁的句子沒有紀錄可對（要補在紀錄前面），以及**每一筆紀錄**
+ * 要帶誰的「沒念」原因。兩者出自同一次比對 —— 分成兩個迴圈算就可能一邊說「這一列被
+ * 紀錄取代了」、另一邊說「沒有本分頁列對得上」。
+ */
+interface SessionMerge {
+  /** 紀錄裡沒有的本分頁句子，順序照 `feed`。 */
+  sessionOnly: FeedLine[];
+  /** 與 `entries` 同長、同索引：那一筆紀錄列要顯示的 `suppressed`（#99）。 */
+  suppressed: Array<SuppressReason | undefined>;
+}
+
+/**
+ * 把本分頁的句子和紀錄對起來。
+ *
+ * 一句本分頁的話若對得上紀錄，它就**不自己佔一列**，而是由**時間最接近**的那一筆紀錄代替顯示 ——
+ * 所以「這個分頁沒念它」這個資訊也跟著轉到那一筆上（#99 AC-1）。一筆紀錄被多句對上時
+ * （例如窗內先被抖動抑制、後來又進了靜音時段），取距離最近的那一句；同距離取 `feed` 裡
+ * 較前面的，而呼叫端維持「新的在前」，於是同距離取較新的。
+ *
+ * 兩個刻意的選擇：
+ *  - **一句只轉移到一筆紀錄**（它最近的那一筆）。否則窗內有兩筆紀錄時，一次被抑制的播報
+ *    會在畫面上標出兩個標記。
+ *  - 最近的那一句其實念了（`suppressed` 是 `undefined`）時就**不帶標記**，而不是從較遠的
+ *    那一句撿一個原因來標 —— 那會謊稱沒念。
+ *
+ * 沒有任何本分頁句子對得上的紀錄列一律 `undefined`（AC-2：抑制是本分頁當下的決定，
+ * 紀錄裡沒有，不猜）。
+ */
+function mergeSession(feed: readonly FeedLine[], entries: readonly HistoryEntry[]): SessionMerge {
+  const sessionOnly: FeedLine[] = [];
+  const suppressed: Array<SuppressReason | undefined> = entries.map(() => undefined);
+  /** 每一筆紀錄目前是被多近的一句本分頁話對上的（還沒有就是 `Infinity`）。 */
+  const claimed: number[] = entries.map(() => Infinity);
+  for (const l of feed) {
+    let nearest = -1;
+    let nearestGap = Infinity;
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!;
+      if (!sameEvent(e, l)) {
+        continue;
+      }
+      const gap = Math.abs(e.time - l.at);
+      if (gap < nearestGap) {
+        nearestGap = gap;
+        nearest = i;
+      }
+    }
+    if (nearest < 0) {
+      sessionOnly.push(l);
+      continue;
+    }
+    if (nearestGap < claimed[nearest]!) {
+      claimed[nearest] = nearestGap;
+      suppressed[nearest] = l.suppressed;
+    }
+  }
+  return { sessionOnly, suppressed };
 }
 
 /**
@@ -130,9 +204,7 @@ export function buildFeedRows(
   // 但那次狀態變化不在範圍內。不補上就會「念了、清單上卻找不到」。它們是剛念的，排在最上面。
   // 「已經在紀錄裡」要同文字**而且時間對得上**：紀錄時間在念出時刻前後的窗內。
   // 只比文字的話，數值沒變的 firing 或沒有數值的 resolved，會被幾小時前同文字的舊紀錄吃掉（複審 L3）。
-  const sessionOnly = feed.filter(
-    (l) => !history.entries.some((e) => e.text === l.plan.text && Math.abs(e.time - l.at) <= SESSION_MATCH_WINDOW_MS)
-  );
+  const { sessionOnly, suppressed } = mergeSession(feed, history.entries);
   const rows: Array<FeedRow & { search: string }> = [
     ...sessionOnly.map((l) => ({
       key: l.key,
@@ -144,12 +216,15 @@ export function buildFeedRows(
       search: l.plan.text.toLowerCase(),
     })),
     // `e.search` 是句子加上所有 label 值、已轉小寫（`history.ts`）——篩選因此同時比對兩者。
-    ...history.entries.map((e) => ({
+    // `suppressed` 是被這一列取代掉的本分頁列轉過來的（#99）；它不進 `search`，
+    // 所以 AC-3 成立：篩選讀的還是同一份字串，結果與本票之前逐字相同。
+    ...history.entries.map((e, i) => ({
       key: e.key,
       origin: 'history' as const,
       when: formatWhen(e.time),
       at: e.time,
       text: e.text,
+      suppressed: suppressed[i],
       search: e.search,
     })),
   ];

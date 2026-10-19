@@ -301,16 +301,147 @@ describe('#81：每一列為什麼沒念（suppressed 原樣轉手）', () => {
     ]);
   });
 
-  test('被紀錄列吃掉的那一句，標記跟著消失（合併窗內只留紀錄那一列）', () => {
-    // 誠實記：同一件事在紀錄裡也有時，畫面上留的是紀錄列，而紀錄列沒有「念了沒」這個資訊。
-    const l = held('同一件事', T0, 'flapping');
-    const { rows } = buildFeedRows([l], history([entry(l.plan.text, T0)]), '', when);
-    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', undefined]]);
-  });
-
   test('篩選過後留下的列，標記仍是那一列自己的（不是被串位）', () => {
     const feed = [held('抖的', T0 + 2000, 'flapping'), held('靜音的', T0 + 1000, 'quiet')];
     const { rows } = buildFeedRows(feed, history([entry('紀錄裡的', T0)]), '靜音', when);
     expect(rows.map((r) => [r.text, r.suppressed])).toEqual([[feed[1]!.plan.text, 'quiet']]);
+  });
+});
+
+describe('#99：被抑制的標記在合併時轉到紀錄列（真實部署幾乎都有紀錄）', () => {
+  /** 一句被抑制的本分頁播報。 */
+  const held = (text: string, at: number, suppressed: FeedLine['suppressed']): FeedLine => ({
+    ...line(text, at),
+    suppressed,
+  });
+
+  test('AC-1：被同一件事的紀錄列取代時，標記跟著走 —— 靜音時段', () => {
+    // #81 當時的行為是標記隨本分頁那一列一起消失；而有播報紀錄的 panel（EKS 值班台）是常態，
+    // 所以那個取捨等於「標記幾乎不會出現」。被抑制的是「這個分頁沒念這件事」，
+    // 紀錄列講的正是同一件事，換哪一列顯示不改變這個事實。
+    const l = held('同一件事', T0, 'quiet');
+    const rec = entry(l.plan.text, T0 - 60_000);
+    const { rows } = buildFeedRows([l], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.key, r.suppressed])).toEqual([['history', rec.key, 'quiet']]);
+  });
+
+  test('AC-1：被同一件事的紀錄列取代時，標記跟著走 —— 抖動抑制', () => {
+    const l = held('同一件事', T0, 'flapping');
+    const rec = entry(l.plan.text, T0 + 60_000);
+    const { rows } = buildFeedRows([l], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', 'flapping']]);
+  });
+
+  test('AC-1：轉移的是原樣的那個原因，不是「有沒有被抑制」的布林', () => {
+    const quiet = held('靜音的', T0, 'quiet');
+    const flapping = held('抖的', T0, 'flapping');
+    const rows = buildFeedRows(
+      [quiet, flapping],
+      history([entry(quiet.plan.text, T0), entry(flapping.plan.text, T0)]),
+      '',
+      when
+    ).rows;
+    expect(rows.map((r) => [r.text, r.origin, r.suppressed])).toEqual([
+      [quiet.plan.text, 'history', 'quiet'],
+      [flapping.plan.text, 'history', 'flapping'],
+    ]);
+  });
+
+  test('AC-1：念出去的那一句被紀錄列取代時，紀錄列不會多出標記', () => {
+    // 轉移的是「那一句的答案」而不是「有本分頁列對得上」——念了就是 undefined。
+    const l = line('念過的同一件事', T0);
+    const { rows } = buildFeedRows([l], history([entry(l.plan.text, T0)]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', undefined]]);
+  });
+
+  test('AC-2：沒有對應的本分頁列（分頁打開之前就發生的事）→ 不帶標記', () => {
+    const rec = entry('分頁打開之前就發生的事', T0);
+    const { rows } = buildFeedRows([], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', undefined]]);
+  });
+
+  test('AC-2：同文字但時間在合併窗外 → 兩列都留，紀錄列不帶標記（久遠的紀錄不被誤標）', () => {
+    // 這一條堵的是另一條「讓標記出現」的達成路徑：把比對窗放寬。
+    // 比對鍵與窗長一律不動，只改「留下的那一列帶誰的 suppressed」。
+    const l = held('同一句話、不同次事件', T0, 'quiet');
+    const rec = entry(l.plan.text, T0 - SESSION_MATCH_WINDOW_MS - 1);
+    const { rows } = buildFeedRows([l], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([
+      ['session', 'quiet'],
+      ['history', undefined],
+    ]);
+  });
+
+  test('AC-2：時間在窗內但文字不同 → 標記不跨事件轉移', () => {
+    const l = held('念過的那一句', T0, 'flapping');
+    const rec = entry('紀錄裡的另一句', T0);
+    const { rows } = buildFeedRows([l], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([
+      ['session', 'flapping'],
+      ['history', undefined],
+    ]);
+  });
+
+  test('多對一：窗內兩句本分頁的話對上同一筆紀錄 → 取時間最接近的那一句的原因', () => {
+    // 例：先被抖動抑制，窗內又進入靜音時段。兩個原因不同，留哪一個不能靠巧合。
+    const far = held('同一件事', T0 - 5 * 60_000, 'flapping');
+    const near = held('同一件事', T0 - 60_000, 'quiet');
+    const rec = entry(near.plan.text, T0);
+    expect(buildFeedRows([near, far], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
+    // feed 的順序不影響結果（「最接近」是時間上的，不是陣列位置）。
+    expect(buildFeedRows([far, near], history([rec]), '', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
+  });
+
+  test('多對一：最接近的那一句其實念了 → 不從較遠的那一句撿一個原因來標', () => {
+    const spoken = line('同一件事', T0 - 60_000);
+    const suppressed = held('同一件事', T0 - 5 * 60_000, 'quiet');
+    const rec = entry(spoken.plan.text, T0);
+    const { rows } = buildFeedRows([spoken, suppressed], history([rec]), '', when);
+    expect(rows.map((r) => [r.origin, r.suppressed])).toEqual([['history', undefined]]);
+  });
+
+  test('一對多：窗內有兩筆紀錄對得上同一句 → 標記只出現在最接近的那一筆上', () => {
+    // 一次被抑制的播報在畫面上就該是一個標記；兩筆都標會讓人以為被擋了兩次。
+    const l = held('同一件事', T0, 'flapping');
+    const near = entry(l.plan.text, T0 - 60_000);
+    const far = entry(l.plan.text, T0 - 9 * 60_000);
+    const { rows } = buildFeedRows([l], history([near, far]), '', when);
+    expect(rows.map((r) => [r.key, r.suppressed])).toEqual([
+      [near.key, 'flapping'],
+      [far.key, undefined],
+    ]);
+  });
+
+  test('AC-3：篩選讀的那份字串沒變 —— 加了標記之後篩選結果逐字相同', () => {
+    // suppressed 不進 search，所以 #79 的篩選與 #80 的匯出（讀的是同一份 feedRows）不受影響。
+    const l = held('同一件事 DiskFull', T0, 'quiet');
+    const rec = entry(l.plan.text, T0, ['prod', 'db-01']);
+    const other = entry('另一句 MemHigh', T0, ['prod']);
+    const h = history([rec, other]);
+    for (const q of ['', 'diskfull', 'db-01', 'memhigh', 'quiet', 'flapping', 'zzz']) {
+      const { rows, emptyText } = buildFeedRows([l], h, q, when);
+      // 期望值由「不帶標記的同一份輸入」算出來 —— 等於把本票之前的行為當基準線。
+      const baseline = buildFeedRows([{ ...l, suppressed: undefined }], h, q, when);
+      expect(rows.map((r) => [r.key, r.origin, r.text, r.at, r.when])).toEqual(
+        baseline.rows.map((r) => [r.key, r.origin, r.text, r.at, r.when])
+      );
+      expect(emptyText).toBe(baseline.emptyText);
+    }
+    // 而標記本身在篩選後仍留在它自己那一列上（不是被串位）。
+    expect(buildFeedRows([l], h, 'db-01', when).rows.map((r) => r.suppressed)).toEqual(['quiet']);
+  });
+
+  test('AC-3：沒有任何列帶標記時，輸出與本票之前逐字相同（迴歸面）', () => {
+    const feed = [line('只在本分頁的', T0 + 1000), line('同一件事', T0)];
+    const h = history([entry('同一件事', T0), entry('紀錄裡的另一則', T0 - 60_000)]);
+    expect(buildFeedRows(feed, h, '', when).rows.every((r) => r.suppressed === undefined)).toBe(true);
+  });
+
+  test('轉移不改動傳進來的 feed 與 history（純函式，#79 AC-1 的延伸）', () => {
+    const feed = [held('同一件事', T0, 'quiet')];
+    const entries = [entry('同一件事', T0)];
+    const snapshot = JSON.stringify({ feed, entries });
+    buildFeedRows(feed, history(entries), '', when);
+    expect(JSON.stringify({ feed, entries })).toBe(snapshot);
   });
 });
