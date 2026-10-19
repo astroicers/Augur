@@ -15,7 +15,14 @@ import {
   type SkippedAlias,
   type SkippedAliasLang,
 } from '../../core/severityAliases';
-import { PANEL_EDITOR_APP, isPanelEditor, skippedAliasNotice, suppressedMark } from '../feedNotices';
+import {
+  PANEL_EDITOR_APP,
+  isEditPanelParamFor,
+  isPanelEditing,
+  isPanelEditor,
+  skippedAliasNotice,
+  suppressedMark,
+} from '../feedNotices';
 
 const LANGS: AlertLang[] = ['zh', 'en'];
 const REASONS: SuppressReason[] = ['flapping', 'quiet'];
@@ -100,6 +107,79 @@ describe('#81 AC-2：isPanelEditor', () => {
     for (const app of [undefined, null, 0, false, {}, []]) {
       expect(isPanelEditor(app)).toBe(false);
     }
+  });
+});
+
+// --- #100：編輯模式的新訊號（網址上的 editPanel） -----------------------------
+
+describe('#100 AC-1／AC-2：isEditPanelParamFor', () => {
+  test('參數等於本 panel 的 id 時成立 —— 查詢參數是字串、id 是數字，所以要轉型比', () => {
+    // `'7' === 7` 為 false。直接比的話提示在**自己的**編輯器裡也不會出現，
+    // 也就是本票要修的症狀換一個成因（票上留言 (b)）。
+    expect(isEditPanelParamFor('7', 7)).toBe(true);
+    expect(isEditPanelParamFor('0', 0)).toBe(true);
+    expect(isEditPanelParamFor('1234', 1234)).toBe(true);
+  });
+
+  test('AC-2：參數指向別的 panel 時不成立（同一個 dashboard 上別人的編輯器）', () => {
+    expect(isEditPanelParamFor('8', 7)).toBe(false);
+    expect(isEditPanelParamFor('70', 7)).toBe(false);
+    expect(isEditPanelParamFor('7', 70)).toBe(false);
+  });
+
+  test('AC-2：網址上沒有這個鍵（null／undefined）時不成立 —— 觀看模式', () => {
+    expect(isEditPanelParamFor(null, 7)).toBe(false);
+    expect(isEditPanelParamFor(undefined, 7)).toBe(false);
+  });
+
+  test('只認純十進位整數 —— `Number()` 當守門員會讓 `?editPanel=` 在 id 0 的 panel 上誤判', () => {
+    // Number('') === 0、Number(' 7 ') === 7、Number('7.0') === 7：三者都不是「網址上寫著本 panel」。
+    expect(isEditPanelParamFor('', 0)).toBe(false);
+    expect(isEditPanelParamFor(' 7 ', 7)).toBe(false);
+    expect(isEditPanelParamFor('7.0', 7)).toBe(false);
+    expect(isEditPanelParamFor('+7', 7)).toBe(false);
+    expect(isEditPanelParamFor('7a', 7)).toBe(false);
+    expect(isEditPanelParamFor('true', 7)).toBe(false);
+  });
+});
+
+describe('#100 AC-1／AC-2／AC-3：isPanelEditing', () => {
+  /** 本 panel 的 id；與 `MascotPanel.test.tsx` 的 props 同值不重要，這裡只要固定。 */
+  const PANEL_ID = 7;
+
+  test('AC-1：`app` 不是 panel-editor，但網址的 editPanel 指著本 panel → 成立', () => {
+    // 這正是 Grafana 12.4.12 實測到的狀態：request 在、app 不是 'panel-editor'。
+    expect(
+      isPanelEditing({ app: CoreApp.Dashboard, hasRequest: true, editPanel: '7', panelId: PANEL_ID })
+    ).toBe(true);
+    // `app` 連欄位都沒有（request 是空物件）時照樣成立 —— 聯集不要求舊訊號也成立。
+    expect(isPanelEditing({ app: undefined, hasRequest: true, editPanel: '7', panelId: PANEL_ID })).toBe(true);
+  });
+
+  test('舊訊號留著：app 是 panel-editor 而網址沒有 editPanel → 照舊成立（聯集，不是取代）', () => {
+    expect(
+      isPanelEditing({ app: CoreApp.PanelEditor, hasRequest: true, editPanel: null, panelId: PANEL_ID })
+    ).toBe(true);
+  });
+
+  test('AC-2：觀看模式（網址沒有 editPanel、app 也不是編輯器）→ 不成立', () => {
+    for (const app of [CoreApp.Dashboard, CoreApp.PanelViewer, CoreApp.Explore, CoreApp.Unknown, undefined]) {
+      expect(isPanelEditing({ app, hasRequest: true, editPanel: null, panelId: PANEL_ID })).toBe(false);
+    }
+  });
+
+  test('AC-2：editPanel 指向別的 panel → 不成立（值班牆上不得多出這一行）', () => {
+    expect(
+      isPanelEditing({ app: CoreApp.Dashboard, hasRequest: true, editPanel: '8', panelId: PANEL_ID })
+    ).toBe(false);
+  });
+
+  test('AC-3：`data.request` 缺席時一律不成立 —— 連網址寫著本 panel 也不顯示（fail 方向不變）', () => {
+    expect(isPanelEditing({ app: undefined, hasRequest: false, editPanel: '7', panelId: PANEL_ID })).toBe(false);
+    // 連舊訊號都成立的情形也一樣（hasRequest 是獨立的閘門，不是 app 的衍生值）。
+    expect(
+      isPanelEditing({ app: CoreApp.PanelEditor, hasRequest: false, editPanel: '7', panelId: PANEL_ID })
+    ).toBe(false);
   });
 });
 
