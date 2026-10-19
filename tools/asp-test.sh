@@ -223,15 +223,17 @@ rm -f .jest-result.json
 npx jest --ci --maxWorkers=4 --json --outputFile=.jest-result.json
 JEST_EXIT=$?
 
-# MIN_TESTS = 所有測試檔之和（2026-10-16 於 main 290e54a 由 jest --ci --json 實數，不是手算）：
+# MIN_TESTS = 所有測試檔之和（2026-10-19 於 main 5a83a6b 由 jest --ci --json 實數，不是手算）：
 #   core/dedup 13 + core/emotion 13 + core/severity 12 + core/severityAliases 17
-# + core/format-plan 16 + core/format 32 + sources/panelAlerts 29 + sources/history 48
-# + sources/historyFetcher 5 + sources/panelRules 9 + sources/rulesFetcher 3
-# + speech/speaker 30 + speech/remoteSpeaker 41 + speech/splitCorpus 106
-# + components/MascotPanel 74 + director/BroadcastDirector 63 + director/quietHours 16
-# + director/flapping 17 + dom/dashboardPanels 20 + avatar/gaze 5 + avatar/flap 7
-# + avatar/spriteSheet 7 + avatar/SpriteController 26
-# + __tests__/implementation-contract 6 + __tests__/module-options 17 = 632（25 個 suite）
+# + core/format-plan 16 + core/format 32 + sources/panelAlerts 36 + sources/history 48
+# + sources/historyFetcher 5 + sources/panelRules 9 + sources/rulesFetcher 3 + sources/errorText 5
+# + speech/speaker 30 + speech/remoteSpeaker 41 + speech/splitCorpus 106 + speech/blockedQueue 17
+# + speech/muteStore 15 + speech/unavailableSpeaker 3
+# + components/MascotPanel 93 + components/useVoiceSwitch 26
+# + director/BroadcastDirector 79 + director/quietHours 24 + director/flapping 17
+# + feed/feedRows 33 + feed/feedCsv 32 + feed/feedNotices 20
+# + dom/dashboardPanels 20 + avatar/gaze 5 + avatar/flap 7 + avatar/spriteSheet 7 + avatar/SpriteController 26
+# + __tests__/implementation-contract 6 + __tests__/module-options 18 = 834（33 個 suite）
 # ⚠️ 舊註解列的那串加起來是 59，而當時 MIN_TESTS 寫 63 —— 兩個數字誰都不等於實際值。
 #    手算的清單會漂，改成從 jest 的輸出抄。
 # ⚠️ 2026-10-14 之前這裡寫 189（13 suites），而實際已是 258（15 suites）——
@@ -242,8 +244,9 @@ JEST_EXIT=$?
 # 2026-10-15 第一批收尾（#46 #47 #51，PR #48 #49 #55）合併後再校到 363。
 # 2026-10-15 第二批（#58 #59 #60 #61 #63，PR #62 #65 #66 #67 #68）合併後再校到 530。
 # 2026-10-16 第三批（#64 #69 #70 #71，PR #74 #73 #75 #76）合併後再校到 632。
+# 2026-10-19 第四批（#79 #80 #81 #82 #83 #84 #85 #90 #94，PR #87 #91 #93 #95 #97 #88 #89 #92 #96）合併後再校到 834。
 # 增刪測試時必須同步更新這個數字，否則閘門會對「測試被刪掉」無感。
-MIN_TESTS=632
+MIN_TESTS=834
 
 if [ "$JEST_EXIT" = 0 ] && [ -f .jest-result.json ] && jq -e \
   ".success == true and .numFailedTests == 0 and .numFailedTestSuites == 0 \
