@@ -238,11 +238,16 @@ exactly as before.
 
 Three honest limits:
 
-- **Only lines this browser tab produced can carry a mark.** It is the same `session` /
+- **Only decisions this browser tab made can be marked.** It is the same `session` /
   `history` split as the `data-origin` attribute and the CSV's `來源` column: a line read
   back from Grafana's alert state history records that the *state changed*, not whether
   this tab said anything about it. When the same event is in both, the list keeps the
-  history line — and the mark disappears with the session line it belonged to.
+  history line — and the mark moves onto it, because "this tab did not speak this" is true
+  of the event no matter which of the two lines is the one being shown. A history line with
+  no session line to match (anything that happened before you opened the tab, which is most
+  of the record) is never marked: the suppression was this tab's decision in the moment,
+  the record does not have it, and it is not guessed. Matching is unchanged — same sentence
+  and within the same ten-minute merge window as before.
 - **The per-browser voice button is not a reason.** Muting your own browser silences
   everything on this machine and nothing is marked for it — the button itself already says
   so, and the mark is reserved for decisions the panel made that you cannot otherwise see.
