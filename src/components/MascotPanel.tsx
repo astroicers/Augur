@@ -15,7 +15,7 @@ import { fetchPanelRules } from '../sources/rulesFetcher';
 import { HISTORY_DISPLAY_LIMIT, HISTORY_FETCH_LIMIT, historyToEntries, type HistoryResult } from '../sources/history';
 import { fetchPanelHistory } from '../sources/historyFetcher';
 import { buildFeedRows, type FeedLine, type FeedRow } from '../feed/feedRows';
-import { isPanelEditor, skippedAliasNotice, suppressedMark } from '../feed/feedNotices';
+import { isPanelEditing, skippedAliasNotice, suppressedMark } from '../feed/feedNotices';
 import { FEED_CSV_MIME, feedCsvFilename, feedRowsToCsv } from '../feed/feedCsv';
 import { createSpeaker, type Speaker, type SpeakerEvents } from '../speech/speaker';
 import { createRemoteSpeaker } from '../speech/remoteSpeaker';
@@ -35,6 +35,7 @@ import {
 import { unavailableSpeaker } from '../speech/unavailableSpeaker';
 import { errorText } from '../sources/errorText';
 import { getStyles } from './MascotPanel.styles';
+import { useEditPanelParam } from './useEditPanelParam';
 import { useVoiceSwitch } from './useVoiceSwitch';
 
 /** 試聽句的 plan.name（只用來組 plan；判斷「是不是試聽」改看物件身分，見 PREVIEW_PLANS）。 */
@@ -787,16 +788,32 @@ export const MascotPanel: React.FC<Props> = ({ data, options, id, width, height 
    * 別名設定寫錯時的那一行提示（#81）。**只在編輯模式下算、也只在編輯模式下顯示** ——
    * 牆面螢幕是給值班的人看告警的，一行設定錯誤的提示在那裡只是干擾（AC-2）。
    *
-   * ⚠️ 判定來源是 `data.request?.app`（`CoreApp.PanelEditor`），而 `data.request`
-   * **在真實部署裡會缺**（12.3.x 的 dashboard uid 那次就是同一個欄位，見上面兩處註解）。
-   * 缺席時 `isPanelEditor` 回 false → 提示不顯示 → 退化成「編輯者少看到一行提示」，
-   * 而不是「值班牆上多一行」。這個取捨與它的驗證界線寫在 `src/README.md` 與 PR 描述裡。
+   * ⚠️ 判定**不能只看 `data.request?.app`**：#81 當初那樣寫，而 v0.4.0 發版前在
+   * Grafana 12.4.12 實測（`/d/rel030?editPanel=3`，那個 panel 有 Prometheus query
+   * 所以 `data.request` 存在）**提示沒有出現** —— 12.x 的編輯器傳進來的 `app` 不是
+   * `'panel-editor'`，於是這個提示在真實 Grafana 上永遠不顯示（#100）。現在改成兩個
+   * 訊號取聯集：舊的 `app`，加上網址的 `editPanel` 等於**本 panel 的 `id`**
+   * （查詢參數是字串、`id` 是數字，轉型比對在 `isEditPanelParamFor` 裡）。
+   *
+   * ⚠️ `data.request` **在真實部署裡會缺**（12.3.x 的 dashboard uid 那次就是同一個
+   * 欄位，見上面兩處註解）。缺席時 `isPanelEditing` 回 false ——「有 `editPanel` 也不顯示」
+   * 是刻意的（#100 AC-3）：退化方向維持「編輯者少看到一行提示」，而不是「值班牆上多一行」。
+   * 這個取捨與它的驗證界線寫在 `src/README.md` 與 PR 描述裡。
    *
    * 解析放在這裡而不是上面那些 `options.*` 旁邊：`parseSeverityAliases` 的結果是物件，
    * 擺在 render 的頂層會讓人想把它塞進某個相依陣列 —— 那正是 `severityAliasSpec` 那段
    * 註解在擋的事。這裡只有**編輯模式**下才跑一次幾個 split，與任何 effect 無關。
    */
-  const aliasNotice = isPanelEditor(data.request?.app)
+  // 網址那個訊號是**訂閱**來的（切進／切出編輯器不必靠 Grafana 重掛 panel），
+  // 而讀 `@grafana/runtime` 的那一行關在 `useEditPanelParam.ts` 這支薄檔裡 ——
+  // `feed/feedNotices.ts` 於是維持零 Grafana 相依的純模組（契約測試在釘）。
+  const editPanelParam = useEditPanelParam();
+  const aliasNotice = isPanelEditing({
+    app: data.request?.app,
+    hasRequest: Boolean(data.request),
+    editPanel: editPanelParam,
+    panelId: id,
+  })
     ? skippedAliasNotice(parseSeverityAliases(severityAliasSpec).skipped, alertLang)
     : null;
 
