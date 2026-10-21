@@ -1,5 +1,9 @@
 # issue 入口(asp-ng 消費端):task / bug 兩套表單的 AC 欄必填 Given/When/Then;
+# 兩套表單的「依賴(depends-on)」欄非必填,有依賴就每個一行寫 `depends-on: #N`
+# —— runtime 只認這個格式,寫散文(「依賴 #69」)不會被認得,票會照常派工。
 # 想法階段的票走 blank issue,triage 時補 AC 或歸檔。
+# ⚠️ blank issue 這條路徑沒有表單、走不到「依賴」欄,依賴只能自己手寫那一行;
+# triage 補 AC 時一併補 `depends-on: #N`,否則 #70 → PR #75 那類撞 base 的事故會重演。
 blank_issues_enabled: true
 contact_links:
   - name: 想提 idea?開 blank issue

@@ -13,6 +13,17 @@ body:
       description: 每條含可觀察結果(測試名、命令輸出、檔案內容)
       placeholder: "AC-1:Given …,When …,Then …"
     validations: {required: true}
+  - type: textarea
+    id: depends-on
+    attributes:
+      label: 依賴(depends-on)
+      description: |
+        每個依賴一行,整行就是 `depends-on: #N`(N 是本 repo 的票號);沒有依賴就留空。
+        runtime 只認這一個格式(逐行比對 `^\s*depends-on:\s*#(\d+)`,不分大小寫):
+        有命中就把這張票判成 blocked,等 #N 合併後才派工。
+        寫成「依賴 #69」或只寫「#69」**不會**被認得,票會照常派工(見 #70 → PR #75 的事故)。
+        留空時 GitHub 會在本欄標題下寫 `_No response_`,那不算依賴,不必當成填錯。
+      placeholder: "depends-on: #69"
   - type: input
     id: links
     attributes: {label: 相關 issue / PR / 文件}
