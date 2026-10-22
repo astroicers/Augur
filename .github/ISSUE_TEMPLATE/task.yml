@@ -13,6 +13,14 @@ body:
       description: 每條含可觀察結果(測試名、命令輸出、檔案內容)
       placeholder: "AC-1:Given …,When …,Then …"
     validations: {required: true}
+  - type: textarea
+    id: depends-on
+    attributes:
+      label: 依賴(depends-on)
+      description: >-
+        每個依賴一行 `depends-on: #N`(N 是本 repo 的票號);沒有依賴就留空。
+        runtime 只認「整行以 depends-on: #N 開頭」的那一行:寫成「依賴 #69」或只寫 `#69` 不會被認得。
+      placeholder: "depends-on: #69"
   - type: input
     id: links
     attributes: {label: 相關 issue / PR / 文件}
