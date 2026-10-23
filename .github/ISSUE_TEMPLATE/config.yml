@@ -8,4 +8,4 @@ blank_issues_enabled: true
 contact_links:
   - name: 想提 idea?開 blank issue
     url: https://github.com/astroicers/Augur/issues/new
-    about: "想法階段的票走這裡(AC 留白即可);上面兩套表單供 AC 已成形的工作使用。有依賴請自己寫一行 depends-on: #N。"
+    about: "想法階段的票走這裡(AC 留白即可);上面兩套表單供 AC 已成形的工作使用。有依賴請自己寫一行 depends-on: #N——整行要以 depends-on: 起頭,不要加「-」「*」「1.」「>」等項目符號或引用符號,加了會靜默不命中、runtime 當成沒有依賴照常派工;純縮排的空白不影響。"
