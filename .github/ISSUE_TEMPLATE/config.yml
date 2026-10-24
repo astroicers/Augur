@@ -1,10 +1,11 @@
 # issue 入口(asp-ng 消費端):task / bug 兩套表單的 AC 欄必填 Given/When/Then;
 # 兩套表單的「依賴(depends-on)」欄非必填,有先後關係時每個依賴寫一行 `depends-on: #N`
 # (N 是本 repo 的票號)——runtime 只讀得懂整行這個形狀,寫散文「依賴 #69」不會被認得。
+# 不要在那一行前面加 `-`、`*`、`1.`、`>` 等項目符號或引用符號——整行必須以 `depends-on:` 起頭,加了會靜默不命中、runtime 當成沒有依賴照常派工;純縮排的空白不影響。
 # 想法階段的票走 blank issue,triage 時補 AC 或歸檔;blank issue 沒有表單欄位,
 # 依賴那一行要自己寫進票文(格式同上)。
 blank_issues_enabled: true
 contact_links:
   - name: 想提 idea?開 blank issue
     url: https://github.com/astroicers/Augur/issues/new
-    about: "想法階段的票走這裡(AC 留白即可);上面兩套表單供 AC 已成形的工作使用。有依賴請自己寫一行 depends-on: #N。"
+    about: "想法階段的票走這裡(AC 留白即可);上面兩套表單供 AC 已成形的工作使用。有依賴請自己寫一行 depends-on: #N——整行要以 depends-on: 起頭,不要加「-」「*」「1.」「>」等項目符號或引用符號,加了會靜默不命中、runtime 當成沒有依賴照常派工;純縮排的空白不影響。"
